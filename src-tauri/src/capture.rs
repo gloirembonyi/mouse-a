@@ -123,14 +123,35 @@ fn maybe_downscale(img: RgbaImage, max_side: u32) -> RgbaImage {
     image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Triangle)
 }
 
-// ── Agent screenshots (small JPEG) ───────────────────────────────
+// ── Agent screenshots (small JPEG, coordinate-mapped) ────────────
 // The agent re-sends its ENTIRE conversation each step, and that history can
 // hold several screenshots. A full-res PNG is megabytes; a few of them blow
 // past the backend's request-body limit (HTTP 413). So agent captures are
 // downscaled hard and encoded as JPEG — an order of magnitude smaller, still
 // perfectly legible for the model.
+//
+// Critically, the model only ever SEES the downscaled image, but clicks must
+// land in REAL screen pixels. So every agent screenshot also reports the
+// captured region's origin (global screen coords) and native (pre-downscale)
+// size — the agent loop uses this to convert the model's normalized 0-1000
+// click coordinates back to exact screen pixels. Without this, a click is off
+// by the downscale ratio (e.g. 1.5x on a 1920-wide screen shown at 1280) and
+// lands on the wrong element entirely.
 const AGENT_MAX_SIDE: u32 = 1280;
 const AGENT_JPEG_QUALITY: u8 = 68;
+
+/// A screenshot handed to the model, plus the mapping needed to convert its
+/// normalized-0-1000 click coordinates back to real screen pixels.
+pub struct AgentShot {
+    pub data_url: String,
+    /// Top-left of the captured region, in global (virtual-desktop) pixels.
+    pub origin_x: i32,
+    pub origin_y: i32,
+    /// Size of the captured region BEFORE downscaling — i.e. the real pixel
+    /// span that the image's normalized 0-1000 coordinate space maps onto.
+    pub native_width: u32,
+    pub native_height: u32,
+}
 
 fn encode_jpeg_downscaled(img: RgbaImage, max_side: u32, quality: u8) -> Result<String, String> {
     let img = maybe_downscale(img, max_side);
@@ -144,24 +165,31 @@ fn encode_jpeg_downscaled(img: RgbaImage, max_side: u32, quality: u8) -> Result<
 }
 
 /// Full screen under the cursor, as a small JPEG for the agent's capture_screen.
-pub fn capture_agent_full() -> Result<String, String> {
+pub fn capture_agent_full() -> Result<AgentShot, String> {
     let (cx, cy) = crate::mouse::get_cursor_position();
     let screen = screen_at(cx, cy)?;
+    let info = screen.display_info;
     let image = screen
         .capture()
         .map_err(|e| format!("Failed to capture screen: {}", e))?;
-    encode_jpeg_downscaled(to_rgba_image(image)?, AGENT_MAX_SIDE, AGENT_JPEG_QUALITY)
+    let img = to_rgba_image(image)?;
+    let (native_width, native_height) = (img.width(), img.height());
+    let data_url = encode_jpeg_downscaled(img, AGENT_MAX_SIDE, AGENT_JPEG_QUALITY)?;
+    Ok(AgentShot { data_url, origin_x: info.x, origin_y: info.y, native_width, native_height })
 }
 
 /// The window under the cursor (or a crop fallback), as a small JPEG — the
 /// agent's initial grounding screenshot.
-pub fn capture_agent_window(cx: i32, cy: i32) -> Result<String, String> {
+pub fn capture_agent_window(cx: i32, cy: i32) -> Result<AgentShot, String> {
     if let Some((x, y, w, h)) = crate::explorer::window_rect_at(cx, cy) {
         if let Ok(img) = capture_region_raw(x, y, w, h) {
-            return encode_jpeg_downscaled(img, AGENT_MAX_SIDE, AGENT_JPEG_QUALITY);
+            let data_url = encode_jpeg_downscaled(img, AGENT_MAX_SIDE, AGENT_JPEG_QUALITY)?;
+            return Ok(AgentShot { data_url, origin_x: x, origin_y: y, native_width: w, native_height: h });
         }
     }
     let r = 450i32;
-    let img = capture_region_raw(cx - r, cy - r, 900, 900)?;
-    encode_jpeg_downscaled(img, AGENT_MAX_SIDE, AGENT_JPEG_QUALITY)
+    let (x, y, w, h) = (cx - r, cy - r, 900u32, 900u32);
+    let img = capture_region_raw(x, y, w, h)?;
+    let data_url = encode_jpeg_downscaled(img, AGENT_MAX_SIDE, AGENT_JPEG_QUALITY)?;
+    Ok(AgentShot { data_url, origin_x: x, origin_y: y, native_width: w, native_height: h })
 }

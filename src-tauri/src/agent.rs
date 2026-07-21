@@ -17,8 +17,11 @@
 use crate::backend::BackendClient;
 use crate::{capture, explorer, input, mcp, mouse};
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::oneshot;
 
 const MAX_ITERATIONS: usize = 28;
 // A single foreground command can't hold the whole task hostage.
@@ -31,8 +34,12 @@ const MAX_FILE_READ: usize = 20_000;
 pub struct AgentProgress {
     /// Which window asked — so the right panel renders the live log.
     pub source: String,
-    pub kind: String, // "thinking" | "tool" | "tool-result" | "done" | "error"
+    pub kind: String, // "thinking" | "tool" | "tool-result" | "done" | "error" | "confirm"
     pub message: String,
+    /// Only set for kind == "confirm" — the id the UI must echo back via
+    /// `agent_confirm` when the user clicks Allow/Deny.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 fn emit(app: &AppHandle, source: &str, kind: &str, message: impl Into<String>) {
@@ -42,8 +49,65 @@ fn emit(app: &AppHandle, source: &str, kind: &str, message: impl Into<String>) {
             source: source.to_string(),
             kind: kind.to_string(),
             message: message.into(),
+            request_id: None,
         },
     );
+}
+
+// ── Screen coordinate mapping ────────────────────────────────────
+// The model only ever sees a DOWNSCALED screenshot (kept small so the agent's
+// growing conversation history doesn't blow past the backend's request-size
+// limit — see capture.rs), but clicks must land on real screen pixels. So the
+// model is told to report click coordinates NORMALIZED to a 0-1000 scale
+// relative to the screenshot it was just shown, and this maps that back to
+// exact global pixels using the captured region's real origin/size. Skipping
+// this (i.e. treating the model's numbers as raw screen pixels) is what makes
+// clicks land on the wrong element — off by exactly the downscale ratio.
+#[derive(Clone, Copy)]
+struct ScreenMapping {
+    origin_x: i32,
+    origin_y: i32,
+    native_width: u32,
+    native_height: u32,
+}
+
+impl ScreenMapping {
+    fn from_shot(shot: &capture::AgentShot) -> Self {
+        Self {
+            origin_x: shot.origin_x,
+            origin_y: shot.origin_y,
+            native_width: shot.native_width,
+            native_height: shot.native_height,
+        }
+    }
+
+    fn to_real(&self, nx: f64, ny: f64) -> (i32, i32) {
+        let nx = nx.clamp(0.0, 1000.0);
+        let ny = ny.clamp(0.0, 1000.0);
+        let rx = self.origin_x + ((nx / 1000.0) * self.native_width as f64).round() as i32;
+        let ry = self.origin_y + ((ny / 1000.0) * self.native_height as f64).round() as i32;
+        (rx, ry)
+    }
+}
+
+// ── Confirmation gate ────────────────────────────────────────────
+// The agent can call `request_confirmation` before a sensitive/ambiguous
+// action; this pauses that tool call on a channel until the UI reports back
+// which button the user clicked (Allow/Deny), via the `agent_confirm` command.
+static PENDING_CONFIRMATIONS: OnceLock<Mutex<HashMap<String, oneshot::Sender<bool>>>> = OnceLock::new();
+
+fn confirmations() -> &'static Mutex<HashMap<String, oneshot::Sender<bool>>> {
+    PENDING_CONFIRMATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Called by the `agent_confirm` Tauri command when the user clicks a button.
+/// Returns false if the request already timed out or doesn't exist.
+pub fn resolve_confirmation(request_id: &str, approved: bool) -> bool {
+    if let Some(tx) = confirmations().lock().unwrap().remove(request_id) {
+        tx.send(approved).is_ok()
+    } else {
+        false
+    }
 }
 
 fn system_prompt(autonomous: bool) -> String {
@@ -57,26 +121,44 @@ window, the folder/element under their cursor, and a screenshot). Ground your wo
 context — it's usually the thing they mean by \"this\".\n\
 - Break the task into concrete steps and use tools to carry them out. Prefer reading real \
 data (run_command, read_file, list_directory, web_search) over guessing.\n\
-- To operate other apps or a browser, use capture_screen to see the current state, then \
-click/double_click/type_text/press_key/scroll on the coordinates you see in that screenshot. \
-IMPORTANT: coordinates come from the most recent screenshot — always capture_screen right before \
-clicking, and capture_screen again after acting to confirm the result before continuing.\n\
-- Browser tasks: open_url to launch the page, wait ~2s for it to load, capture_screen, then click \
-fields and type_text to fill forms. To fill a form field, click it first, then type_text. Use Tab \
-to move between fields and press_key 'enter' to submit.\n\
+- COORDINATES: click/double_click/scroll take x and y NORMALIZED to a 0-1000 scale relative to \
+the width/height of the most recent screenshot (0,0 = top-left, 1000,1000 = bottom-right) — NOT \
+raw pixels, and independent of the screenshot's actual resolution. Always base coordinates on the \
+MOST RECENT screenshot only; if you're not looking at a fresh one, call capture_screen again first \
+— clicking from a stale or remembered screenshot is the #1 cause of clicking the wrong thing.\n\
+- Browser tasks (be precise — don't guess a destination):\n\
+  1. If you already know the exact URL, open_url directly. If you don't, use web_search first and \
+open_url the exact result link — never guess or invent a URL, and never click a search result \
+before capture_screen confirms it's the one you mean.\n\
+  2. After open_url, wait ~2s, then capture_screen before doing anything else — the page may still \
+be loading, and acting on the previous page's layout is the #2 cause of wrong clicks.\n\
+  3. To fill a form: capture_screen, click the exact field, type_text into it, repeat per field \
+(Tab also moves between fields). Verify with capture_screen before submitting (press_key 'enter' \
+or click Submit).\n\
+  4. To scroll a page (like a normal user would to see more): scroll with a point roughly in the \
+center of the page content, then capture_screen to see what's now visible before acting further.\n\
+  5. If a page didn't load, looks wrong, or you're unsure you're on the right site, say so and \
+capture_screen again rather than clicking blindly — precision matters more than speed.\n\
 - Coding/editor tasks (e.g. in Cursor or VS Code): prefer the terminal (run_command) and read_file/\
 write_file/edit-style file writes over clicking around the editor UI — it's far more reliable.\n\
 - Finding things: use find_files to locate a file anywhere on the PC by name; use run_command with \
 Select-String (or the tools) to search inside files.\n\
+- Before a genuinely sensitive or ambiguous action — submitting a form with personal/payment info, \
+sending a message, making a purchase, deleting/moving files, or anything you're not confident the \
+user actually wants — call request_confirmation with a short specific description and WAIT for the \
+result before proceeding. If denied, stop that action and ask what they'd like instead.\n\
 - When the task is complete, stop calling tools and reply with a clear, concise final answer \
 in Markdown describing what you did and the result.\n\
-- Be efficient: don't repeat a tool call that already succeeded. If a tool fails twice the same way, \
-try a different approach or report the blocker instead of looping.\n",
+- Be efficient: don't repeat a tool call that already succeeded. If a tool fails twice the same way \
+or you notice yourself repeating the same action without progress, stop, try a genuinely different \
+approach, or report the blocker as your final answer instead of looping.\n",
     );
     if autonomous {
         s.push_str(
-            "\nYou are in autonomous mode: act without asking for confirmation. Still refuse to \
-run genuinely destructive operations (mass deletion, disk formatting, shutting down the machine).",
+            "\nYou are in autonomous mode: act without asking for confirmation for routine, \
+low-risk actions. Still call request_confirmation before sensitive/ambiguous actions (see above), \
+and still refuse to run genuinely destructive operations (mass deletion, disk formatting, shutting \
+down the machine).",
         );
     }
     s
@@ -150,12 +232,12 @@ fn tool_declarations() -> Value {
         },
         {
             "name": "click",
-            "description": "Move the mouse to global screen coordinates and click. Use screenshot coordinates.",
+            "description": "Move the mouse to a point and click. x/y are normalized 0-1000 relative to the most recent screenshot's width/height (0,0=top-left, 1000,1000=bottom-right) — always base these on the LATEST screenshot.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "x": { "type": "integer" },
-                    "y": { "type": "integer" },
+                    "x": { "type": "integer", "description": "Horizontal position, 0-1000, normalized to screenshot width." },
+                    "y": { "type": "integer", "description": "Vertical position, 0-1000, normalized to screenshot height." },
                     "button": { "type": "string", "enum": ["left", "right"] }
                 },
                 "required": ["x", "y"]
@@ -173,21 +255,24 @@ fn tool_declarations() -> Value {
         },
         {
             "name": "double_click",
-            "description": "Double-click the left mouse button at global screen coordinates (e.g. to open an item).",
+            "description": "Double-click the left mouse button at a point (e.g. to open an item). x/y are normalized 0-1000 relative to the most recent screenshot, same as click.",
             "parameters": {
                 "type": "object",
-                "properties": { "x": { "type": "integer" }, "y": { "type": "integer" } },
+                "properties": {
+                    "x": { "type": "integer", "description": "0-1000, normalized to screenshot width." },
+                    "y": { "type": "integer", "description": "0-1000, normalized to screenshot height." }
+                },
                 "required": ["x", "y"]
             }
         },
         {
             "name": "scroll",
-            "description": "Scroll the mouse wheel at a point. Positive amount scrolls up, negative scrolls down (a few notches per call).",
+            "description": "Scroll the mouse wheel at a point. x/y are normalized 0-1000 relative to the most recent screenshot, same as click. Positive amount scrolls up, negative scrolls down (a few notches per call).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "x": { "type": "integer" },
-                    "y": { "type": "integer" },
+                    "x": { "type": "integer", "description": "0-1000, normalized to screenshot width." },
+                    "y": { "type": "integer", "description": "0-1000, normalized to screenshot height." },
                     "amount": { "type": "integer", "description": "Notches; negative = down." }
                 },
                 "required": ["x", "y", "amount"]
@@ -207,6 +292,15 @@ fn tool_declarations() -> Value {
             "name": "wait",
             "description": "Pause briefly to let an app or web page finish loading before the next action.",
             "parameters": { "type": "object", "properties": { "seconds": { "type": "number" } }, "required": ["seconds"] }
+        },
+        {
+            "name": "request_confirmation",
+            "description": "Show the user a real Allow/Deny button and WAIT for their decision before proceeding. Call this before sensitive or ambiguous actions: submitting a form with personal/payment info, sending a message, making a purchase, deleting/moving files, or anything you're not confident the user wants.",
+            "parameters": {
+                "type": "object",
+                "properties": { "message": { "type": "string", "description": "A short, specific description of exactly what you're about to do." } },
+                "required": ["message"]
+            }
         }
     ])
 }
@@ -362,11 +456,13 @@ pub async fn run_task(
         .ok()
         .and_then(|r| r.ok());
 
+    let mut screen_mapping: Option<ScreenMapping> = initial_shot.as_ref().map(ScreenMapping::from_shot);
+
     let mut first_parts = vec![json!({
         "text": format!("{}\n\n[TASK]\n{}", context_block, task)
     })];
     if let Some(shot) = &initial_shot {
-        if let Some(img) = image_part(shot) {
+        if let Some(img) = image_part(&shot.data_url) {
             first_parts.push(img);
         }
     }
@@ -376,9 +472,72 @@ pub async fn run_task(
     emit(app, source, "thinking", "Understanding your request…");
 
     // Drive the loop, then always shut the MCP servers down (whatever the outcome).
-    let result = drive_loop(app, backend, &system, &tools, contents, source, &mut mcp).await;
+    let result = drive_loop(app, backend, &system, &tools, contents, source, &mut mcp, &mut screen_mapping).await;
     mcp.shutdown().await;
     result
+}
+
+// Gemini occasionally returns a transient "model overloaded / high demand"
+// error (surfaces here as a 502 with that message text) or a plain network
+// hiccup. Neither means the task failed — it means "ask again in a moment" —
+// so retrying with backoff turns a dead task into a brief pause instead of
+// losing all progress and forcing the user to restart from scratch.
+const STEP_RETRY_ATTEMPTS: usize = 4;
+const STEP_RETRY_BASE_DELAY_SECS: u64 = 3;
+
+fn is_retryable_step_error(err: &str) -> bool {
+    let lower = err.to_lowercase();
+    [
+        "high demand",
+        "overloaded",
+        "unavailable",
+        "please try again later",
+        "econnreset",
+        "timed out",
+        "timeout",
+        "reach the thothai backend",
+        "(502)",
+        "(503)",
+        "(500)",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+/// Calls the model with retry-with-backoff on transient errors, so a momentary
+/// Gemini overload pauses the task briefly instead of ending it.
+async fn agent_step_with_retry(
+    app: &AppHandle,
+    backend: &BackendClient,
+    system: &str,
+    contents: &[Value],
+    tools: &Value,
+    source: &str,
+) -> Result<Value, String> {
+    let mut attempt = 0usize;
+    loop {
+        match backend.agent_step(system, json!(contents), tools.clone()).await {
+            Ok(v) => return Ok(v),
+            Err(e) if attempt < STEP_RETRY_ATTEMPTS && is_retryable_step_error(&e) => {
+                attempt += 1;
+                let delay = STEP_RETRY_BASE_DELAY_SECS * (1 << (attempt - 1)); // 3s, 6s, 12s, 24s
+                emit(
+                    app,
+                    source,
+                    "thinking",
+                    format!(
+                        "The model is busy ({}). Retrying in {}s… ({}/{})",
+                        truncate(&e, 120),
+                        delay,
+                        attempt,
+                        STEP_RETRY_ATTEMPTS
+                    ),
+                );
+                tokio::time::sleep(Duration::from_secs(delay)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// The core agent turn loop: ask the model, execute any tool calls (built-in or
@@ -391,11 +550,18 @@ async fn drive_loop(
     mut contents: Vec<Value>,
     source: &str,
     mcp: &mut mcp::McpManager,
+    screen: &mut Option<ScreenMapping>,
 ) -> Result<String, String> {
+    // Anti-loop guard: if the exact same tool calls repeat several iterations
+    // in a row (a sign the agent is stuck), inject a stronger nudge to try
+    // something different instead of silently spinning until the step cap.
+    let mut last_call_signature: Option<String> = None;
+    let mut repeat_count: usize = 0;
+
     for _ in 0..MAX_ITERATIONS {
         // Bound the payload: only the 2 most recent screenshots ride along.
         prune_old_images(&mut contents, 2);
-        let step = backend.agent_step(system, json!(contents), tools.clone()).await?;
+        let step = agent_step_with_retry(app, backend, system, &contents, tools, source).await?;
         let parts = step.get("parts").and_then(|p| p.as_array()).cloned().unwrap_or_default();
 
         // Split the model's reply into free text and tool calls, and rebuild a
@@ -439,6 +605,17 @@ async fn drive_loop(
             emit(app, source, "thinking", truncate(&assistant_text, 400));
         }
 
+        // Anti-loop guard: the same exact batch of tool calls, several times
+        // in a row, means the agent is stuck rather than making progress.
+        let signature = serde_json::to_string(&calls).unwrap_or_default();
+        if last_call_signature.as_deref() == Some(signature.as_str()) {
+            repeat_count += 1;
+        } else {
+            repeat_count = 0;
+            last_call_signature = Some(signature);
+        }
+        let stuck_warning = repeat_count >= 2;
+
         // Execute every requested tool (built-in or MCP) and collect the
         // responses (+ any images) into one user turn, preserving alternation.
         let mut response_parts: Vec<Value> = Vec::new();
@@ -454,7 +631,7 @@ async fn drive_loop(
                     Err(e) => ToolOutcome::err(e),
                 }
             } else {
-                execute_tool(app, backend, &name, &args).await
+                execute_tool(app, backend, source, &name, &args, screen).await
             };
             emit(app, source, "tool-result", truncate(&outcome.log, 300));
             response_parts.push(json!({
@@ -464,6 +641,15 @@ async fn drive_loop(
                 response_parts.push(json!({ "text": "Screenshot after the action:" }));
                 response_parts.push(img);
             }
+        }
+        if stuck_warning {
+            emit(app, source, "thinking", "That didn't seem to make progress — nudging the agent to try something different…");
+            response_parts.push(json!({
+                "text": "[SYSTEM NOTE] You've called the exact same tool(s) with the exact same arguments \
+several times in a row without the situation changing. Stop repeating this — either try a genuinely \
+different approach (different coordinates after a fresh capture_screen, a different command, a \
+different URL) or, if truly stuck, give your final answer now explaining the blocker."
+            }));
         }
         contents.push(json!({ "role": "user", "parts": response_parts }));
     }
@@ -508,8 +694,10 @@ fn tool_label(name: &str, args: &Value) -> String {
 async fn execute_tool(
     app: &AppHandle,
     backend: &BackendClient,
+    source: &str,
     name: &str,
     args: &Value,
+    screen: &mut Option<ScreenMapping>,
 ) -> ToolOutcome {
     match name {
         "run_command" => run_command_tool(args).await,
@@ -519,20 +707,18 @@ async fn execute_tool(
         "find_files" => find_files_tool(args).await,
         "web_search" => web_search_tool(backend, args).await,
         "web_fetch" => web_fetch_tool(backend, args).await,
-        "capture_screen" => capture_screen_tool().await,
+        "capture_screen" => capture_screen_tool(screen).await,
         "get_screen_context" => get_screen_context_tool().await,
-        "click" => click_tool(args),
-        "double_click" => double_click_tool(args),
-        "scroll" => scroll_tool(args),
+        "click" => click_tool(args, screen),
+        "double_click" => double_click_tool(args, screen),
+        "scroll" => scroll_tool(args, screen),
         "type_text" => type_text_tool(args),
         "press_key" => press_key_tool(args),
         "open_url" => open_target_tool(args, "url"),
         "open_app" => open_target_tool(args, "target"),
         "wait" => wait_tool(args).await,
-        other => {
-            let _ = app;
-            ToolOutcome::err(format!("Unknown tool: {}", other))
-        }
+        "request_confirmation" => request_confirmation_tool(app, source, args).await,
+        other => ToolOutcome::err(format!("Unknown tool: {}", other)),
     }
 }
 
@@ -813,14 +999,19 @@ async fn web_fetch_tool(backend: &BackendClient, args: &Value) -> ToolOutcome {
     }
 }
 
-async fn capture_screen_tool() -> ToolOutcome {
-    let shot = tokio::task::spawn_blocking(|| capture::capture_agent_full()).await;
+async fn capture_screen_tool(screen: &mut Option<ScreenMapping>) -> ToolOutcome {
+    let shot = tokio::task::spawn_blocking(capture::capture_agent_full).await;
     match shot {
-        Ok(Ok(data_url)) => ToolOutcome {
-            response: json!({ "result": "screenshot captured" }),
-            image_data_url: Some(data_url),
-            log: "captured screenshot".to_string(),
-        },
+        Ok(Ok(shot)) => {
+            // Refresh the mapping so the NEXT click/scroll converts against
+            // this screenshot, not a stale one.
+            *screen = Some(ScreenMapping::from_shot(&shot));
+            ToolOutcome {
+                response: json!({ "result": "screenshot captured — use normalized 0-1000 x/y relative to this image for the next click/scroll" }),
+                image_data_url: Some(shot.data_url),
+                log: "captured screenshot".to_string(),
+            }
+        }
         Ok(Err(e)) => ToolOutcome::err(e),
         Err(e) => ToolOutcome::err(format!("capture task failed: {}", e)),
     }
@@ -858,40 +1049,86 @@ async fn get_screen_context_tool() -> ToolOutcome {
     }
 }
 
-fn click_tool(args: &Value) -> ToolOutcome {
-    let x = args.get("x").and_then(|v| v.as_i64());
-    let y = args.get("y").and_then(|v| v.as_i64());
-    let (x, y) = match (x, y) {
-        (Some(x), Some(y)) => (x as i32, y as i32),
-        _ => return ToolOutcome::err("click requires integer x and y"),
+/// Reads normalized x/y args and converts them to real screen pixels via the
+/// most recent screenshot's mapping. Returns an error (instead of guessing)
+/// if there's no mapping yet — the model needs to capture_screen first.
+fn resolve_point(args: &Value, screen: &Option<ScreenMapping>) -> Result<(i32, i32), String> {
+    let nx = args.get("x").and_then(|v| v.as_f64());
+    let ny = args.get("y").and_then(|v| v.as_f64());
+    let (nx, ny) = match (nx, ny) {
+        (Some(x), Some(y)) => (x, y),
+        _ => return Err("requires numeric x and y".to_string()),
+    };
+    let mapping = screen
+        .as_ref()
+        .ok_or("no screenshot has been captured yet — call capture_screen first so coordinates have something to map to")?;
+    Ok(mapping.to_real(nx, ny))
+}
+
+fn click_tool(args: &Value, screen: &Option<ScreenMapping>) -> ToolOutcome {
+    let (x, y) = match resolve_point(args, screen) {
+        Ok(p) => p,
+        Err(e) => return ToolOutcome::err(e),
     };
     let right = args.get("button").and_then(|b| b.as_str()).map(|b| b.eq_ignore_ascii_case("right")).unwrap_or(false);
     input::click(x, y, right);
     ToolOutcome::text(format!("Clicked {} at ({}, {}).", if right { "right" } else { "left" }, x, y))
 }
 
-fn double_click_tool(args: &Value) -> ToolOutcome {
-    let x = args.get("x").and_then(|v| v.as_i64());
-    let y = args.get("y").and_then(|v| v.as_i64());
-    match (x, y) {
-        (Some(x), Some(y)) => {
-            input::double_click(x as i32, y as i32);
+fn double_click_tool(args: &Value, screen: &Option<ScreenMapping>) -> ToolOutcome {
+    match resolve_point(args, screen) {
+        Ok((x, y)) => {
+            input::double_click(x, y);
             ToolOutcome::text(format!("Double-clicked ({}, {}).", x, y))
         }
-        _ => ToolOutcome::err("double_click requires integer x and y"),
+        Err(e) => ToolOutcome::err(e),
     }
 }
 
-fn scroll_tool(args: &Value) -> ToolOutcome {
-    let x = args.get("x").and_then(|v| v.as_i64());
-    let y = args.get("y").and_then(|v| v.as_i64());
+fn scroll_tool(args: &Value, screen: &Option<ScreenMapping>) -> ToolOutcome {
     let amount = args.get("amount").and_then(|v| v.as_i64());
-    match (x, y, amount) {
-        (Some(x), Some(y), Some(amount)) => {
-            input::scroll(x as i32, y as i32, amount as i32);
+    let point = resolve_point(args, screen);
+    match (point, amount) {
+        (Ok((x, y)), Some(amount)) => {
+            input::scroll(x, y, amount as i32);
             ToolOutcome::text(format!("Scrolled {} at ({}, {}).", amount, x, y))
         }
-        _ => ToolOutcome::err("scroll requires integer x, y, and amount"),
+        (Err(e), _) => ToolOutcome::err(e),
+        (_, None) => ToolOutcome::err("scroll requires an integer amount"),
+    }
+}
+
+/// Shows the user a real Allow/Deny button and waits for their click (with a
+/// 5-minute timeout, treated as a deny so the task doesn't hang forever).
+async fn request_confirmation_tool(app: &AppHandle, source: &str, args: &Value) -> ToolOutcome {
+    let message = args
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("Proceed with this action?")
+        .to_string();
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let (tx, rx) = oneshot::channel();
+    confirmations().lock().unwrap().insert(request_id.clone(), tx);
+
+    let _ = app.emit(
+        "agent-progress",
+        AgentProgress {
+            source: source.to_string(),
+            kind: "confirm".to_string(),
+            message: message.clone(),
+            request_id: Some(request_id.clone()),
+        },
+    );
+
+    const CONFIRM_TIMEOUT: Duration = Duration::from_secs(300);
+    match tokio::time::timeout(CONFIRM_TIMEOUT, rx).await {
+        Ok(Ok(true)) => ToolOutcome::text("The user clicked Allow. Proceed."),
+        Ok(Ok(false)) => ToolOutcome::text("The user clicked Deny. Do not proceed with this action — ask what they'd like instead, or stop."),
+        Ok(Err(_)) => ToolOutcome::err("confirmation channel closed unexpectedly"),
+        Err(_) => {
+            confirmations().lock().unwrap().remove(&request_id);
+            ToolOutcome::text("No response within 5 minutes — treat this as denied and stop this action.")
+        }
     }
 }
 

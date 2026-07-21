@@ -45,6 +45,7 @@ pub fn run() {
             commands::set_ai_active,
             commands::send_chat,
             commands::agent_run,
+            commands::agent_confirm,
             commands::analyze_at_cursor,
             commands::new_conversation,
             commands::ensure_session,

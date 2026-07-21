@@ -405,11 +405,19 @@ pub async fn agent_run(
                     source: source.clone(),
                     kind: "error".to_string(),
                     message: e.clone(),
+                    request_id: None,
                 },
             );
             Err(e)
         }
     }
+}
+
+/// Called when the user clicks Allow/Deny on an agent's `request_confirmation`
+/// prompt. Returns false if that request already timed out or doesn't exist.
+#[tauri::command]
+pub fn agent_confirm(request_id: String, approved: bool) -> bool {
+    crate::agent::resolve_confirmation(&request_id, approved)
 }
 
 // ── Chat Commands ────────────────────────────────────────────────
