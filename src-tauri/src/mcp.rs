@@ -187,10 +187,6 @@ impl McpManager {
         Ok(count)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.tools.is_empty()
-    }
-
     /// True if a tool name belongs to an MCP server (so the agent routes it here).
     pub fn owns(&self, api_name: &str) -> bool {
         self.tools.iter().any(|t| t.api_name == api_name)

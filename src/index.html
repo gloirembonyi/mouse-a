@@ -158,6 +158,15 @@
           <p class="about-text">Agent mode makes many AI calls. Using your own free key from <span style="color:var(--accent)">aistudio.google.com/apikey</span> avoids the shared key's rate limits. Stored locally only.</p>
         </div>
         <div class="setting-group">
+          <label>MCP servers (advanced)</label>
+          <textarea id="mcp-servers-input" class="input-field" rows="6" spellcheck="false" placeholder='[
+  { "name": "filesystem", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/you"] }
+]'></textarea>
+          <button id="btn-save-mcp" class="btn-secondary">Save MCP servers</button>
+          <p class="about-text" id="mcp-status"></p>
+          <p class="about-text">A JSON array of stdio MCP servers. Their tools are added to the agent automatically. Each: <code>name</code>, <code>command</code>, <code>args</code>, optional <code>env</code>.</p>
+        </div>
+        <div class="setting-group">
           <label>About</label>
           <p class="about-text">Mouse AI v0.1.0 — Powered by Thothai &amp; Gemini</p>
         </div>

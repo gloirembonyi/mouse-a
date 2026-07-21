@@ -15,7 +15,7 @@
 // it returns a plain-text answer (or we hit the iteration cap).
 
 use crate::backend::BackendClient;
-use crate::{capture, explorer, input, mouse};
+use crate::{capture, explorer, input, mcp, mouse};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};

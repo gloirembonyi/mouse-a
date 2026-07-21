@@ -63,6 +63,7 @@ function setupEventListeners() {
   $("#btn-test-backend")?.addEventListener("click", handleTestBackend);
   $("#btn-save-gemini-key")?.addEventListener("click", handleSaveGeminiKey);
   $("#btn-clear-gemini-key")?.addEventListener("click", handleClearGeminiKey);
+  $("#btn-save-mcp")?.addEventListener("click", handleSaveMcp);
 
   // AI indicator click
   indicator?.addEventListener("click", handleToggleAI);
@@ -702,6 +703,7 @@ function showSettings() {
     })
     .catch(() => {});
   refreshGeminiKeyStatus();
+  loadMcpServers();
 }
 
 async function handleSaveBackendUrl() {
@@ -749,6 +751,25 @@ async function handleClearGeminiKey() {
     if (input) input.value = "";
     await refreshGeminiKeyStatus();
   } catch { /* ignore */ }
+}
+
+async function loadMcpServers() {
+  const input = $("#mcp-servers-input");
+  try {
+    const json = await invoke("get_mcp_servers");
+    if (input && json && json.trim() !== "[]") input.value = json;
+  } catch { /* ignore */ }
+}
+
+async function handleSaveMcp() {
+  const input = $("#mcp-servers-input");
+  const status = $("#mcp-status");
+  try {
+    const msg = await invoke("set_mcp_servers", { json: input?.value || "[]" });
+    if (status) status.textContent = `✓ ${msg} MCP tools load next time the agent runs.`;
+  } catch (err) {
+    if (status) status.textContent = `✗ ${err?.message || err}`;
+  }
 }
 
 async function handleTestBackend() {

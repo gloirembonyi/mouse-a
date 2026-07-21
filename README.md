@@ -5,10 +5,36 @@ Built with Tauri 2 (Rust + vanilla HTML/JS). Point your mouse at anything on scr
 
 ## Features
 
+- **Agent mode** — describe a task and Mouse AI actually does it on your PC: runs terminal
+  commands, reads/writes/searches files, researches the web, and drives the mouse & keyboard
+  (click, type, scroll) to operate apps and fill browser forms — reporting a live activity log
+  and the result back in the window you asked from. Toggle **🤖 Agent** in the main window, or the
+  **🤖** button in the cursor overlay.
 - **Ask at Cursor** — `Ctrl+Shift+Space` anywhere: an input panel opens at your cursor about whatever you're pointing at (screenshot + accessible element text are sent as context).
 - **Hover Mode** — `Ctrl+Shift+Q`: pause the mouse over anything and a floating **✦ Ask AI** pill appears.
 - **Screenshot Analyze** — `Ctrl+Shift+S`: captures around the cursor and analyzes it in the main window.
+- **MCP support** — add external [MCP](https://modelcontextprotocol.io) servers in Settings; their
+  tools are added to the agent automatically.
 - System tray app; closing the window minimizes to tray.
+
+## Agent tools
+
+The agent decides which of these to use per step (the model runs on the backend; every tool runs
+locally on your machine):
+
+`run_command` (PowerShell, foreground or background) · `read_file` · `write_file` · `list_directory` ·
+`find_files` (search the whole PC by name) · `web_search` · `web_fetch` · `capture_screen` ·
+`get_screen_context` · `click` / `double_click` / `scroll` / `type_text` / `press_key`
+(computer-use) · `open_url` / `open_app` · `wait` · plus any tools from configured MCP servers.
+
+Genuinely destructive shell commands (disk format, recursive system-drive delete, shutdown, …) are
+refused automatically.
+
+## Recommended: your own Gemini key
+
+Agent mode makes many AI calls, so the shared key's rate limit is easy to hit. In **Settings →
+Gemini API key**, paste a free key from `aistudio.google.com/apikey` — it's stored locally and used
+for all agent/chat calls, removing the shared-key limit.
 
 ## Prerequisites
 
