@@ -287,6 +287,32 @@ fn initial_context_block(cx: i32, cy: i32) -> String {
     block
 }
 
+/// Keep only the most recent `keep` screenshots in the conversation, replacing
+/// older ones with a short text note. The agent re-sends the whole history each
+/// step, so without this the accumulated images quickly exceed the backend's
+/// request-body limit (HTTP 413) on any multi-screenshot task.
+fn prune_old_images(contents: &mut [Value], keep: usize) {
+    let mut positions: Vec<(usize, usize)> = Vec::new();
+    for (mi, msg) in contents.iter().enumerate() {
+        if let Some(parts) = msg.get("parts").and_then(|p| p.as_array()) {
+            for (pi, part) in parts.iter().enumerate() {
+                if part.get("inlineData").is_some() {
+                    positions.push((mi, pi));
+                }
+            }
+        }
+    }
+    if positions.len() <= keep {
+        return;
+    }
+    let drop_count = positions.len() - keep;
+    for &(mi, pi) in positions.iter().take(drop_count) {
+        if let Some(parts) = contents[mi].get_mut("parts").and_then(|p| p.as_array_mut()) {
+            parts[pi] = json!({ "text": "[earlier screenshot omitted to keep the request small]" });
+        }
+    }
+}
+
 fn image_part(data_url: &str) -> Option<Value> {
     let (mime, b64) = if let Some(rest) = data_url.strip_prefix("data:image/png;base64,") {
         ("image/png", rest)
@@ -331,12 +357,10 @@ pub async fn run_task(
     let context_block = tokio::task::spawn_blocking(move || initial_context_block(cx, cy))
         .await
         .unwrap_or_default();
-    let initial_shot = tokio::task::spawn_blocking(move || {
-        capture::capture_window_or_around_point(cx, cy, 400)
-    })
-    .await
-    .ok()
-    .and_then(|r| r.ok());
+    let initial_shot = tokio::task::spawn_blocking(move || capture::capture_agent_window(cx, cy))
+        .await
+        .ok()
+        .and_then(|r| r.ok());
 
     let mut first_parts = vec![json!({
         "text": format!("{}\n\n[TASK]\n{}", context_block, task)
@@ -369,6 +393,8 @@ async fn drive_loop(
     mcp: &mut mcp::McpManager,
 ) -> Result<String, String> {
     for _ in 0..MAX_ITERATIONS {
+        // Bound the payload: only the 2 most recent screenshots ride along.
+        prune_old_images(&mut contents, 2);
         let step = backend.agent_step(system, json!(contents), tools.clone()).await?;
         let parts = step.get("parts").and_then(|p| p.as_array()).cloned().unwrap_or_default();
 
@@ -743,8 +769,27 @@ async fn web_search_tool(backend: &BackendClient, args: &Value) -> ToolOutcome {
         Ok(v) => {
             let results = v.get("results").cloned().unwrap_or_else(|| json!([]));
             let n = results.as_array().map(|a| a.len()).unwrap_or(0);
+
+            // Snippets from keyless search are thin (often just the title), so
+            // fetch the top result's real text to ground the answer. Best-effort
+            // and quota-free (the fetch endpoint doesn't call Gemini).
+            let mut response = json!({ "results": results });
+            if let Some(top_url) = results
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|r| r.get("url"))
+                .and_then(|u| u.as_str())
+            {
+                if let Ok(text) = backend.agent_fetch(top_url).await {
+                    if !text.trim().is_empty() {
+                        response["top_result_url"] = json!(top_url);
+                        response["top_result_excerpt"] = json!(truncate(&text, 2500));
+                    }
+                }
+            }
+
             ToolOutcome {
-                response: json!({ "results": results }),
+                response,
                 image_data_url: None,
                 log: format!("{} results for \"{}\"", n, query),
             }
@@ -769,7 +814,7 @@ async fn web_fetch_tool(backend: &BackendClient, args: &Value) -> ToolOutcome {
 }
 
 async fn capture_screen_tool() -> ToolOutcome {
-    let shot = tokio::task::spawn_blocking(|| capture::capture_full_screen()).await;
+    let shot = tokio::task::spawn_blocking(|| capture::capture_agent_full()).await;
     match shot {
         Ok(Ok(data_url)) => ToolOutcome {
             response: json!({ "result": "screenshot captured" }),

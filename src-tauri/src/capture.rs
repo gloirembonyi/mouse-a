@@ -7,6 +7,7 @@
 // capture first resolves which monitor the point is on and converts.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
+use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType as PngFilterType, PngEncoder};
 use image::{ExtendedColorType, ImageEncoder, RgbaImage};
 use screenshots::Screen;
@@ -120,4 +121,47 @@ fn maybe_downscale(img: RgbaImage, max_side: u32) -> RgbaImage {
     let new_w = ((w as f32 * scale).round() as u32).max(1);
     let new_h = ((h as f32 * scale).round() as u32).max(1);
     image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Triangle)
+}
+
+// ── Agent screenshots (small JPEG) ───────────────────────────────
+// The agent re-sends its ENTIRE conversation each step, and that history can
+// hold several screenshots. A full-res PNG is megabytes; a few of them blow
+// past the backend's request-body limit (HTTP 413). So agent captures are
+// downscaled hard and encoded as JPEG — an order of magnitude smaller, still
+// perfectly legible for the model.
+const AGENT_MAX_SIDE: u32 = 1280;
+const AGENT_JPEG_QUALITY: u8 = 68;
+
+fn encode_jpeg_downscaled(img: RgbaImage, max_side: u32, quality: u8) -> Result<String, String> {
+    let img = maybe_downscale(img, max_side);
+    // JPEG has no alpha channel — flatten RGBA → RGB first.
+    let rgb = image::DynamicImage::ImageRgba8(img).to_rgb8();
+    let mut buf = Vec::new();
+    JpegEncoder::new_with_quality(&mut buf, quality)
+        .encode(rgb.as_raw(), rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
+        .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
+    Ok(format!("data:image/jpeg;base64,{}", STANDARD.encode(buf)))
+}
+
+/// Full screen under the cursor, as a small JPEG for the agent's capture_screen.
+pub fn capture_agent_full() -> Result<String, String> {
+    let (cx, cy) = crate::mouse::get_cursor_position();
+    let screen = screen_at(cx, cy)?;
+    let image = screen
+        .capture()
+        .map_err(|e| format!("Failed to capture screen: {}", e))?;
+    encode_jpeg_downscaled(to_rgba_image(image)?, AGENT_MAX_SIDE, AGENT_JPEG_QUALITY)
+}
+
+/// The window under the cursor (or a crop fallback), as a small JPEG — the
+/// agent's initial grounding screenshot.
+pub fn capture_agent_window(cx: i32, cy: i32) -> Result<String, String> {
+    if let Some((x, y, w, h)) = crate::explorer::window_rect_at(cx, cy) {
+        if let Ok(img) = capture_region_raw(x, y, w, h) {
+            return encode_jpeg_downscaled(img, AGENT_MAX_SIDE, AGENT_JPEG_QUALITY);
+        }
+    }
+    let r = 450i32;
+    let img = capture_region_raw(cx - r, cy - r, 900, 900)?;
+    encode_jpeg_downscaled(img, AGENT_MAX_SIDE, AGENT_JPEG_QUALITY)
 }
