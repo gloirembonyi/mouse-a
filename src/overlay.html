@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mouse AI Overlay</title>
+  <link rel="stylesheet" href="overlay.css" />
+</head>
+<body>
+  <div id="root">
+    <!-- Collapsed pill: appears when the mouse pauses over something -->
+    <button id="pill" hidden>
+      <span class="pill-icon">✦</span>
+      <span class="pill-label">Ask AI</span>
+      <span id="pill-context"></span>
+    </button>
+
+    <!-- Expanded ask panel -->
+    <div id="panel" hidden>
+      <header id="panel-header" data-tauri-drag-region>
+        <span class="panel-icon">🖱️</span>
+        <div class="panel-titles" data-tauri-drag-region>
+          <span id="panel-app">Mouse AI</span>
+          <span id="panel-element"></span>
+        </div>
+        <button id="btn-agent" class="ghost-btn" title="Agent mode: let Mouse AI act on your PC to do the task">🤖</button>
+        <button id="btn-open-app" class="ghost-btn" title="Open Mouse AI window">⤢</button>
+        <button id="btn-close" class="ghost-btn" title="Close (Esc)">✕</button>
+      </header>
+
+      <div id="answer" hidden></div>
+
+      <div id="agent-log" hidden></div>
+
+      <div id="thinking" hidden>
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="thinking-label">Looking at your screen…</span>
+      </div>
+
+      <div class="ask-row">
+        <input id="question" type="text" placeholder="Ask about what's under your mouse…" autocomplete="off" />
+        <button id="btn-analyze" title="Explain what's here">👁</button>
+        <button id="btn-ask" title="Ask / do it (Enter)">➤</button>
+      </div>
+    </div>
+
+    <!-- Toast: brief feedback when AI mode toggles -->
+    <div id="toast" hidden></div>
+  </div>
+
+  <script src="overlay.js"></script>
+</body>
+</html>
