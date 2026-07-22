@@ -480,12 +480,58 @@ function renderAgentProgress(p) {
     return;
   }
 
+  if (p.kind === "confirm") {
+    log.appendChild(buildConfirmPrompt(p));
+    scrollToBottom();
+    return;
+  }
+
   const line = document.createElement("div");
   line.className = `agent-line agent-${p.kind}`;
   const icon = { thinking: "💭", tool: "⚙️", "tool-result": "↳", error: "⚠️" }[p.kind] || "•";
   line.textContent = `${icon} ${p.message}`;
   log.appendChild(line);
   scrollToBottom();
+}
+
+// Renders a real Allow/Deny prompt the agent is waiting on, and reports the
+// user's click straight back to the paused tool call in Rust.
+function buildConfirmPrompt(p) {
+  const wrap = document.createElement("div");
+  wrap.className = "agent-confirm";
+
+  const msg = document.createElement("div");
+  msg.className = "agent-confirm-msg";
+  msg.textContent = `🔒 ${p.message}`;
+  wrap.appendChild(msg);
+
+  const row = document.createElement("div");
+  row.className = "agent-confirm-buttons";
+
+  const allowBtn = document.createElement("button");
+  allowBtn.className = "agent-confirm-btn allow";
+  allowBtn.textContent = "Allow";
+
+  const denyBtn = document.createElement("button");
+  denyBtn.className = "agent-confirm-btn deny";
+  denyBtn.textContent = "Deny";
+
+  const decide = async (approved) => {
+    allowBtn.disabled = true;
+    denyBtn.disabled = true;
+    try {
+      await invoke("agent_confirm", { requestId: p.request_id, approved });
+    } catch { /* ignore */ }
+    msg.textContent = approved ? `✅ Allowed: ${p.message}` : `🚫 Denied: ${p.message}`;
+    row.remove();
+  };
+
+  allowBtn.addEventListener("click", () => decide(true));
+  denyBtn.addEventListener("click", () => decide(false));
+  row.appendChild(allowBtn);
+  row.appendChild(denyBtn);
+  wrap.appendChild(row);
+  return wrap;
 }
 
 function finishAgentActivity() {

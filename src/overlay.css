@@ -344,3 +344,33 @@ html, body {
 }
 
 #toast[hidden] { display: none; }
+
+/* ── Agent confirmation prompt ─────────────────────────────────── */
+.agent-confirm {
+  border: 1px solid rgba(255, 183, 77, 0.4);
+  background: rgba(255, 183, 77, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 4px 0;
+}
+.agent-confirm-msg {
+  font-size: 11px;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+.agent-confirm-buttons { display: flex; gap: 8px; }
+.agent-confirm-btn {
+  flex: 1;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.agent-confirm-btn.allow { background: rgba(76, 175, 80, 0.15); color: #4caf50; border-color: rgba(76, 175, 80, 0.35); }
+.agent-confirm-btn.allow:hover { background: rgba(76, 175, 80, 0.3); }
+.agent-confirm-btn.deny { background: rgba(239, 83, 80, 0.15); color: #ef5350; border-color: rgba(239, 83, 80, 0.35); }
+.agent-confirm-btn.deny:hover { background: rgba(239, 83, 80, 0.3); }
+.agent-confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
