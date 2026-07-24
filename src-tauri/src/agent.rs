@@ -30,6 +30,10 @@ const MAX_ITERATIONS: usize = 40;
 const MAX_EMPTY_RESPONSE_RETRIES: usize = 3;
 // A single foreground command can't hold the whole task hostage.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
+// A model-requested timeout_seconds is honored up to this — long enough for a
+// real build/install, still bounded so a stuck command can't wedge the task
+// indefinitely (background:true remains the right tool for anything longer).
+const MAX_COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_TOOL_OUTPUT: usize = 6000;
 const MAX_FILE_READ: usize = 20_000;
 
@@ -150,7 +154,11 @@ center of the page content, then capture_screen to see what's now visible before
   7. If a page didn't load, looks wrong, or you're unsure you're on the right site, say so and \
 capture_screen again rather than clicking blindly — precision matters more than speed.\n\
 - Coding/editor tasks (e.g. in Cursor or VS Code): prefer the terminal (run_command) and read_file/\
-write_file/edit-style file writes over clicking around the editor UI — it's far more reliable.\n\
+write_file/edit-style file writes over clicking around the editor UI — it's far more reliable. Use \
+run_command's cwd to run inside a specific project folder instead of cd-ing in the command string, and \
+pass timeout_seconds (up to 300) for anything slower than the ~45s default — an install/build/test run \
+that just needs more time is not the same as background=true, which is for long-running/indefinite \
+processes (servers, watchers) you don't want to wait on at all.\n\
 - Finding things: use find_files to locate a file anywhere on the PC by name; use run_command with \
 Select-String (or the tools) to search inside files.\n\
 - Before a genuinely sensitive or ambiguous action — submitting a form with personal/payment info, \
@@ -179,12 +187,14 @@ fn tool_declarations() -> Value {
     json!([
         {
             "name": "run_command",
-            "description": "Run a Windows PowerShell command and return its output. Use background=true for long-running/servers so it doesn't block.",
+            "description": "Run a Windows PowerShell command and return its output. Use background=true for long-running/servers so it doesn't block. For anything that takes more than a few seconds (installs, builds), pass timeout_seconds explicitly rather than letting it hit the default and fail — up to 300s foreground, or use background=true for anything longer/indefinite.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "The PowerShell command to run." },
-                    "background": { "type": "boolean", "description": "Run detached and return immediately." }
+                    "background": { "type": "boolean", "description": "Run detached and return immediately." },
+                    "cwd": { "type": "string", "description": "Working directory to run the command in (defaults to the app's own directory if omitted)." },
+                    "timeout_seconds": { "type": "integer", "description": "How long to wait for foreground output before giving up, 1-300 (default 45). Ignored when background=true." }
                 },
                 "required": ["command"]
             }
@@ -599,9 +609,13 @@ async fn drive_loop(
         let step = agent_step_with_retry(app, backend, system, &contents, tools, source).await?;
         let parts = step.get("parts").and_then(|p| p.as_array()).cloned().unwrap_or_default();
 
-        // Split the model's reply into free text and tool calls, and rebuild a
-        // clean model turn to echo back (Gemini needs its own functionCalls in
-        // the history to match them with our functionResponses).
+        // Split the model's reply into free text and tool calls, and echo the
+        // model's OWN parts back verbatim into history (not a rebuilt {name,args}
+        // object) — thinking-enabled Gemini models attach a sibling
+        // `thoughtSignature` field to functionCall parts that MUST be replayed
+        // back unchanged on the next turn, or the API 400s with "Function call is
+        // missing a thought_signature". Reconstructing a stripped-down part
+        // silently drops that field.
         let mut assistant_text = String::new();
         let mut calls: Vec<(String, Value)> = Vec::new();
         let mut model_parts: Vec<Value> = Vec::new();
@@ -610,13 +624,13 @@ async fn drive_loop(
             if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
                 if !t.trim().is_empty() {
                     assistant_text.push_str(t);
-                    model_parts.push(json!({ "text": t }));
+                    model_parts.push(part.clone());
                 }
             }
             if let Some(fc) = part.get("functionCall") {
                 let name = fc.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
                 let args = fc.get("args").cloned().unwrap_or_else(|| json!({}));
-                model_parts.push(json!({ "functionCall": { "name": name, "args": args } }));
+                model_parts.push(part.clone());
                 calls.push((name, args));
             }
         }
@@ -802,9 +816,16 @@ async fn run_command_tool(args: &Value) -> ToolOutcome {
         ));
     }
     let background = args.get("background").and_then(|b| b.as_bool()).unwrap_or(false);
+    let cwd = args.get("cwd").and_then(|c| c.as_str()).filter(|c| !c.trim().is_empty()).map(|c| c.to_string());
+    let timeout = args
+        .get("timeout_seconds")
+        .and_then(|t| t.as_u64())
+        .map(Duration::from_secs)
+        .map(|d| d.clamp(Duration::from_secs(1), MAX_COMMAND_TIMEOUT))
+        .unwrap_or(COMMAND_TIMEOUT);
     let cmd = command.clone();
 
-    let result = tokio::task::spawn_blocking(move || run_powershell(&cmd, background)).await;
+    let result = tokio::task::spawn_blocking(move || run_powershell(&cmd, background, cwd.as_deref(), timeout)).await;
     match result {
         Ok(Ok(out)) => ToolOutcome {
             response: json!({ "output": truncate(&out, MAX_TOOL_OUTPUT) }),
@@ -816,31 +837,36 @@ async fn run_command_tool(args: &Value) -> ToolOutcome {
     }
 }
 
-fn run_powershell(command: &str, background: bool) -> Result<String, String> {
+fn run_powershell(command: &str, background: bool, cwd: Option<&str>, timeout: Duration) -> Result<String, String> {
     use std::process::{Command, Stdio};
 
     if background {
         // Detached: fire-and-forget, don't wait for or capture output.
-        Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", command])
+        let mut cmd = Command::new("powershell");
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command", command])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .stdin(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("failed to start: {}", e))?;
+            .stdin(Stdio::null());
+        if let Some(dir) = cwd {
+            cmd.current_dir(dir);
+        }
+        cmd.spawn().map_err(|e| format!("failed to start: {}", e))?;
         return Ok("Command started in the background.".to_string());
     }
 
-    let child = Command::new("powershell")
+    let mut spawn_cmd = Command::new("powershell");
+    spawn_cmd
         .args(["-NoProfile", "-NonInteractive", "-Command", command])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .stdin(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("failed to start: {}", e))?;
+        .stdin(Stdio::null());
+    if let Some(dir) = cwd {
+        spawn_cmd.current_dir(dir);
+    }
+    let child = spawn_cmd.spawn().map_err(|e| format!("failed to start: {}", e))?;
 
     // Enforce a wall-clock timeout so one hung command can't stall the agent.
-    let out = wait_with_timeout(child, COMMAND_TIMEOUT)?;
+    let out = wait_with_timeout(child, timeout)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let mut combined = String::new();
@@ -875,7 +901,7 @@ fn wait_with_timeout(
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
                     return Err(format!(
-                        "command timed out after {}s (use background=true for long-running commands)",
+                        "command timed out after {}s (pass a longer timeout_seconds for a slow-but-finite command, or background=true for a long-running/indefinite one)",
                         timeout.as_secs()
                     ));
                 }
