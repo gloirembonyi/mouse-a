@@ -15,6 +15,17 @@ const DEFAULT_BACKEND_URL: &str = "https://backend-thothai.vercel.app";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 // Total budget — Gemini calls with screenshots can legitimately take a while.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+// A dated snapshot like "gemini-2.5-flash" WILL eventually 404 with "no longer
+// available to new users" once Google retires it (this is exactly what broke
+// the agent live) — "-latest" is Google's own alias for "whatever the current
+// recommended flash model is", so it doesn't need a code change when that
+// happens again. Overridable without a rebuild if it ever needs to change fast.
+pub fn default_gemini_model() -> String {
+    std::env::var("MOUSE_AI_GEMINI_MODEL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "gemini-flash-latest".to_string())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthUser {
@@ -442,7 +453,7 @@ impl BackendClient {
             "system": system,
             "contents": contents,
             "tools": tools,
-            "model": "gemini-2.5-flash",
+            "model": default_gemini_model(),
         });
 
         let resp = self

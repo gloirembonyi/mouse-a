@@ -333,7 +333,7 @@ pub async fn ask_about_hover(
     let conv_id = state.conversation_id.read().await.clone();
     let request = ChatRequest {
         user_text: prompt,
-        model: Some("gemini-2.5-flash".to_string()),
+        model: Some(crate::backend::default_gemini_model()),
         image_data_url,
         web_search_needed: false,
         conversation_id: conv_id,
@@ -418,7 +418,7 @@ pub async fn send_chat(
 
     let request = ChatRequest {
         user_text: text,
-        model: Some("gemini-2.5-flash".to_string()),
+        model: Some(crate::backend::default_gemini_model()),
         image_data_url,
         web_search_needed: web_search.unwrap_or(false),
         conversation_id: conv_id,
@@ -499,7 +499,7 @@ pub async fn analyze_at_cursor(
 
     let request = ChatRequest {
         user_text: prompt,
-        model: Some("gemini-2.5-flash".to_string()),
+        model: Some(crate::backend::default_gemini_model()),
         image_data_url: Some(image_data_url),
         web_search_needed: true,
         conversation_id: conv_id,
