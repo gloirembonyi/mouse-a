@@ -69,6 +69,32 @@ pub struct ChatMessage {
     pub content: String,
 }
 
+// ── Conversation history ─────────────────────────────────────────
+// The backend's DB rows come back with raw snake_case columns (the Neon
+// serverless driver doesn't camelCase them) — field names here match the
+// wire JSON exactly instead of renaming, since these are only ever read by
+// the history UI, not round-tripped back to the server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryConversation {
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    /// Only present on the list endpoint, not the single-conversation lookup.
+    #[serde(default)]
+    pub message_count: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryMessage {
+    /// Bigint in Postgres, serialized as a string by the Neon driver.
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub created_at: String,
+}
+
 // ── Persisted config ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -481,6 +507,96 @@ impl BackendClient {
             .await
             .map_err(|e| format!("Failed to parse fetch: {}", e))?;
         Ok(data.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string())
+    }
+
+    // ── Conversation history ───────────────────────────────────────
+
+    /// Per-user counts (conversations/messages/memories/skills/...) — a
+    /// camelCase object hand-built server-side, unlike the snake_case rows
+    /// below.
+    pub async fn get_history_stats(&self) -> Result<serde_json::Value, String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let url = format!("{}/api/history/stats", self.base_url.read().await);
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        if !resp.status().is_success() {
+            return Err(format!("Failed to load stats ({})", resp.status().as_u16()));
+        }
+        #[derive(Deserialize)]
+        struct Resp {
+            stats: serde_json::Value,
+        }
+        let data: Resp = resp.json().await.map_err(|e| format!("Failed to parse stats: {}", e))?;
+        Ok(data.stats)
+    }
+
+    /// Past conversations, most-recently-updated first (server-side order,
+    /// not client-controllable). `limit` is clamped server-side to 1-100.
+    pub async fn get_conversations(&self, limit: Option<u32>) -> Result<Vec<HistoryConversation>, String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let base = self.base_url.read().await.clone();
+        let url = match limit {
+            Some(l) => format!("{}/api/history/conversations?limit={}", base, l),
+            None => format!("{}/api/history/conversations", base),
+        };
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        if !resp.status().is_success() {
+            return Err(format!("Failed to load conversations ({})", resp.status().as_u16()));
+        }
+        #[derive(Deserialize)]
+        struct Resp {
+            conversations: Vec<HistoryConversation>,
+        }
+        let data: Resp = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse conversations: {}", e))?;
+        Ok(data.conversations)
+    }
+
+    /// A conversation's messages, oldest first. 404s (wrong id, or one that
+    /// belongs to someone else) surface as a plain "not found" error.
+    pub async fn get_conversation_messages(
+        &self,
+        conversation_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<HistoryMessage>, String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let base = self.base_url.read().await.clone();
+        let url = match limit {
+            Some(l) => format!("{}/api/history/conversations/{}/messages?limit={}", base, conversation_id, l),
+            None => format!("{}/api/history/conversations/{}/messages", base, conversation_id),
+        };
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        if resp.status().as_u16() == 404 {
+            return Err("That conversation could not be found — it may have been deleted.".to_string());
+        }
+        if !resp.status().is_success() {
+            return Err(format!("Failed to load conversation ({})", resp.status().as_u16()));
+        }
+        #[derive(Deserialize)]
+        struct Resp {
+            messages: Vec<HistoryMessage>,
+        }
+        let data: Resp = resp.json().await.map_err(|e| format!("Failed to parse messages: {}", e))?;
+        Ok(data.messages)
     }
 }
 

@@ -97,9 +97,56 @@ function scheduleAutoHide(ms) {
   }, ms);
 }
 
+// Makes an element draggable (moves the whole overlay window) while still
+// firing a normal click when the user just presses and releases without
+// moving. Deliberately NOT using data-tauri-drag-region here: Tauri's native
+// drag-region invokes the OS window-move on mousedown for ANY click, which on
+// Windows reliably swallows the paired click on a real <button> (the OS's
+// caption-drag loop takes over the mouse) — the exact "I can't click it
+// anymore" symptom. Instead: only actually start the native drag once the
+// pointer has moved past a small threshold, so a real click never triggers it.
+function makeDraggableClickable(el, onClick) {
+  const DRAG_THRESHOLD = 4;
+  let pressed = false;
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+
+  el.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    pressed = true;
+    dragging = false;
+    startX = e.clientX;
+    startY = e.clientY;
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!pressed || dragging) return;
+    if (Math.abs(e.clientX - startX) > DRAG_THRESHOLD || Math.abs(e.clientY - startY) > DRAG_THRESHOLD) {
+      dragging = true;
+      window.__TAURI__.window.getCurrentWindow().startDragging().catch(() => {});
+    }
+  });
+
+  window.addEventListener("mouseup", () => {
+    pressed = false;
+  });
+
+  el.addEventListener("click", (e) => {
+    if (dragging) {
+      // Tail end of a drag gesture, not a real click — swallow it.
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = false;
+      return;
+    }
+    onClick(e);
+  });
+}
+
 // ── UI wiring ──────────────────────────────────────────────
 function setupUI() {
-  pill.addEventListener("click", expand);
+  makeDraggableClickable(pill, expand);
   btnClose.addEventListener("click", collapse);
   btnOpenApp.addEventListener("click", () => invoke("show_main_window").catch(() => {}));
   btnAsk.addEventListener("click", () => ask(questionInput.value.trim() || null));
@@ -190,6 +237,14 @@ function toggleAgentMode() {
     : "Ask about what's under your mouse…";
 }
 
+// The panel only ever showed the ANSWER, never what was actually asked — easy
+// to lose track of, especially once the panel's grown to fit a long reply.
+// Echoed above the answer/log for both the plain-ask and agent-task paths.
+function questionHeaderHtml(question) {
+  if (!question) return "";
+  return `<div class="asked-question">${escapeHtml(question)}</div>`;
+}
+
 async function ask(question) {
   if (!hover || busy) return;
   if (agentMode) return runAgentTask(question);
@@ -211,13 +266,13 @@ async function ask(question) {
       }),
       55000
     );
-    answerEl.innerHTML = renderMarkdown(result.text || "(no answer)");
+    answerEl.innerHTML = questionHeaderHtml(question) + renderMarkdown(result.text || "(no answer)");
     // Grow the modal so the answer is comfortably readable.
     try {
       await invoke("expand_overlay", { width: 460, height: 460 });
     } catch { /* ignore */ }
   } catch (err) {
-    answerEl.innerHTML = `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
+    answerEl.innerHTML = questionHeaderHtml(question) + `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
   } finally {
     thinkingEl.hidden = true;
     answerEl.hidden = false;
@@ -239,7 +294,7 @@ async function runAgentTask(task) {
   thinkingEl.hidden = true;
   answerEl.hidden = true;
   agentLogEl.hidden = false;
-  agentLogEl.innerHTML = `<div class="agent-line agent-thinking">💭 Starting…</div>`;
+  agentLogEl.innerHTML = questionHeaderHtml(task) + `<div class="agent-line agent-thinking">💭 Starting…</div>`;
   try {
     await invoke("expand_overlay", { width: 460, height: 480 });
   } catch { /* ignore */ }
@@ -254,14 +309,14 @@ async function runAgentTask(task) {
     });
     agentLogEl.hidden = true;
     answerEl.hidden = false;
-    answerEl.innerHTML = renderMarkdown(result.text || "(done)");
+    answerEl.innerHTML = questionHeaderHtml(task) + renderMarkdown(result.text || "(done)");
   } catch (err) {
     // Hide the activity log (it may still hold a raw "⚠️ ..." line from the
     // agent-progress "error" event that fired just before this rejection) so
     // the user sees one clean, friendly error box instead of both.
     agentLogEl.hidden = true;
     answerEl.hidden = false;
-    answerEl.innerHTML = `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
+    answerEl.innerHTML = questionHeaderHtml(task) + `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
   } finally {
     setBusy(false);
     questionInput.value = "";

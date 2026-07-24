@@ -22,8 +22,25 @@
         <button id="btn-new-chat" class="icon-btn" title="New conversation">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
+        <button id="btn-history" class="icon-btn" title="Conversation history">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 15"/></svg>
+        </button>
         <button id="btn-settings" class="icon-btn" title="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <!-- The window is frameless (see tauri.conf.json's transparent+decorations:false
+             on "main") for the glass look, so these replace the native title-bar
+             controls. data-tauri-drag-region is on the header, not these buttons,
+             so clicking them doesn't drag the window. -->
+        <span class="header-divider"></span>
+        <button id="btn-win-minimize" class="icon-btn" title="Minimize">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button id="btn-win-maximize" class="icon-btn" title="Maximize / Restore">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="1.5"/></svg>
+        </button>
+        <button id="btn-win-close" class="icon-btn icon-btn-close" title="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
         </button>
       </div>
     </header>
@@ -108,6 +125,18 @@
           <span class="hint-item" id="toggle-hint">🖱️ Hover mode: Ctrl+Shift+Q</span>
           <span class="hint-item" id="capture-hint">📸 Ctrl+Shift+S</span>
         </div>
+      </div>
+    </div>
+
+    <!-- History Panel -->
+    <div id="history-panel" class="view" hidden>
+      <div class="settings-header">
+        <h2>History</h2>
+        <button id="btn-close-history" class="icon-btn">✕</button>
+      </div>
+      <div class="settings-content">
+        <p class="about-text" id="history-stats"></p>
+        <div id="history-list" class="history-list"></div>
       </div>
     </div>
 

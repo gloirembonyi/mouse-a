@@ -8,10 +8,13 @@
 </head>
 <body>
   <div id="root">
-    <!-- Collapsed pill: appears when the mouse pauses over something. Also a
-         drag region so the user can drop it wherever's convenient before
-         clicking it open — a plain click (no movement) still expands it. -->
-    <button id="pill" data-tauri-drag-region hidden>
+    <!-- Collapsed pill: appears when the mouse pauses over something. Draggable
+         to reposition (handled entirely in JS, not via data-tauri-drag-region —
+         Tauri's native drag-region starts an OS-level window-move on mousedown,
+         which reliably swallows the matching click on a <button>, so a plain
+         attribute here would make click-to-expand unreliable). A press that
+         doesn't move past a small threshold still expands it normally. -->
+    <button id="pill" hidden>
       <span class="pill-icon">✦</span>
       <span class="pill-label">Ask AI</span>
       <span id="pill-context"></span>

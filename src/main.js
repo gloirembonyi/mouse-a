@@ -3,6 +3,7 @@
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
+const { getCurrentWindow } = window.__TAURI__.window;
 
 // ── State ──────────────────────────────────────────────
 let aiActive = false;
@@ -20,6 +21,9 @@ const $$ = (sel) => document.querySelectorAll(sel);
 const authGate = $("#auth-gate");
 const mainView = $("#main-view");
 const settingsPanel = $("#settings-panel");
+const historyPanel = $("#history-panel");
+const historyListEl = $("#history-list");
+const historyStatsEl = $("#history-stats");
 const loadingOverlay = $("#loading-overlay");
 const messagesContainer = $("#messages-container");
 const messagesEl = $("#messages");
@@ -56,12 +60,19 @@ function setupEventListeners() {
 
   // Header buttons
   $("#btn-new-chat")?.addEventListener("click", handleNewChat);
+  $("#btn-history")?.addEventListener("click", showHistory);
+  $("#btn-close-history")?.addEventListener("click", hideHistory);
   $("#btn-settings")?.addEventListener("click", showSettings);
   $("#btn-close-settings")?.addEventListener("click", hideSettings);
   $("#btn-signout")?.addEventListener("click", handleSignOut);
   $("#btn-save-backend-url")?.addEventListener("click", handleSaveBackendUrl);
   $("#btn-test-backend")?.addEventListener("click", handleTestBackend);
   $("#btn-save-mcp")?.addEventListener("click", handleSaveMcp);
+
+  // Custom window controls (the window is frameless — see tauri.conf.json)
+  $("#btn-win-minimize")?.addEventListener("click", () => getCurrentWindow().minimize().catch(() => {}));
+  $("#btn-win-maximize")?.addEventListener("click", () => getCurrentWindow().toggleMaximize().catch(() => {}));
+  $("#btn-win-close")?.addEventListener("click", () => getCurrentWindow().close().catch(() => {}));
 
   // AI indicator click
   indicator?.addEventListener("click", handleToggleAI);
@@ -94,6 +105,7 @@ function setupEventListeners() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (settingsPanel && !settingsPanel.hidden) hideSettings();
+      if (historyPanel && !historyPanel.hidden) hideHistory();
     }
   });
 }
@@ -837,6 +849,87 @@ async function handleTestBackend() {
 function hideSettings() {
   settingsPanel.hidden = true;
   mainView.hidden = false;
+}
+
+// ── History ─────────────────────────────────────────────
+async function showHistory() {
+  mainView.hidden = true;
+  historyPanel.hidden = false;
+  historyStatsEl.textContent = "Loading…";
+  historyListEl.innerHTML = "";
+
+  const [stats, conversations] = await Promise.all([
+    invoke("get_history_stats").catch(() => null),
+    invoke("get_conversations", { limit: 50 }).catch((err) => {
+      historyStatsEl.textContent = `Couldn't load history: ${err?.message || err}`;
+      return [];
+    }),
+  ]);
+
+  if (stats) {
+    historyStatsEl.textContent = `${stats.conversations} conversation${stats.conversations === 1 ? "" : "s"} · ${stats.messages} message${stats.messages === 1 ? "" : "s"}`;
+  }
+  renderHistoryList(conversations || []);
+}
+
+function hideHistory() {
+  historyPanel.hidden = true;
+  mainView.hidden = false;
+}
+
+function renderHistoryList(conversations) {
+  if (!conversations.length) {
+    historyListEl.innerHTML = `<p class="about-text">No past conversations yet.</p>`;
+    return;
+  }
+  historyListEl.innerHTML = "";
+  for (const conv of conversations) {
+    const row = document.createElement("button");
+    row.className = "history-row";
+    row.innerHTML = `
+      <div class="history-row-title">${escapeHtml(conv.title || "Untitled conversation")}</div>
+      <div class="history-row-meta">
+        <span>${relativeTime(conv.updated_at)}</span>
+        <span>${conv.message_count ?? "?"} msg${conv.message_count === 1 ? "" : "s"}</span>
+      </div>`;
+    row.addEventListener("click", () => openConversation(conv.id));
+    historyListEl.appendChild(row);
+  }
+}
+
+async function openConversation(id) {
+  historyStatsEl.textContent = "Loading conversation…";
+  try {
+    const msgs = await invoke("get_conversation_messages", { id, limit: 200 });
+    await invoke("set_conversation_id", { id });
+
+    messages = [];
+    messagesEl.innerHTML = "";
+    clearWelcome();
+    for (const m of msgs) {
+      addMessage(m.role === "assistant" ? "assistant" : "user", m.content);
+    }
+    hideHistory();
+  } catch (err) {
+    historyStatsEl.textContent = `Couldn't open that conversation: ${err?.message || err}`;
+  }
+}
+
+// Coarse relative-time label ("just now" / "5m ago" / "3h ago" / "2d ago" /
+// a plain date beyond that) — history entries don't need second-level
+// precision, just a quick sense of how recent each one is.
+function relativeTime(isoString) {
+  const then = new Date(isoString).getTime();
+  if (Number.isNaN(then)) return "";
+  const diffMs = Date.now() - then;
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(isoString).toLocaleDateString();
 }
 
 function scrollToBottom() {

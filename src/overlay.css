@@ -274,6 +274,24 @@ html, body {
 #answer::-webkit-scrollbar { width: 6px; }
 #answer::-webkit-scrollbar-thumb { background: var(--bg-tertiary); border-radius: 3px; }
 
+/* Echoes what was actually asked/asked-to-do above the answer/activity log —
+   easy to lose track of once the panel's grown to fit a long reply. */
+.asked-question {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  padding: 7px 10px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(118, 159, 205, 0.25);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
 #answer p { margin-bottom: 8px; }
 #answer code {
   background: var(--bg-tertiary);

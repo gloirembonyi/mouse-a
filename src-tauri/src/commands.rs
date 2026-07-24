@@ -526,6 +526,38 @@ pub async fn new_conversation(state: State<'_, AppState>) -> Result<(), String> 
     Ok(())
 }
 
+// ── History Commands ─────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_history_stats(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    state.backend.get_history_stats().await
+}
+
+#[tauri::command]
+pub async fn get_conversations(
+    state: State<'_, AppState>,
+    limit: Option<u32>,
+) -> Result<Vec<crate::backend::HistoryConversation>, String> {
+    state.backend.get_conversations(limit).await
+}
+
+#[tauri::command]
+pub async fn get_conversation_messages(
+    state: State<'_, AppState>,
+    id: String,
+    limit: Option<u32>,
+) -> Result<Vec<crate::backend::HistoryMessage>, String> {
+    state.backend.get_conversation_messages(&id, limit).await
+}
+
+/// Resume a past conversation — the next chat message continues this thread
+/// (same mechanism new_conversation resets) instead of starting a fresh one.
+#[tauri::command]
+pub async fn set_conversation_id(state: State<'_, AppState>, id: Option<String>) -> Result<(), String> {
+    *state.conversation_id.write().await = id;
+    Ok(())
+}
+
 // ── Auth Commands ────────────────────────────────────────────────
 
 /// Called on app startup instead of gating on a login screen: if there's
