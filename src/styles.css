@@ -3,7 +3,9 @@
  */
 
 /* ── Reset & Base ─────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+/* Same font pairing as the Thothai browser extension (dashboard.css / overlay.css),
+   for visual continuity between the extension and this desktop app. */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -21,19 +23,25 @@
 }
 
 :root {
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #12121a;
-  --bg-tertiary: #1a1a28;
-  --bg-hover: #22223a;
-  --bg-glass: rgba(18, 18, 26, 0.85);
+  /* Same accent family as the Thothai extension (--c-accent / --ghost-color-primary
+     in overlay.css / dashboard.css: #769FCD), on a cool navy dark theme rather than
+     the extension's frosted-glass-over-page look, since this window has no page
+     content behind it to blur. */
+  --bg-primary: #0a0d12;
+  --bg-secondary: #10141c;
+  --bg-tertiary: #171d28;
+  --bg-hover: #1e2634;
+  --bg-glass: rgba(16, 20, 28, 0.85);
   --border: rgba(255, 255, 255, 0.06);
-  --border-focus: rgba(124, 77, 255, 0.4);
-  --text-primary: #e8e6f0;
-  --text-secondary: #9490a8;
-  --text-muted: #5c5878;
-  --accent: #7c4dff;
-  --accent-soft: rgba(124, 77, 255, 0.15);
-  --accent-glow: rgba(124, 77, 255, 0.4);
+  --border-focus: rgba(118, 159, 205, 0.45);
+  --text-primary: #e9edf3;
+  --text-secondary: #93a2b8;
+  --text-muted: #5c6678;
+  --accent: #769fcd;
+  --accent-light: #a8c8e8;
+  --accent-dark: #4a7ab0;
+  --accent-soft: rgba(118, 159, 205, 0.15);
+  --accent-glow: rgba(118, 159, 205, 0.4);
   --success: #4caf50;
   --success-soft: rgba(76, 175, 80, 0.15);
   --danger: #ef5350;
@@ -47,7 +55,8 @@
   --shadow-md: 0 4px 20px rgba(0,0,0,0.4);
   --shadow-lg: 0 8px 40px rgba(0,0,0,0.5);
   --transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
-  --font: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
 }
 
 html, body {
@@ -96,7 +105,7 @@ html, body {
 .app-title {
   font-size: 14px;
   font-weight: 600;
-  background: linear-gradient(135deg, var(--accent), #b388ff);
+  background: linear-gradient(135deg, var(--accent), var(--accent-light));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -210,7 +219,7 @@ html, body {
   padding: 12px 20px;
   border: none;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--accent), #9c6aff);
+  background: linear-gradient(135deg, var(--accent), var(--accent-light));
   color: white;
   font-family: var(--font);
   font-size: 14px;
@@ -218,12 +227,12 @@ html, body {
   cursor: pointer;
   transition: all var(--transition);
   justify-content: center;
-  box-shadow: 0 4px 16px rgba(124, 77, 255, 0.3);
+  box-shadow: 0 4px 16px rgba(118, 159, 205, 0.3);
 }
 
 .btn-primary:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 24px rgba(124, 77, 255, 0.4);
+  box-shadow: 0 6px 24px rgba(118, 159, 205, 0.4);
 }
 
 .btn-primary:active {
@@ -283,7 +292,7 @@ html, body {
 }
 
 .btn-send:hover {
-  background: #9c6aff;
+  background: var(--accent-light);
   transform: scale(1.05);
 }
 
@@ -404,7 +413,7 @@ kbd {
   justify-content: space-between;
   padding: 6px 14px;
   background: var(--accent-soft);
-  border-bottom: 1px solid rgba(124, 77, 255, 0.2);
+  border-bottom: 1px solid rgba(118, 159, 205, 0.2);
   flex-shrink: 0;
 }
 
@@ -524,7 +533,7 @@ kbd {
 }
 
 .message.user .msg-content {
-  background: linear-gradient(135deg, var(--accent), #9c6aff);
+  background: linear-gradient(135deg, var(--accent), var(--accent-light));
   color: white;
   border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
   max-width: 85%;
@@ -563,7 +572,7 @@ kbd {
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 12px;
-  font-family: 'Fira Code', 'Cascadia Code', monospace;
+  font-family: var(--font-mono);
 }
 
 .msg-content pre {
@@ -888,6 +897,7 @@ kbd {
   color: var(--text-primary);
   margin-bottom: 6px;
 }
+.agent-activity-head.failed { color: var(--danger); }
 .agent-activity-log {
   display: flex;
   flex-direction: column;
@@ -900,7 +910,7 @@ kbd {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.agent-line.agent-tool { color: var(--text-primary); font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+.agent-line.agent-tool { color: var(--text-primary); font-family: var(--font-mono); }
 .agent-line.agent-tool-result { color: var(--text-muted); padding-left: 10px; }
 .agent-line.agent-thinking { color: var(--text-secondary); font-style: italic; }
 .agent-line.agent-error { color: var(--danger); }

@@ -96,7 +96,7 @@ pub fn get_cursor_context() -> CursorContext {
 }
 
 #[cfg(windows)]
-fn get_process_name(pid: u32) -> String {
+pub(crate) fn get_process_name(pid: u32) -> String {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use winapi::um::handleapi::CloseHandle;

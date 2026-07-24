@@ -23,7 +23,11 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::oneshot;
 
-const MAX_ITERATIONS: usize = 28;
+const MAX_ITERATIONS: usize = 40;
+// A clean HTTP 200 with a genuinely empty candidate (no text, no functionCall) is rare
+// but does happen under load — retrying with a short nudge recovers most of these
+// instead of ending the whole task on one blank turn (see drive_loop).
+const MAX_EMPTY_RESPONSE_RETRIES: usize = 3;
 // A single foreground command can't hold the whole task hostage.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
 const MAX_TOOL_OUTPUT: usize = 6000;
@@ -127,17 +131,23 @@ raw pixels, and independent of the screenshot's actual resolution. Always base c
 MOST RECENT screenshot only; if you're not looking at a fresh one, call capture_screen again first \
 — clicking from a stale or remembered screenshot is the #1 cause of clicking the wrong thing.\n\
 - Browser tasks (be precise — don't guess a destination):\n\
-  1. If you already know the exact URL, open_url directly. If you don't, use web_search first and \
+  1. Check list_windows first — if a browser is already open, use focus_window to bring it forward \
+instead of launching a new one; only fall back to open_url for a brand-new window/tab.\n\
+  2. If you already know the exact URL, open_url directly. If you don't, use web_search first and \
 open_url the exact result link — never guess or invent a URL, and never click a search result \
 before capture_screen confirms it's the one you mean.\n\
-  2. After open_url, wait ~2s, then capture_screen before doing anything else — the page may still \
-be loading, and acting on the previous page's layout is the #2 cause of wrong clicks.\n\
-  3. To fill a form: capture_screen, click the exact field, type_text into it, repeat per field \
+  3. If web_search returns 0 results (it can, for very fresh/niche/local queries), don't retry the \
+identical query — either rephrase it once with different/fewer keywords, or open_url directly to a \
+search engine results page (e.g. https://www.google.com/search?q=... or https://www.bing.com/search?q=...) \
+and read the results yourself via capture_screen. Never repeat the exact failed query a third time.\n\
+  4. After open_url or focus_window, wait ~2s, then capture_screen before doing anything else — the \
+page may still be loading, and acting on stale layout is the #2 cause of wrong clicks.\n\
+  5. To fill a form: capture_screen, click the exact field, type_text into it, repeat per field \
 (Tab also moves between fields). Verify with capture_screen before submitting (press_key 'enter' \
 or click Submit).\n\
-  4. To scroll a page (like a normal user would to see more): scroll with a point roughly in the \
+  6. To scroll a page (like a normal user would to see more): scroll with a point roughly in the \
 center of the page content, then capture_screen to see what's now visible before acting further.\n\
-  5. If a page didn't load, looks wrong, or you're unsure you're on the right site, say so and \
+  7. If a page didn't load, looks wrong, or you're unsure you're on the right site, say so and \
 capture_screen again rather than clicking blindly — precision matters more than speed.\n\
 - Coding/editor tasks (e.g. in Cursor or VS Code): prefer the terminal (run_command) and read_file/\
 write_file/edit-style file writes over clicking around the editor UI — it's far more reliable.\n\
@@ -229,6 +239,20 @@ fn tool_declarations() -> Value {
             "name": "get_screen_context",
             "description": "Get the active window title, process, cursor position, and the folder/element under the cursor.",
             "parameters": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "list_windows",
+            "description": "List currently open top-level windows (title + process name). Use this to check whether a browser or app is already open before deciding to launch a new one.",
+            "parameters": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "focus_window",
+            "description": "Bring an already-open window to the foreground by a case-insensitive substring match on its title or process name (e.g. 'chrome', 'comet', 'notepad'). Prefer this over open_url/open_app when list_windows shows the window already exists — reusing it is more reliable than opening a duplicate.",
+            "parameters": {
+                "type": "object",
+                "properties": { "title_contains": { "type": "string", "description": "Substring to match against window titles/process names." } },
+                "required": ["title_contains"]
+            }
         },
         {
             "name": "click",
@@ -557,6 +581,7 @@ async fn drive_loop(
     // something different instead of silently spinning until the step cap.
     let mut last_call_signature: Option<String> = None;
     let mut repeat_count: usize = 0;
+    let mut empty_response_count: usize = 0;
 
     for _ in 0..MAX_ITERATIONS {
         // Bound the payload: only the 2 most recent screenshots ride along.
@@ -591,8 +616,37 @@ async fn drive_loop(
                 emit(app, source, "done", "Done");
                 return Ok(assistant_text);
             }
-            return Err("The agent returned an empty response.".to_string());
+            // A clean response with no text and no functionCall — Gemini occasionally
+            // returns this under load even after the backend's own retry/key-rotation.
+            // Nudge it to continue instead of ending the whole task on one blank turn.
+            empty_response_count += 1;
+            if empty_response_count > MAX_EMPTY_RESPONSE_RETRIES {
+                return Err(
+                    "The model kept returning empty responses. This can happen under heavy load — \
+wait a moment and try again, or try a smaller/more specific task."
+                        .to_string(),
+                );
+            }
+            emit(
+                app,
+                source,
+                "thinking",
+                format!(
+                    "The model returned an empty response — retrying ({}/{})…",
+                    empty_response_count, MAX_EMPTY_RESPONSE_RETRIES
+                ),
+            );
+            contents.push(json!({
+                "role": "user",
+                "parts": [{
+                    "text": "[SYSTEM NOTE] Your last turn had no content (no text, no tool call). \
+Please continue: call a tool if you need more information, or give a plain-text final answer if \
+the task is already done."
+                }]
+            }));
+            continue;
         }
+        empty_response_count = 0;
         contents.push(json!({ "role": "model", "parts": model_parts }));
 
         // No tool calls → this is the final answer.
@@ -671,6 +725,8 @@ fn tool_label(name: &str, args: &Value) -> String {
         "web_fetch" => format!("Fetching {}", args.get("url").and_then(|c| c.as_str()).unwrap_or("")),
         "capture_screen" => "Looking at the screen".to_string(),
         "get_screen_context" => "Reading screen context".to_string(),
+        "list_windows" => "Listing open windows".to_string(),
+        "focus_window" => format!("Focusing window: {}", args.get("title_contains").and_then(|c| c.as_str()).unwrap_or("")),
         "click" => format!(
             "Clicking ({}, {})",
             args.get("x").and_then(|v| v.as_i64()).unwrap_or(0),
@@ -709,6 +765,8 @@ async fn execute_tool(
         "web_fetch" => web_fetch_tool(backend, args).await,
         "capture_screen" => capture_screen_tool(screen).await,
         "get_screen_context" => get_screen_context_tool().await,
+        "list_windows" => list_windows_tool().await,
+        "focus_window" => focus_window_tool(args).await,
         "click" => click_tool(args, screen),
         "double_click" => double_click_tool(args, screen),
         "scroll" => scroll_tool(args, screen),
@@ -1046,6 +1104,197 @@ async fn get_screen_context_tool() -> ToolOutcome {
     match outcome {
         Ok(response) => ToolOutcome { response, image_data_url: None, log: "read screen context".to_string() },
         Err(e) => ToolOutcome::err(format!("context task failed: {}", e)),
+    }
+}
+
+/// One visible top-level window, as seen by `list_windows`/`focus_window`.
+struct WindowInfo {
+    title: String,
+    process_name: String,
+}
+
+#[cfg(windows)]
+fn enumerate_top_windows() -> Vec<WindowInfo> {
+    use winapi::shared::minwindef::{BOOL, LPARAM, TRUE};
+    use winapi::shared::windef::HWND;
+    use winapi::um::winuser::{
+        EnumWindows, GetClassNameW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+        IsWindowVisible,
+    };
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let out = &mut *(lparam as *mut Vec<WindowInfo>);
+        if IsWindowVisible(hwnd) == 0 {
+            return TRUE;
+        }
+        let len = GetWindowTextLengthW(hwnd);
+        if len == 0 {
+            return TRUE;
+        }
+        let mut buf = vec![0u16; (len + 1) as usize];
+        let actual = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        if actual == 0 {
+            return TRUE;
+        }
+        let title = String::from_utf16_lossy(&buf[..actual as usize]).trim().to_string();
+        if title.is_empty() {
+            return TRUE;
+        }
+        // Skip the class of invisible/utility "windows" Windows itself creates in bulk
+        // (tray icons, IME, tooltips) — they have a title but are noise for this list.
+        let mut class_buf = [0u16; 256];
+        let class_len = GetClassNameW(hwnd, class_buf.as_mut_ptr(), class_buf.len() as i32);
+        let class_name = if class_len > 0 {
+            String::from_utf16_lossy(&class_buf[..class_len as usize])
+        } else {
+            String::new()
+        };
+        if matches!(class_name.as_str(), "Shell_TrayWnd" | "Progman" | "WorkerW" | "IME") {
+            return TRUE;
+        }
+
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        let process_name = if pid > 0 { mouse::get_process_name(pid) } else { String::new() };
+        out.push(WindowInfo { title, process_name });
+        TRUE
+    }
+
+    let mut windows: Vec<WindowInfo> = Vec::new();
+    unsafe {
+        EnumWindows(Some(enum_proc), &mut windows as *mut Vec<WindowInfo> as LPARAM);
+    }
+    windows
+}
+
+#[cfg(not(windows))]
+fn enumerate_top_windows() -> Vec<WindowInfo> {
+    Vec::new()
+}
+
+#[cfg(windows)]
+fn focus_window_by_title(needle: &str) -> Result<String, String> {
+    use winapi::shared::minwindef::{BOOL, LPARAM, TRUE};
+    use winapi::shared::windef::HWND;
+    use winapi::um::processthreadsapi::GetCurrentThreadId;
+    use winapi::um::winuser::{
+        AttachThreadInput, BringWindowToTop, EnumWindows, GetClassNameW, GetForegroundWindow,
+        GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+        SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+
+    struct Search<'a> {
+        needle: &'a str,
+        found: Option<(HWND, String)>,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let search = &mut *(lparam as *mut Search);
+        if search.found.is_some() || IsWindowVisible(hwnd) == 0 {
+            return TRUE;
+        }
+        let len = GetWindowTextLengthW(hwnd);
+        let title = if len > 0 {
+            let mut buf = vec![0u16; (len + 1) as usize];
+            let actual = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+            String::from_utf16_lossy(&buf[..actual.max(0) as usize])
+        } else {
+            String::new()
+        };
+        let mut class_buf = [0u16; 256];
+        let class_len = GetClassNameW(hwnd, class_buf.as_mut_ptr(), class_buf.len() as i32);
+        let class_name = if class_len > 0 {
+            String::from_utf16_lossy(&class_buf[..class_len as usize])
+        } else {
+            String::new()
+        };
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        let process_name = if pid > 0 { mouse::get_process_name(pid) } else { String::new() };
+
+        let haystack = format!("{} {}", title, process_name).to_lowercase();
+        if !title.trim().is_empty()
+            && !matches!(class_name.as_str(), "Shell_TrayWnd" | "Progman" | "WorkerW" | "IME")
+            && haystack.contains(search.needle)
+        {
+            search.found = Some((hwnd, if title.trim().is_empty() { process_name } else { title }));
+        }
+        TRUE
+    }
+
+    let mut search = Search { needle, found: None };
+    unsafe {
+        EnumWindows(Some(enum_proc), &mut search as *mut Search as LPARAM);
+    }
+
+    let (hwnd, label) = search
+        .found
+        .ok_or_else(|| format!("no open window matches \"{}\" — check list_windows for the exact title", needle))?;
+
+    unsafe {
+        if IsIconic(hwnd) != 0 {
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        let foreground = GetForegroundWindow();
+        let current_thread = GetCurrentThreadId();
+        let fg_thread = if !foreground.is_null() {
+            GetWindowThreadProcessId(foreground, std::ptr::null_mut())
+        } else {
+            0
+        };
+        if fg_thread != 0 && fg_thread != current_thread {
+            AttachThreadInput(current_thread, fg_thread, 1);
+        }
+        BringWindowToTop(hwnd);
+        let ok = SetForegroundWindow(hwnd);
+        if fg_thread != 0 && fg_thread != current_thread {
+            AttachThreadInput(current_thread, fg_thread, 0);
+        }
+        if ok == 0 {
+            return Err(format!(
+                "found \"{}\" but Windows blocked bringing it to the foreground — try clicking its taskbar icon instead",
+                label
+            ));
+        }
+    }
+    Ok(label)
+}
+
+#[cfg(not(windows))]
+fn focus_window_by_title(_needle: &str) -> Result<String, String> {
+    Err("window focus is only supported on Windows".to_string())
+}
+
+async fn list_windows_tool() -> ToolOutcome {
+    let windows = tokio::task::spawn_blocking(enumerate_top_windows).await.unwrap_or_default();
+    let count = windows.len();
+    let entries: Vec<Value> = windows
+        .iter()
+        .take(40)
+        .map(|w| json!({ "title": w.title, "process": w.process_name }))
+        .collect();
+    ToolOutcome {
+        response: json!({ "windows": entries, "count": count }),
+        image_data_url: None,
+        log: format!("{} open window(s)", count),
+    }
+}
+
+async fn focus_window_tool(args: &Value) -> ToolOutcome {
+    let needle = args
+        .get("title_contains")
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    if needle.is_empty() {
+        return ToolOutcome::err("title_contains is required");
+    }
+    let result = tokio::task::spawn_blocking(move || focus_window_by_title(&needle)).await;
+    match result {
+        Ok(Ok(label)) => ToolOutcome::text(format!("Focused \"{}\".", label)),
+        Ok(Err(e)) => ToolOutcome::err(e),
+        Err(e) => ToolOutcome::err(format!("focus task failed: {}", e)),
     }
 }
 

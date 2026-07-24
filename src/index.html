@@ -148,16 +148,6 @@
           <p class="about-text" id="backend-url-status"></p>
         </div>
         <div class="setting-group">
-          <label>Gemini API key (recommended for Agent)</label>
-          <input type="password" id="gemini-key-input" class="input-field" placeholder="Paste your own Gemini API key…" autocomplete="off" />
-          <div style="display:flex;gap:8px">
-            <button id="btn-save-gemini-key" class="btn-secondary">Save key</button>
-            <button id="btn-clear-gemini-key" class="btn-secondary">Clear</button>
-          </div>
-          <p class="about-text" id="gemini-key-status"></p>
-          <p class="about-text">Agent mode makes many AI calls. Using your own free key from <span style="color:var(--accent)">aistudio.google.com/apikey</span> avoids the shared key's rate limits. Stored locally only.</p>
-        </div>
-        <div class="setting-group">
           <label>MCP servers (advanced)</label>
           <textarea id="mcp-servers-input" class="input-field" rows="6" spellcheck="false" placeholder='[
   { "name": "filesystem", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/you"] }

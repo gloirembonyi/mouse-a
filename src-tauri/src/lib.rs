@@ -22,8 +22,31 @@ use tauri::{
 };
 use tokio::sync::RwLock;
 
+/// Load MOUSE_AI_* vars from .env.local / .env so they don't have to be set in
+/// the shell. Checked in the cwd and its parent (covers `tauri dev`, whose cwd
+/// is src-tauri/, with the env file at the project root). Real environment
+/// variables always win — dotenvy never overrides an already-set var.
+fn load_env_files() {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(parent) = cwd.parent() {
+            candidates.push(parent.to_path_buf());
+        }
+        candidates.push(cwd);
+    }
+    for dir in candidates {
+        for name in [".env.local", ".env"] {
+            let path = dir.join(name);
+            if path.is_file() {
+                let _ = dotenvy::from_path(&path);
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    load_env_files();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())

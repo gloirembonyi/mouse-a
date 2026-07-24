@@ -85,10 +85,6 @@ struct StoredConfig {
     /// backend user/history without ever touching Google OAuth.
     #[serde(default)]
     device_id: Option<String>,
-    /// Optional user-supplied Gemini API key (BYOK). Forwarded to the backend
-    /// so heavy agent use isn't throttled by the shared free-tier key.
-    #[serde(default)]
-    gemini_key: Option<String>,
     /// Configured MCP servers (a JSON array of {name, command, args, env}),
     /// stored opaquely here and interpreted by the agent's MCP client.
     #[serde(default)]
@@ -128,7 +124,6 @@ pub struct BackendClient {
     session_token: Arc<RwLock<Option<String>>>,
     current_user: Arc<RwLock<Option<AuthUser>>>,
     device_id: Arc<RwLock<String>>,
-    gemini_key: Arc<RwLock<Option<String>>>,
     mcp_servers: Arc<RwLock<serde_json::Value>>,
 }
 
@@ -168,9 +163,6 @@ impl BackendClient {
             session_token: Arc::new(RwLock::new(stored.session_token)),
             current_user: Arc::new(RwLock::new(stored.user)),
             device_id: Arc::new(RwLock::new(device_id)),
-            gemini_key: Arc::new(RwLock::new(
-                stored.gemini_key.filter(|k| !k.trim().is_empty()),
-            )),
             mcp_servers: Arc::new(RwLock::new(
                 stored.mcp_servers.unwrap_or_else(|| serde_json::json!([])),
             )),
@@ -183,7 +175,6 @@ impl BackendClient {
             session_token: self.session_token.read().await.clone(),
             user: self.current_user.read().await.clone(),
             device_id: Some(self.device_id.read().await.clone()),
-            gemini_key: self.gemini_key.read().await.clone(),
             mcp_servers: Some(self.mcp_servers.read().await.clone()),
         };
         // Blocking file IO is tiny here; fine off the hot path.
@@ -205,17 +196,6 @@ impl BackendClient {
         self.persist().await;
     }
 
-    /// Whether a BYOK Gemini key is configured (never returns the key itself).
-    pub async fn has_gemini_key(&self) -> bool {
-        self.gemini_key.read().await.as_deref().map(|k| !k.trim().is_empty()).unwrap_or(false)
-    }
-
-    pub async fn set_gemini_key(&self, key: Option<String>) {
-        let cleaned = key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
-        *self.gemini_key.write().await = cleaned;
-        self.persist().await;
-    }
-
     /// The configured MCP servers as a JSON array (opaque to the backend client).
     pub async fn get_mcp_servers(&self) -> serde_json::Value {
         self.mcp_servers.read().await.clone()
@@ -224,10 +204,6 @@ impl BackendClient {
     pub async fn set_mcp_servers(&self, servers: serde_json::Value) {
         *self.mcp_servers.write().await = servers;
         self.persist().await;
-    }
-
-    async fn gemini_key_value(&self) -> Option<String> {
-        self.gemini_key.read().await.clone()
     }
 
     pub async fn set_session(&self, token: String, user: AuthUser) {
@@ -380,16 +356,15 @@ impl BackendClient {
         Ok(data)
     }
 
-    /// Send a chat message to the Thothai backend.
-    pub async fn chat(&self, mut request: ChatRequest) -> Result<ChatResponse, String> {
+    /// Send a chat message to the Thothai backend. Gemini key selection (including
+    /// rotating across multiple shared keys) is entirely the backend's job now —
+    /// see backend-Thothai/src/lib/gemini-request.js — so no apiKey is ever sent
+    /// from here.
+    pub async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, String> {
         let token = self
             .get_session_token()
             .await
             .ok_or("Not signed in — open the Mouse AI window (tray icon) and sign in first.")?;
-        // BYOK: use the user's own Gemini key if they've set one.
-        if request.api_key.is_none() {
-            request.api_key = self.gemini_key_value().await;
-        }
         let url = format!("{}/api/chat", self.base_url.read().await);
 
         let resp = self

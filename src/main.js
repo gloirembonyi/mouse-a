@@ -61,8 +61,6 @@ function setupEventListeners() {
   $("#btn-signout")?.addEventListener("click", handleSignOut);
   $("#btn-save-backend-url")?.addEventListener("click", handleSaveBackendUrl);
   $("#btn-test-backend")?.addEventListener("click", handleTestBackend);
-  $("#btn-save-gemini-key")?.addEventListener("click", handleSaveGeminiKey);
-  $("#btn-clear-gemini-key")?.addEventListener("click", handleClearGeminiKey);
   $("#btn-save-mcp")?.addEventListener("click", handleSaveMcp);
 
   // AI indicator click
@@ -445,11 +443,11 @@ async function runAgentTask(text) {
       source: "main",
       autonomous: true,
     });
-    finishAgentActivity();
+    finishAgentActivity(true);
     addMessage("assistant", result.text || "(done)");
   } catch (err) {
-    finishAgentActivity();
-    addMessage("assistant", `❌ Agent error: ${err}`);
+    finishAgentActivity(false);
+    addMessage("assistant", `⚠️ ${friendlyAgentError(err)}`);
   } finally {
     isLoading = false;
     sendBtn.disabled = false;
@@ -534,10 +532,38 @@ function buildConfirmPrompt(p) {
   return wrap;
 }
 
-function finishAgentActivity() {
+function finishAgentActivity(success) {
   if (!activeAgentActivityEl) return;
   const head = activeAgentActivityEl.querySelector(".agent-activity-head");
-  if (head && head.textContent.includes("Working")) head.innerHTML = "✓ Done";
+  if (!head) return;
+  head.innerHTML = success ? "✓ Done" : "✗ Failed";
+  head.classList.toggle("failed", !success);
+}
+
+// Turns a raw Rust/backend error string into something a non-technical user
+// can act on, mirroring overlay.js's friendlyError (kept in sync manually —
+// the two windows don't share a module system here).
+function friendlyAgentError(err) {
+  const msg = String(err?.message || err || "Unknown error");
+  if (/not signed in/i.test(msg)) {
+    return "You're not signed in. Open Settings to sign in first.";
+  }
+  if (/can't reach|network|timed out|connect/i.test(msg)) {
+    return "Can't reach the Thothai backend. Check your internet or the Backend URL in Settings.";
+  }
+  if (/empty response/i.test(msg)) {
+    return "The model didn't respond after several tries — it may be under heavy load. Try again in a moment.";
+  }
+  if (/step limit/i.test(msg)) {
+    return "That task took more steps than I could finish in one go — try breaking it into smaller steps.";
+  }
+  if (/daily message limit|daily limit/i.test(msg)) {
+    return "You've hit today's free message limit. It resets daily — try again tomorrow.";
+  }
+  if (/429|rate limit/i.test(msg)) {
+    return "Too many requests right now — wait a few seconds and try again.";
+  }
+  return msg;
 }
 
 async function handleCaptureAnalyze() {
@@ -748,7 +774,6 @@ function showSettings() {
       if (input) input.value = url || "";
     })
     .catch(() => {});
-  refreshGeminiKeyStatus();
   loadMcpServers();
 }
 
@@ -764,39 +789,6 @@ async function handleSaveBackendUrl() {
   } catch (err) {
     if (status) status.textContent = `Failed to save: ${err}`;
   }
-}
-
-async function refreshGeminiKeyStatus() {
-  const status = $("#gemini-key-status");
-  try {
-    const isSet = await invoke("get_gemini_key_set");
-    if (status) status.textContent = isSet
-      ? "✓ Using your own Gemini key (agent runs without shared-key limits)."
-      : "No personal key set — using the shared key (rate-limited).";
-  } catch { /* ignore */ }
-}
-
-async function handleSaveGeminiKey() {
-  const input = $("#gemini-key-input");
-  const status = $("#gemini-key-status");
-  const key = input?.value?.trim();
-  if (!key) { if (status) status.textContent = "Paste a key first."; return; }
-  try {
-    await invoke("set_gemini_key", { key });
-    if (input) input.value = "";
-    await refreshGeminiKeyStatus();
-  } catch (err) {
-    if (status) status.textContent = `Failed to save: ${err?.message || err}`;
-  }
-}
-
-async function handleClearGeminiKey() {
-  try {
-    await invoke("set_gemini_key", { key: "" });
-    const input = $("#gemini-key-input");
-    if (input) input.value = "";
-    await refreshGeminiKeyStatus();
-  } catch { /* ignore */ }
 }
 
 async function loadMcpServers() {

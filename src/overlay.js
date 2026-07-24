@@ -234,6 +234,10 @@ async function runAgentTask(task) {
     answerEl.hidden = false;
     answerEl.innerHTML = renderMarkdown(result.text || "(done)");
   } catch (err) {
+    // Hide the activity log (it may still hold a raw "⚠️ ..." line from the
+    // agent-progress "error" event that fired just before this rejection) so
+    // the user sees one clean, friendly error box instead of both.
+    agentLogEl.hidden = true;
     answerEl.hidden = false;
     answerEl.innerHTML = `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
   } finally {
@@ -317,6 +321,18 @@ function friendlyError(err) {
   }
   if (/can't reach|network|timed out|connect/i.test(msg)) {
     return "Can't reach the Thothai backend. Check your internet or the Backend URL in Settings (⤢ → ⚙).";
+  }
+  if (/empty response/i.test(msg)) {
+    return "The model didn't respond after several tries — it may be under heavy load. Try again in a moment.";
+  }
+  if (/step limit/i.test(msg)) {
+    return "That task took more steps than I could finish in one go. Try breaking it into smaller steps.";
+  }
+  if (/daily message limit|daily limit/i.test(msg)) {
+    return "You've hit today's free message limit. It resets daily — try again tomorrow.";
+  }
+  if (/429|rate limit/i.test(msg)) {
+    return "Too many requests right now — wait a few seconds and try again.";
   }
   return msg;
 }
