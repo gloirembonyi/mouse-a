@@ -95,6 +95,66 @@ pub fn get_cursor_context() -> CursorContext {
     }
 }
 
+/// The window that actually has keyboard focus right now — distinct from
+/// `get_cursor_context()`, which reports whatever window is merely UNDER the
+/// pointer. These commonly differ (e.g. the cursor rests over a background
+/// window while a dialog elsewhere holds focus), and the agent needs to know
+/// which one it's really about to type into/act on.
+#[cfg(windows)]
+pub fn get_foreground_context() -> CursorContext {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use winapi::um::winuser::{
+        GetClassNameW, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+    };
+
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.is_null() {
+        return CursorContext {
+            x: 0,
+            y: 0,
+            window_title: String::new(),
+            process_name: String::new(),
+            class_name: String::new(),
+        };
+    }
+
+    let mut title_buf = [0u16; 512];
+    let title_len = unsafe { GetWindowTextW(hwnd, title_buf.as_mut_ptr(), title_buf.len() as i32) };
+    let window_title = if title_len > 0 {
+        OsString::from_wide(&title_buf[..title_len as usize]).to_string_lossy().to_string()
+    } else {
+        String::new()
+    };
+
+    let mut class_buf = [0u16; 256];
+    let class_len = unsafe { GetClassNameW(hwnd, class_buf.as_mut_ptr(), class_buf.len() as i32) };
+    let class_name = if class_len > 0 {
+        OsString::from_wide(&class_buf[..class_len as usize]).to_string_lossy().to_string()
+    } else {
+        String::new()
+    };
+
+    let mut process_id: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, &mut process_id);
+    }
+    let process_name = if process_id > 0 { get_process_name(process_id) } else { String::new() };
+
+    CursorContext { x: 0, y: 0, window_title, process_name, class_name }
+}
+
+#[cfg(not(windows))]
+pub fn get_foreground_context() -> CursorContext {
+    CursorContext {
+        x: 0,
+        y: 0,
+        window_title: String::new(),
+        process_name: String::new(),
+        class_name: String::new(),
+    }
+}
+
 #[cfg(windows)]
 pub(crate) fn get_process_name(pid: u32) -> String {
     use std::ffi::OsString;

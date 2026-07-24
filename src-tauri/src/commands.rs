@@ -199,20 +199,6 @@ pub async fn test_backend(state: State<'_, AppState>) -> Result<String, String> 
     state.backend.ping().await
 }
 
-/// Whether the user has configured their own Gemini API key (BYOK). Never
-/// returns the key itself.
-#[tauri::command]
-pub async fn get_gemini_key_set(state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(state.backend.has_gemini_key().await)
-}
-
-/// Save (or clear, with an empty string) the user's own Gemini API key.
-#[tauri::command]
-pub async fn set_gemini_key(state: State<'_, AppState>, key: String) -> Result<bool, String> {
-    state.backend.set_gemini_key(Some(key)).await;
-    Ok(state.backend.has_gemini_key().await)
-}
-
 /// The configured MCP servers as a JSON string (for the Settings editor).
 #[tauri::command]
 pub async fn get_mcp_servers(state: State<'_, AppState>) -> Result<String, String> {
@@ -347,7 +333,6 @@ pub async fn ask_about_hover(
     let conv_id = state.conversation_id.read().await.clone();
     let request = ChatRequest {
         user_text: prompt,
-        api_key: None,
         model: Some("gemini-2.5-flash".to_string()),
         image_data_url,
         web_search_needed: false,
@@ -433,7 +418,6 @@ pub async fn send_chat(
 
     let request = ChatRequest {
         user_text: text,
-        api_key: None,
         model: Some("gemini-2.5-flash".to_string()),
         image_data_url,
         web_search_needed: web_search.unwrap_or(false),
@@ -515,7 +499,6 @@ pub async fn analyze_at_cursor(
 
     let request = ChatRequest {
         user_text: prompt,
-        api_key: None,
         model: Some("gemini-2.5-flash".to_string()),
         image_data_url: Some(image_data_url),
         web_search_needed: true,

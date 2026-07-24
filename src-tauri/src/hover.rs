@@ -39,6 +39,12 @@ pub fn spawn_hover_watcher(app: AppHandle) {
         let mut dwell_handled = true;
         let mut last_trigger_pos = (i32::MIN / 2, i32::MIN / 2);
         let mut overlay_anchor = (i32::MIN / 2, i32::MIN / 2);
+        // Only true between a hover-dwell trigger and the pill being
+        // hidden/dismissed — distinguishes "the collapsed pill is up and
+        // should drift with the cursor" from other reasons the overlay window
+        // might be visible (the brief AI-on/off toast, the expanded panel),
+        // which must NOT get repositioned by ordinary mouse movement.
+        let mut pill_showing = false;
 
         loop {
             tokio::time::sleep(Duration::from_millis(POLL_MS)).await;
@@ -61,13 +67,22 @@ pub fn spawn_hover_watcher(app: AppHandle) {
                 still_since = Instant::now();
                 dwell_handled = false;
 
-                // Cursor left the overlay area — hide the pill again.
                 let away = (x - overlay_anchor.0)
                     .abs()
                     .max((y - overlay_anchor.1).abs());
-                if away > HIDE_DISTANCE {
-                    if let Some(overlay) = app.get_webview_window("overlay") {
+                if let Some(overlay) = app.get_webview_window("overlay") {
+                    if away > HIDE_DISTANCE {
+                        // Cursor left the overlay area — hide the pill again.
+                        pill_showing = false;
                         let _ = overlay.hide();
+                    } else if pill_showing && overlay.is_visible().unwrap_or(false) {
+                        // Still nearby and the collapsed pill is what's up (the
+                        // expanded panel pins itself via overlay_pinned, which
+                        // already `continue`d past this whole branch above) —
+                        // drift the pill along with the cursor instead of
+                        // leaving it stuck at the original dwell point.
+                        overlay_anchor = (x, y);
+                        show_overlay_near(&app, x, y);
                     }
                 }
                 continue;
@@ -103,6 +118,7 @@ pub fn spawn_hover_watcher(app: AppHandle) {
 
             last_trigger_pos = (x, y);
             overlay_anchor = (x, y);
+            pill_showing = true;
 
             show_overlay_near(&app, x, y);
             let _ = app.emit_to(
@@ -150,6 +166,16 @@ pub fn show_overlay_near(app: &AppHandle, x: i32, y: i32) {
 
     let _ = overlay.set_position(tauri::PhysicalPosition::new(px, py));
     let _ = overlay.show();
+
+    // Sample the screen right where the overlay now sits and tell it whether
+    // to render as light-glass-on-dark-text or dark-glass-on-light-text —
+    // whichever stays readable against whatever's actually behind it (a dark
+    // code editor vs. a bright document, a light desktop wallpaper, etc.),
+    // mirroring the browser extension's adaptive-theme.js.
+    const LIGHT_THEME_THRESHOLD: f32 = 0.58;
+    if let Some(lum) = crate::capture::average_luminance_at(px, py, w as u32, h as u32) {
+        let _ = app.emit_to("overlay", "surface-theme", lum >= LIGHT_THEME_THRESHOLD);
+    }
 }
 
 /// Show the overlay near wherever the cursor currently is.

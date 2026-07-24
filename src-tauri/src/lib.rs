@@ -86,8 +86,6 @@ pub fn run() {
             commands::ask_at_cursor,
             commands::get_backend_url,
             commands::set_backend_url,
-            commands::get_gemini_key_set,
-            commands::set_gemini_key,
             commands::get_mcp_servers,
             commands::set_mcp_servers,
         ])

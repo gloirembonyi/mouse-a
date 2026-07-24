@@ -51,8 +51,6 @@ pub struct ChatResponse {
 pub struct ChatRequest {
     #[serde(rename = "userText")]
     pub user_text: String,
-    #[serde(rename = "apiKey", skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(rename = "imageDataUrl", skip_serializing_if = "Option::is_none")]
@@ -414,17 +412,12 @@ impl BackendClient {
             .ok_or("Not signed in — open the Mouse AI window and try again.")?;
         let url = format!("{}/api/agent/step", self.base_url.read().await);
 
-        let mut body = serde_json::json!({
+        let body = serde_json::json!({
             "system": system,
             "contents": contents,
             "tools": tools,
             "model": "gemini-2.5-flash",
         });
-        // BYOK: forward the user's own Gemini key so the agent isn't throttled
-        // by the shared free-tier key.
-        if let Some(key) = self.gemini_key_value().await {
-            body["apiKey"] = serde_json::Value::String(key);
-        }
 
         let resp = self
             .client

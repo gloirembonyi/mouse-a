@@ -316,7 +316,7 @@ function applyAIState(active, opts = {}) {
   } else {
     stopContextPolling();
     clearContext();
-    if (!opts.silent) addSystemMessage("Hover mode OFF — Ctrl+Shift+Space still asks at your cursor anytime");
+    if (!opts.silent) addSystemMessage("Hover mode OFF - Ctrl+Shift+Space still asks at your cursor anytime");
   }
 }
 
@@ -487,7 +487,11 @@ function renderAgentProgress(p) {
   const line = document.createElement("div");
   line.className = `agent-line agent-${p.kind}`;
   const icon = { thinking: "💭", tool: "⚙️", "tool-result": "↳", error: "⚠️" }[p.kind] || "•";
-  line.textContent = `${icon} ${p.message}`;
+  // Route error events through the same friendly formatter as the final
+  // failure bubble, so this inline log line doesn't show a raw JSON/HTTP
+  // error string just before the friendlier one appears below it.
+  const message = p.kind === "error" ? friendlyAgentError(p.message) : p.message;
+  line.textContent = `${icon} ${message}`;
   log.appendChild(line);
   scrollToBottom();
 }
@@ -559,6 +563,9 @@ function friendlyAgentError(err) {
   }
   if (/daily message limit|daily limit/i.test(msg)) {
     return "You've hit today's free message limit. It resets daily — try again tomorrow.";
+  }
+  if (/referer|permission_denied|rejected every configured api key|api key not valid/i.test(msg)) {
+    return "The backend's Gemini API key is misconfigured (not something you can fix here) — let the app owner know it needs a working key.";
   }
   if (/429|rate limit/i.test(msg)) {
     return "Too many requests right now — wait a few seconds and try again.";

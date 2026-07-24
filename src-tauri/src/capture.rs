@@ -178,6 +178,62 @@ pub fn capture_agent_full() -> Result<AgentShot, String> {
     Ok(AgentShot { data_url, origin_x: info.x, origin_y: info.y, native_width, native_height })
 }
 
+// ── Adaptive glass theming ────────────────────────────────────────
+// Mirrors the browser extension's shared/adaptive-theme.js (samples the page
+// behind the panel to decide light-glass-vs-dark-glass), but there's no DOM to
+// read behind a native overlay window — real screen pixels are sampled
+// instead, at a coarse stride since a rough average is all a two-way light/
+// dark decision needs.
+
+fn srgb_channel_linear(c: u8) -> f64 {
+    let c = c as f64 / 255.0;
+    if c <= 0.03928 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Relative luminance per the same WCAG formula the extension's
+/// adaptive-theme.js uses, so the two surfaces feel consistent: 0.0 = black,
+/// 1.0 = white.
+fn srgb_luminance(r: u8, g: u8, b: u8) -> f64 {
+    0.2126 * srgb_channel_linear(r) + 0.7152 * srgb_channel_linear(g) + 0.0722 * srgb_channel_linear(b)
+}
+
+/// Average luminance of a screen region, sampled on a coarse grid (not every
+/// pixel — a rough average is all a light-vs-dark decision needs, and this
+/// keeps it cheap enough to call on every overlay reposition). Returns `None`
+/// if the region can't be captured (e.g. entirely off-screen).
+pub fn average_luminance_at(x: i32, y: i32, width: u32, height: u32) -> Option<f32> {
+    let img = capture_region_raw(x, y, width.max(1), height.max(1)).ok()?;
+    let (w, h) = (img.width(), img.height());
+    if w == 0 || h == 0 {
+        return None;
+    }
+    const GRID: u32 = 20;
+    let stride_x = (w / GRID).max(1);
+    let stride_y = (h / GRID).max(1);
+
+    let mut sum = 0.0f64;
+    let mut count = 0u64;
+    let mut px = 0u32;
+    while px < w {
+        let mut py = 0u32;
+        while py < h {
+            let p = img.get_pixel(px, py);
+            sum += srgb_luminance(p[0], p[1], p[2]);
+            count += 1;
+            py += stride_y;
+        }
+        px += stride_x;
+    }
+    if count == 0 {
+        return None;
+    }
+    Some((sum / count as f64) as f32)
+}
+
 /// The window under the cursor (or a crop fallback), as a small JPEG — the
 /// agent's initial grounding screenshot.
 pub fn capture_agent_window(cx: i32, cy: i32) -> Result<AgentShot, String> {

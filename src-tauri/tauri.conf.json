@@ -31,7 +31,7 @@
         "title": "Mouse AI Overlay",
         "width": 380,
         "height": 64,
-        "resizable": false,
+        "resizable": true,
         "decorations": false,
         "transparent": true,
         "shadow": false,
@@ -40,7 +40,9 @@
         "visible": false,
         "focus": false,
         "minWidth": 200,
-        "minHeight": 40
+        "minHeight": 40,
+        "maxWidth": 900,
+        "maxHeight": 900
       }
     ],
     "security": {

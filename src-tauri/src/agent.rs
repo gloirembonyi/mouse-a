@@ -237,12 +237,12 @@ fn tool_declarations() -> Value {
         },
         {
             "name": "get_screen_context",
-            "description": "Get the active window title, process, cursor position, and the folder/element under the cursor.",
+            "description": "Get the cursor position, the window under the cursor, the window that ACTUALLY has keyboard focus (these can differ — type_text/press_key always go to the focused one, not necessarily whatever's under the cursor), and the folder/element under the cursor.",
             "parameters": { "type": "object", "properties": {} }
         },
         {
             "name": "list_windows",
-            "description": "List currently open top-level windows (title + process name). Use this to check whether a browser or app is already open before deciding to launch a new one.",
+            "description": "List currently open top-level windows (title + process name, with the currently-focused one flagged). Use this to check whether a browser or app is already open before deciding to launch a new one.",
             "parameters": { "type": "object", "properties": {} }
         },
         {
@@ -384,11 +384,21 @@ fn is_destructive(command: &str) -> Option<&'static str> {
 /// "this file / this window / what I'm looking at" resolves correctly.
 fn initial_context_block(cx: i32, cy: i32) -> String {
     let ctx = mouse::get_cursor_context();
+    let foreground = mouse::get_foreground_context();
     let element = mouse::get_element_under_cursor(cx, cy);
     let mut block = format!(
-        "[CURRENT SCREEN CONTEXT]\nActive app: {}\nActive window: {}\nCursor at: ({}, {})",
+        "[CURRENT SCREEN CONTEXT]\nApp under cursor: {}\nWindow under cursor: {}\nCursor at: ({}, {})",
         ctx.process_name, ctx.window_title, cx, cy
     );
+    // These usually match, but not always (e.g. the cursor is resting over a
+    // background window while a dialog elsewhere holds focus) — state both so
+    // "this" isn't misresolved to the wrong one.
+    if foreground.window_title != ctx.window_title || foreground.process_name != ctx.process_name {
+        block.push_str(&format!(
+            "\nActually-focused app: {}\nActually-focused window: {}",
+            foreground.process_name, foreground.window_title
+        ));
+    }
     let el = [element.role.as_str(), element.name.as_str(), element.value.as_str()]
         .iter()
         .filter(|s| !s.trim().is_empty())
@@ -1079,10 +1089,17 @@ async fn get_screen_context_tool() -> ToolOutcome {
     let outcome = tokio::task::spawn_blocking(|| {
         let (cx, cy) = mouse::get_cursor_position();
         let ctx = mouse::get_cursor_context();
+        let foreground = mouse::get_foreground_context();
         let element = mouse::get_element_under_cursor(cx, cy);
+        // Reported separately because they can differ (cursor resting over a
+        // background window while another has focus) — acting via type_text/
+        // press_key always goes to the FOREGROUND window, not whatever's under
+        // the cursor, so both need to be visible to avoid acting on the wrong one.
         let mut response = json!({
             "activeApp": ctx.process_name,
             "activeWindow": ctx.window_title,
+            "foregroundApp": foreground.process_name,
+            "foregroundWindow": foreground.window_title,
             "cursor": { "x": cx, "y": cy },
             "elementName": element.name,
             "elementRole": element.role,
@@ -1111,6 +1128,7 @@ async fn get_screen_context_tool() -> ToolOutcome {
 struct WindowInfo {
     title: String,
     process_name: String,
+    foreground: bool,
 }
 
 #[cfg(windows)]
@@ -1118,12 +1136,17 @@ fn enumerate_top_windows() -> Vec<WindowInfo> {
     use winapi::shared::minwindef::{BOOL, LPARAM, TRUE};
     use winapi::shared::windef::HWND;
     use winapi::um::winuser::{
-        EnumWindows, GetClassNameW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-        IsWindowVisible,
+        EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
+        GetWindowThreadProcessId, IsWindowVisible,
     };
 
+    struct Collector {
+        windows: Vec<WindowInfo>,
+        foreground_hwnd: HWND,
+    }
+
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let out = &mut *(lparam as *mut Vec<WindowInfo>);
+        let collector = &mut *(lparam as *mut Collector);
         if IsWindowVisible(hwnd) == 0 {
             return TRUE;
         }
@@ -1156,15 +1179,16 @@ fn enumerate_top_windows() -> Vec<WindowInfo> {
         let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, &mut pid);
         let process_name = if pid > 0 { mouse::get_process_name(pid) } else { String::new() };
-        out.push(WindowInfo { title, process_name });
+        let foreground = hwnd == collector.foreground_hwnd;
+        collector.windows.push(WindowInfo { title, process_name, foreground });
         TRUE
     }
 
-    let mut windows: Vec<WindowInfo> = Vec::new();
+    let mut collector = Collector { windows: Vec::new(), foreground_hwnd: unsafe { GetForegroundWindow() } };
     unsafe {
-        EnumWindows(Some(enum_proc), &mut windows as *mut Vec<WindowInfo> as LPARAM);
+        EnumWindows(Some(enum_proc), &mut collector as *mut Collector as LPARAM);
     }
-    windows
+    collector.windows
 }
 
 #[cfg(not(windows))]
@@ -1266,12 +1290,15 @@ fn focus_window_by_title(_needle: &str) -> Result<String, String> {
 }
 
 async fn list_windows_tool() -> ToolOutcome {
-    let windows = tokio::task::spawn_blocking(enumerate_top_windows).await.unwrap_or_default();
+    let mut windows = tokio::task::spawn_blocking(enumerate_top_windows).await.unwrap_or_default();
+    // Surface the actually-focused window first — it's the one type_text/
+    // press_key would act on right now, so it's the most decision-relevant entry.
+    windows.sort_by_key(|w| !w.foreground);
     let count = windows.len();
     let entries: Vec<Value> = windows
         .iter()
         .take(40)
-        .map(|w| json!({ "title": w.title, "process": w.process_name }))
+        .map(|w| json!({ "title": w.title, "process": w.process_name, "focused": w.foreground }))
         .collect();
     ToolOutcome {
         response: json!({ "windows": entries, "count": count }),

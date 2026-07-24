@@ -8,8 +8,10 @@
 </head>
 <body>
   <div id="root">
-    <!-- Collapsed pill: appears when the mouse pauses over something -->
-    <button id="pill" hidden>
+    <!-- Collapsed pill: appears when the mouse pauses over something. Also a
+         drag region so the user can drop it wherever's convenient before
+         clicking it open — a plain click (no movement) still expands it. -->
+    <button id="pill" data-tauri-drag-region hidden>
       <span class="pill-icon">✦</span>
       <span class="pill-label">Ask AI</span>
       <span id="pill-context"></span>
@@ -42,6 +44,9 @@
         <button id="btn-analyze" title="Explain what's here">👁</button>
         <button id="btn-ask" title="Ask / do it (Enter)">➤</button>
       </div>
+
+      <!-- Drag this corner to resize the panel. -->
+      <div id="resize-grip" title="Drag to resize"></div>
     </div>
 
     <!-- Toast: brief feedback when AI mode toggles -->

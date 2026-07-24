@@ -20,6 +20,7 @@ const btnOpenApp = document.getElementById("btn-open-app");
 const btnAgent = document.getElementById("btn-agent");
 const agentLogEl = document.getElementById("agent-log");
 const toast = document.getElementById("toast");
+const resizeGrip = document.getElementById("resize-grip");
 
 const PILL_AUTOHIDE_MS = 4500;
 const TOAST_AUTOHIDE_MS = 2200;
@@ -35,6 +36,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   await listen("hover-dwell", (event) => onHoverDwell(event.payload));
   await listen("trigger-ask", (event) => onTriggerAsk(event.payload));
   await listen("ai-toast", (event) => onAiToast(event.payload));
+  await listen("surface-theme", (event) => applySurfaceTheme(!!event.payload));
   await listen("agent-progress", (event) => {
     const p = event.payload || {};
     if (p.source !== "overlay") return;
@@ -62,6 +64,14 @@ function onHoverDwell(payload) {
   pill.hidden = false;
 
   scheduleAutoHide(PILL_AUTOHIDE_MS);
+}
+
+// Toggles the same light/dark "surface" classes the browser extension uses
+// (see stealth-ai-extension/shared/adaptive-theme.js) on the root so the pill/
+// panel/toast all stay readable over whatever's currently behind them.
+function applySurfaceTheme(isLight) {
+  document.body.classList.toggle("surface-light", isLight);
+  document.body.classList.toggle("surface-dark", !isLight);
 }
 
 function onAiToast(active) {
@@ -105,6 +115,18 @@ function setupUI() {
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") collapse();
+  });
+
+  // Manual resize handle — the window is also natively resizable from its
+  // edges (tauri.conf.json's overlay window has resizable:true), but that's
+  // barely discoverable on a borderless window, so this corner grip gives an
+  // explicit affordance for making the panel bigger.
+  resizeGrip?.addEventListener("mousedown", async (e) => {
+    e.preventDefault();
+    try {
+      const { getCurrentWindow } = window.__TAURI__.window;
+      await getCurrentWindow().startResizeDragging("SouthEast");
+    } catch { /* ignore */ }
   });
 
   // Clicking away on the desktop dismisses the modal (unless an answer is
@@ -260,7 +282,11 @@ function renderAgentProgress(p) {
   const line = document.createElement("div");
   line.className = `agent-line agent-${p.kind}`;
   const icon = { thinking: "💭", tool: "⚙️", "tool-result": "↳", error: "⚠️" }[p.kind] || "•";
-  line.textContent = `${icon} ${p.message}`;
+  // Same friendly formatting the final error box uses — the log is normally
+  // hidden before an error-kind line would be seen, but this covers the race
+  // between the agent-progress event arriving and the invoke() rejecting.
+  const message = p.kind === "error" ? friendlyError(p.message) : p.message;
+  line.textContent = `${icon} ${message}`;
   agentLogEl.appendChild(line);
   agentLogEl.scrollTop = agentLogEl.scrollHeight;
 }
@@ -330,6 +356,9 @@ function friendlyError(err) {
   }
   if (/daily message limit|daily limit/i.test(msg)) {
     return "You've hit today's free message limit. It resets daily — try again tomorrow.";
+  }
+  if (/referer|permission_denied|rejected every configured api key|api key not valid/i.test(msg)) {
+    return "The backend's Gemini API key is misconfigured (not something you can fix here) — let the app owner know it needs a working key.";
   }
   if (/429|rate limit/i.test(msg)) {
     return "Too many requests right now — wait a few seconds and try again.";

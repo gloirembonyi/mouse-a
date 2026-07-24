@@ -30,11 +30,13 @@ locally on your machine):
 Genuinely destructive shell commands (disk format, recursive system-drive delete, shutdown, …) are
 refused automatically.
 
-## Recommended: your own Gemini key
+## Gemini API keys
 
-Agent mode makes many AI calls, so the shared key's rate limit is easy to hit. In **Settings →
-Gemini API key**, paste a free key from `aistudio.google.com/apikey` — it's stored locally and used
-for all agent/chat calls, removing the shared-key limit.
+There is no Gemini key configuration in this app at all — every chat/agent call goes through the
+Thothai backend, which holds the only Gemini key(s) and rotates across up to 5 shared keys
+(`GEMINI_API_KEY`, `GEMINI_API_KEY_2`..`_5` on the backend) when one is rate-limited or overloaded.
+See `backend-Thothai/src/lib/gemini-request.js`. To raise the effective rate limit, add more shared
+keys on the backend deployment — there's nothing to configure here.
 
 ## Prerequisites
 
