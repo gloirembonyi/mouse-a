@@ -36,7 +36,9 @@ export interface CursorContext {
 }
 
 export type AgentProgressKind =
+  | "plan"
   | "thinking"
+  | "phase-summary"
   | "tool"
   | "tool-result"
   | "error"

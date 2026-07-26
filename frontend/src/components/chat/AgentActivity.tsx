@@ -73,7 +73,7 @@ export function AgentActivity({ steps, status, elapsedMs }: AgentActivityProps) 
       </button>
 
       {expanded && (
-        <div className="flex flex-col border-t border-border-soft px-3 py-2">
+        <div className="flex flex-col gap-1 border-t border-border-soft px-3 py-3">
           {steps.map((step, i) =>
             step.kind === "confirm" ? (
               <ConfirmPrompt key={i} message={step.message} requestId={step.requestId!} />
@@ -117,7 +117,7 @@ function renderInline(text: string): React.ReactNode[] {
 }
 
 function iconForStep(step: AgentStep) {
-  if (step.kind === "thinking") return null;
+  if (step.kind === "plan" || step.kind === "thinking" || step.kind === "phase-summary") return null;
   if (step.kind === "error") return X;
   const text = step.message.toLowerCase();
   if (/\b(read|write|file|directory|folder)\b/.test(text)) return FileText;
@@ -129,6 +129,13 @@ function iconForStep(step: AgentStep) {
 }
 
 function Step({ step, isLast }: { step: AgentStep; isLast: boolean }) {
+  // A rollup ("Explored 12 files, 3 searches +367 -14") isn't a timeline
+  // entry the way a tool call is — no icon/rail, just a small muted line
+  // under whatever heading it summarizes, same as Cursor's grey recap lines.
+  if (step.kind === "phase-summary") {
+    return <div className="pb-3 pl-1 text-[10.5px] leading-[1.5] text-text-muted">{step.message}</div>;
+  }
+
   const Icon = iconForStep(step);
   const textClass =
     step.kind === "tool"
@@ -138,8 +145,8 @@ function Step({ step, isLast }: { step: AgentStep; isLast: boolean }) {
         : step.kind === "error"
           ? "text-danger"
           : step.kind === "thinking"
-            ? "italic text-text-secondary"
-            : "text-text-secondary";
+            ? "font-semibold text-text-primary"
+            : "text-text-secondary"; // "plan"
 
   const iconClass =
     step.kind === "tool"
@@ -147,6 +154,13 @@ function Step({ step, isLast }: { step: AgentStep; isLast: boolean }) {
       : step.kind === "error"
         ? "bg-danger-soft border-danger/40 text-danger"
         : "bg-bg-tertiary border-border-default text-text-secondary";
+
+  // The model's OPENING read of the task gets a distinct card — same idea as
+  // Cursor's separate "Thought for Xs" block — so it visually reads as the
+  // model's reasoning. Later narration ("thinking", between tool bursts)
+  // renders as a plain bold heading instead, matching Cursor's un-boxed
+  // phase-transition lines.
+  const bodyWrapClass = step.kind === "plan" ? "rounded-lg border border-accent/20 bg-accent-soft px-2.5 py-2" : "";
 
   return (
     <div className="flex gap-2">
@@ -156,8 +170,10 @@ function Step({ step, isLast }: { step: AgentStep; isLast: boolean }) {
         </span>
         <span className={`mt-0.5 w-px flex-1 ${isLast ? "bg-transparent" : "bg-border-default"}`} style={{ minHeight: 6 }} />
       </div>
-      <div className={`flex-1 pb-2.5 text-[11px] leading-[1.5] ${textClass}`}>
-        {renderInline(step.kind === "error" ? friendlyError(step.message) : step.message)}
+      <div className={`flex-1 pb-3 text-[11px] leading-[1.5] ${textClass}`}>
+        <div className={bodyWrapClass}>
+          {renderInline(step.kind === "error" ? friendlyError(step.message) : step.message)}
+        </div>
       </div>
     </div>
   );
@@ -176,21 +192,21 @@ function ConfirmPrompt({ message, requestId }: { message: string; requestId: str
   };
 
   return (
-    <div className="my-1 rounded-lg border border-warning/40 bg-warning-soft px-2.5 py-2">
-      <div className="mb-2 text-[11.5px] leading-[1.4] text-text-primary">
+    <div className="my-1.5 rounded-xl border border-warning/45 bg-warning-soft px-3 py-3 shadow-[0_2px_12px_rgba(255,183,77,0.12)]">
+      <div className="mb-2.5 text-[12px] leading-[1.45] text-text-primary">
         {decided ? (decided === "allow" ? `✅ Allowed: ${message}` : `🚫 Denied: ${message}`) : `🔒 ${message}`}
       </div>
       {!decided && (
         <div className="flex gap-2">
           <button
             onClick={() => decide(true)}
-            className="flex-1 rounded-md border border-success/35 bg-success-soft px-2.5 py-1.5 text-[11.5px] font-semibold text-success transition hover:bg-success/30"
+            className="flex-1 rounded-lg border border-success/35 bg-success-soft px-3 py-2 text-[12px] font-bold text-success transition hover:-translate-y-px hover:bg-success/30"
           >
             Allow
           </button>
           <button
             onClick={() => decide(false)}
-            className="flex-1 rounded-md border border-danger/35 bg-danger-soft px-2.5 py-1.5 text-[11.5px] font-semibold text-danger transition hover:bg-danger/30"
+            className="flex-1 rounded-lg border border-danger/35 bg-danger-soft px-3 py-2 text-[12px] font-bold text-danger transition hover:-translate-y-px hover:bg-danger/30"
           >
             Deny
           </button>

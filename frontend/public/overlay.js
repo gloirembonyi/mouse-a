@@ -281,6 +281,7 @@ async function ask(question) {
   if (agentMode) return runAgentTask(question);
 
   setBusy(true);
+  questionInput.value = "";
   thinkingEl.hidden = false;
   // Fully clear both panes (not just toggle `hidden`) — a stale previous
   // answer's innerHTML sitting under a newly-visible agent-log (or vice
@@ -326,6 +327,7 @@ async function runAgentTask(task) {
     return;
   }
   setBusy(true);
+  questionInput.value = "";
   thinkingEl.hidden = true;
   // Fully clear both panes — see the matching comment in ask() above.
   answerEl.hidden = true;
@@ -461,9 +463,19 @@ function renderAgentProgress(p) {
     return;
   }
 
-  agentSummary.body.appendChild(buildAgentStep(p));
+  agentSummary.body.appendChild(p.kind === "phase-summary" ? buildPhaseSummary(p) : buildAgentStep(p));
   agentLogEl.scrollTop = agentLogEl.scrollHeight;
   syncOverlaySize(480);
+}
+
+// A rollup ("Explored 12 files, 3 searches +367 -14") isn't a timeline entry
+// the way a tool call is — no icon/rail, just a small muted recap line under
+// whatever heading it summarizes (same as Cursor's grey rollup lines).
+function buildPhaseSummary(p) {
+  const div = document.createElement("div");
+  div.className = "agent-step kind-phase-summary";
+  div.textContent = p.message;
+  return div;
 }
 
 // Icon badge + connecting rail beside the message — same timeline shape as
@@ -477,7 +489,7 @@ function buildAgentStep(p) {
   rail.className = "agent-step-rail";
   const icon = document.createElement("span");
   icon.className = "agent-step-icon";
-  icon.textContent = { thinking: "💭", tool: "⚙", "tool-result": "↳", error: "!" }[p.kind] || "•";
+  icon.textContent = { plan: "💭", tool: "⚙", "tool-result": "↳", error: "!" }[p.kind] || "•";
   const line = document.createElement("span");
   line.className = "agent-step-line";
   rail.appendChild(icon);
@@ -577,6 +589,16 @@ function setBusy(state) {
   busy = state;
   btnAsk.disabled = state;
   btnAnalyze.disabled = state;
+  // The question is already echoed above (questionHeaderHtml) once a task
+  // starts — leaving the same text sitting in the input for the whole
+  // "Working…" duration just duplicates it on screen. Lock the field instead
+  // so it visibly reads as busy rather than as an editable, stale question.
+  questionInput.readOnly = state;
+  questionInput.placeholder = state
+    ? "Working…"
+    : agentMode
+      ? "Tell Mouse AI what to do…"
+      : "Ask about what's under your mouse…";
 }
 
 // ── Helpers ────────────────────────────────────────────────

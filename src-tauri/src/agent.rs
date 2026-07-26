@@ -78,7 +78,7 @@ fn resolve_agent_path(raw: &str) -> std::path::PathBuf {
 pub struct AgentProgress {
     /// Which window asked — so the right panel renders the live log.
     pub source: String,
-    pub kind: String, // "thinking" | "tool" | "tool-result" | "done" | "error" | "confirm"
+    pub kind: String, // "plan" | "thinking" | "phase-summary" | "tool" | "tool-result" | "done" | "error" | "confirm"
     pub message: String,
     /// Only set for kind == "confirm" — the id the UI must echo back via
     /// `agent_confirm` when the user clicks Allow/Deny.
@@ -421,6 +421,143 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
+// ── Phase rollups (Cursor-style "Explored 12 files, 3 searches +367 -14") ──
+//
+// The raw step-by-step tool log (see `.agent-step` in the UI) is accurate but
+// unreadable for a long run. Between each narration ("thinking") message the
+// model sends, this tallies what its tool calls actually did, so a burst of
+// 20 read_file/list_directory calls collapses into one line instead of 20.
+
+#[derive(Default, Clone)]
+struct PhaseCounts {
+    files_touched: u32,
+    searches: u32,
+    edited: u32,
+    commands: u32,
+    actions: u32,
+    lines_added: u32,
+    lines_removed: u32,
+    has_diff_stats: bool,
+}
+
+impl PhaseCounts {
+    fn is_empty(&self) -> bool {
+        self.files_touched == 0 && self.searches == 0 && self.edited == 0 && self.commands == 0 && self.actions == 0
+    }
+
+    fn record(&mut self, tool_name: &str) {
+        match tool_name {
+            "read_file" | "list_directory" | "find_files" | "get_screen_context" | "capture_screen"
+            | "list_windows" | "focus_window" | "web_fetch" => self.files_touched += 1,
+            "web_search" => self.searches += 1,
+            "write_file" | "delete_file" => self.edited += 1,
+            "run_command" => self.commands += 1,
+            _ => self.actions += 1,
+        }
+    }
+
+    fn record_diff(&mut self, added: u32, removed: u32) {
+        self.lines_added += added;
+        self.lines_removed += removed;
+        self.has_diff_stats = true;
+    }
+
+    /// e.g. "Edited 11 files, explored 7 files, 3 searches, ran 2 commands +367 -14"
+    fn summarize(&self) -> Option<String> {
+        if self.is_empty() {
+            return None;
+        }
+        let plural = |n: u32| if n == 1 { "" } else { "s" };
+        let mut parts: Vec<String> = Vec::new();
+        if self.edited > 0 {
+            parts.push(format!("edited {} file{}", self.edited, plural(self.edited)));
+        }
+        if self.files_touched > 0 {
+            parts.push(format!("explored {} file{}", self.files_touched, plural(self.files_touched)));
+        }
+        if self.searches > 0 {
+            parts.push(format!("{} search{}", self.searches, if self.searches == 1 { "" } else { "es" }));
+        }
+        if self.commands > 0 {
+            parts.push(format!("ran {} command{}", self.commands, plural(self.commands)));
+        }
+        if self.actions > 0 {
+            parts.push(format!("{} other action{}", self.actions, plural(self.actions)));
+        }
+        let mut line = parts.join(", ");
+        if let Some(first) = line.get_mut(0..1) {
+            first.make_ascii_uppercase();
+        }
+        if self.has_diff_stats {
+            line.push_str(&format!(" +{} -{}", self.lines_added, self.lines_removed));
+        }
+        Some(line)
+    }
+}
+
+/// Approximate line-level diff stats (added, removed) between old and new file
+/// content — write_file always overwrites the whole file rather than patching
+/// it, so this is computed after the fact via a longest-common-subsequence
+/// pass, same idea as `git diff --numstat`. Returns None for pathologically
+/// large files rather than spend seconds on an O(n·m) pass no one asked for.
+fn line_diff_stats(old: &str, new: &str) -> Option<(u32, u32)> {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    if old_lines.len().saturating_mul(new_lines.len()) > 4_000_000 {
+        return None;
+    }
+    // Classic O(n·m) LCS length via a rolling two-row DP.
+    let mut prev = vec![0u32; new_lines.len() + 1];
+    let mut curr = vec![0u32; new_lines.len() + 1];
+    for i in 1..=old_lines.len() {
+        for j in 1..=new_lines.len() {
+            curr[j] = if old_lines[i - 1] == new_lines[j - 1] {
+                prev[j - 1] + 1
+            } else {
+                prev[j].max(curr[j - 1])
+            };
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    let lcs_len = prev[new_lines.len()];
+    let removed = old_lines.len() as u32 - lcs_len;
+    let added = new_lines.len() as u32 - lcs_len;
+    Some((added, removed))
+}
+
+/// Emits the accumulated tool-call tally as one "phase-summary" event (if
+/// anything happened) and resets the counter for the next phase.
+fn flush_phase(app: &AppHandle, source: &str, phase: &mut PhaseCounts) {
+    if let Some(summary) = phase.summarize() {
+        emit(app, source, "phase-summary", summary);
+    }
+    *phase = PhaseCounts::default();
+}
+
+/// write_file/delete_file smuggle their diff stats through `ToolOutcome.log`
+/// as a trailing `\u{1}DIFF <added> <removed>` marker (rather than adding a
+/// field to `ToolOutcome`, which ~35 call sites construct as a plain struct
+/// literal) — stripped back out here before the log line reaches the model
+/// or the UI, neither of which should ever see the raw marker.
+fn extract_diff_marker(log: &str) -> (String, Option<(u32, u32)>) {
+    let Some(idx) = log.find('\u{1}') else {
+        return (log.to_string(), None);
+    };
+    let (base, marker) = log.split_at(idx);
+    let base = base.to_string();
+    let Some(rest) = marker[1..].strip_prefix("DIFF ") else {
+        return (base, None);
+    };
+    let mut nums = rest.split_whitespace();
+    match (
+        nums.next().and_then(|a| a.parse::<u32>().ok()),
+        nums.next().and_then(|r| r.parse::<u32>().ok()),
+    ) {
+        (Some(added), Some(removed)) => (base, Some((added, removed))),
+        _ => (base, None),
+    }
+}
+
 /// Refuse obviously catastrophic shell commands unless the user has opted into
 /// running them. This is a coarse safety net, not a sandbox — it blocks the
 /// handful of one-liners that could wipe the machine, and lets everything else
@@ -607,7 +744,10 @@ pub async fn run_task(
 
     let contents: Vec<Value> = vec![json!({ "role": "user", "parts": first_parts })];
 
-    emit(app, source, "thinking", "Understanding your request…");
+    // Its own kind ("plan", not "thinking") so the UI can give this one
+    // opening read of the task its own "Thought for Xs" card, distinct from
+    // the plain-heading narration ("thinking") sent between later tool bursts.
+    emit(app, source, "plan", "Understanding your request…");
 
     // Drive the loop, then always shut the MCP servers down (whatever the outcome).
     let result = drive_loop(app, backend, &system, &tools, contents, source, &mut mcp, &mut screen_mapping).await;
@@ -727,6 +867,11 @@ async fn drive_loop(
     let mut last_call_signature: Option<String> = None;
     let mut repeat_count: usize = 0;
     let mut empty_response_count: usize = 0;
+    // Tallies tool-call activity between narration messages — flushed as a
+    // "phase-summary" event right before the next "thinking" line (or at the
+    // end of the run), so the UI can show "Explored 12 files, 3 searches"
+    // instead of 12 separate raw tool-call rows.
+    let mut phase = PhaseCounts::default();
 
     for _ in 0..MAX_ITERATIONS {
         // Bound the payload: only the 2 most recent screenshots ride along.
@@ -762,6 +907,7 @@ async fn drive_loop(
 
         if model_parts.is_empty() {
             if !assistant_text.trim().is_empty() {
+                flush_phase(app, source, &mut phase);
                 emit(app, source, "done", "Done");
                 return Ok(assistant_text);
             }
@@ -800,11 +946,17 @@ the task is already done."
 
         // No tool calls → this is the final answer.
         if calls.is_empty() {
+            flush_phase(app, source, &mut phase);
             emit(app, source, "done", "Done");
             return Ok(assistant_text);
         }
 
         if !assistant_text.trim().is_empty() {
+            // Flush whatever the PREVIOUS burst of tool calls did before
+            // showing the model's new narration — so the rollup line reads
+            // as "here's what that last phase did" ahead of "here's the next
+            // phase," matching the order the work actually happened in.
+            flush_phase(app, source, &mut phase);
             emit(app, source, "thinking", truncate(&assistant_text, 400));
         }
 
@@ -836,7 +988,12 @@ the task is already done."
             } else {
                 execute_tool(app, backend, source, &name, &args, screen).await
             };
-            emit(app, source, "tool-result", truncate(&outcome.log, 300));
+            let (clean_log, diff) = extract_diff_marker(&outcome.log);
+            phase.record(&name);
+            if let Some((added, removed)) = diff {
+                phase.record_diff(added, removed);
+            }
+            emit(app, source, "tool-result", truncate(&clean_log, 300));
             response_parts.push(json!({
                 "functionResponse": { "name": name, "response": outcome.response }
             }));
@@ -1072,6 +1229,10 @@ fn write_file_tool(args: &Value) -> ToolOutcome {
         return ToolOutcome::err("no path provided");
     }
     let path = resolve_agent_path(raw);
+    // Captured before the write so the activity log's "+N -M" stat reflects
+    // what actually changed — None (file didn't exist yet) means every line
+    // of the new content counts as added.
+    let old_content = std::fs::read_to_string(&path).ok();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -1082,7 +1243,12 @@ fn write_file_tool(args: &Value) -> ToolOutcome {
             } else {
                 ""
             };
-            ToolOutcome::text(format!("Wrote {} ({} bytes).{}", path.display(), content.len(), scratch_note))
+            let msg = format!("Wrote {} ({} bytes).{}", path.display(), content.len(), scratch_note);
+            let mut log = msg.clone();
+            if let Some((added, removed)) = line_diff_stats(old_content.as_deref().unwrap_or(""), content) {
+                log.push_str(&format!("\u{1}DIFF {} {}", added, removed));
+            }
+            ToolOutcome { response: json!({ "result": msg }), image_data_url: None, log }
         }
         Err(e) => ToolOutcome::err(format!("could not write {}: {}", path.display(), e)),
     }
@@ -1094,8 +1260,20 @@ fn delete_file_tool(args: &Value) -> ToolOutcome {
         return ToolOutcome::err("no path provided");
     }
     let path = resolve_agent_path(raw);
+    // Same "captured before it's gone" idea as write_file_tool, so a delete
+    // shows up as "-N" lines removed instead of silently not counting.
+    let old_content = std::fs::read_to_string(&path).ok();
     match std::fs::remove_file(&path) {
-        Ok(()) => ToolOutcome::text(format!("Deleted {}.", path.display())),
+        Ok(()) => {
+            let msg = format!("Deleted {}.", path.display());
+            let mut log = msg.clone();
+            if let Some(old) = old_content {
+                if let Some((_, removed)) = line_diff_stats(&old, "") {
+                    log.push_str(&format!("\u{1}DIFF 0 {}", removed));
+                }
+            }
+            ToolOutcome { response: json!({ "result": msg }), image_data_url: None, log }
+        }
         Err(e) => ToolOutcome::err(format!("could not delete {}: {}", path.display(), e)),
     }
 }
