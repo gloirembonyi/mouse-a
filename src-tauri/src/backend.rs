@@ -467,12 +467,26 @@ impl BackendClient {
 
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
+            let retry_after_secs = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok());
             let text = resp.text().await.unwrap_or_default();
             if status == 401 {
                 self.clear_session().await;
                 return Err("Session expired — please try again.".to_string());
             }
-            return Err(format!("Agent step failed ({}): {}", status, truncate(&text, 300)));
+            let suffix = match retry_after_secs {
+                Some(secs) => format!(" [retry-after={}]", secs),
+                None => String::new(),
+            };
+            return Err(format!(
+                "Agent step failed ({}){}: {}",
+                status,
+                suffix,
+                truncate(&text, 300)
+            ));
         }
 
         resp.json()

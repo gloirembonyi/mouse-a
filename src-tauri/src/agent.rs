@@ -620,8 +620,13 @@ pub async fn run_task(
 // hiccup. Neither means the task failed — it means "ask again in a moment" —
 // so retrying with backoff turns a dead task into a brief pause instead of
 // losing all progress and forcing the user to restart from scratch.
+//
+// Rate limits (429s, from our own Upstash per-route limiter or a Gemini quota
+// error) are just as transient as a 5xx — the window clears in seconds — so
+// they're retried the same way instead of failing the whole run outright.
 const STEP_RETRY_ATTEMPTS: usize = 4;
 const STEP_RETRY_BASE_DELAY_SECS: u64 = 3;
+const STEP_RETRY_MAX_DELAY_SECS: u64 = 30;
 
 fn is_retryable_step_error(err: &str) -> bool {
     let lower = err.to_lowercase();
@@ -634,12 +639,26 @@ fn is_retryable_step_error(err: &str) -> bool {
         "timed out",
         "timeout",
         "reach the thothai backend",
+        "(429)",
+        "429",
+        "too many requests",
+        "rate limit",
         "(502)",
         "(503)",
         "(500)",
     ]
     .iter()
     .any(|needle| lower.contains(needle))
+}
+
+/// Pulls a server-suggested delay out of an error string shaped like
+/// `"...[retry-after=7]..."` (see `backend.rs::agent_step`), so a rate-limited
+/// step waits exactly as long as the server asked instead of guessing.
+fn retry_after_hint_secs(err: &str) -> Option<u64> {
+    let start = err.find("[retry-after=")? + "[retry-after=".len();
+    let rest = &err[start..];
+    let end = rest.find(']')?;
+    rest[..end].trim().parse::<u64>().ok()
 }
 
 /// Calls the model with retry-with-backoff on transient errors, so a momentary
@@ -658,13 +677,25 @@ async fn agent_step_with_retry(
             Ok(v) => return Ok(v),
             Err(e) if attempt < STEP_RETRY_ATTEMPTS && is_retryable_step_error(&e) => {
                 attempt += 1;
-                let delay = STEP_RETRY_BASE_DELAY_SECS * (1 << (attempt - 1)); // 3s, 6s, 12s, 24s
+                let backoff = STEP_RETRY_BASE_DELAY_SECS * (1 << (attempt - 1)); // 3s, 6s, 12s, 24s
+                let delay = retry_after_hint_secs(&e)
+                    .map(|hint| hint.clamp(1, STEP_RETRY_MAX_DELAY_SECS))
+                    .unwrap_or(backoff);
+                let reason = if e.to_lowercase().contains("429")
+                    || e.to_lowercase().contains("rate limit")
+                    || e.to_lowercase().contains("too many requests")
+                {
+                    "Too many requests right now"
+                } else {
+                    "The model is busy"
+                };
                 emit(
                     app,
                     source,
                     "thinking",
                     format!(
-                        "The model is busy ({}). Retrying in {}s… ({}/{})",
+                        "{} ({}). Retrying in {}s… ({}/{})",
+                        reason,
                         truncate(&e, 120),
                         delay,
                         attempt,
