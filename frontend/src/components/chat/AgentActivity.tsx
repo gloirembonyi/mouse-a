@@ -87,6 +87,35 @@ export function AgentActivity({ steps, status, elapsedMs }: AgentActivityProps) 
   );
 }
 
+// The model's own step narration ("thinking"/"tool"/"tool-result" text) can
+// contain `code` spans or **bold** the same way a final answer does, but this
+// row is a single compact line, not a full document — so this renders just
+// those two inline forms instead of pulling in ReactMarkdown's block-level
+// layout (headings, lists, paragraphs) for what's meant to read as one line.
+function renderInline(text: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  const regex = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+  while ((match = regex.exec(text))) {
+    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
+    const token = match[0];
+    if (token.startsWith("`")) {
+      parts.push(
+        <code key={key++} className="rounded bg-white/10 px-1 py-0.5 font-mono text-[10px]">
+          {token.slice(1, -1)}
+        </code>,
+      );
+    } else {
+      parts.push(<strong key={key++}>{token.slice(2, -2)}</strong>);
+    }
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts;
+}
+
 function iconForStep(step: AgentStep) {
   if (step.kind === "thinking") return null;
   if (step.kind === "error") return X;
@@ -128,7 +157,7 @@ function Step({ step, isLast }: { step: AgentStep; isLast: boolean }) {
         <span className={`mt-0.5 w-px flex-1 ${isLast ? "bg-transparent" : "bg-border-default"}`} style={{ minHeight: 6 }} />
       </div>
       <div className={`flex-1 pb-2.5 text-[11px] leading-[1.5] ${textClass}`}>
-        {step.kind === "error" ? friendlyError(step.message) : step.message}
+        {renderInline(step.kind === "error" ? friendlyError(step.message) : step.message)}
       </div>
     </div>
   );

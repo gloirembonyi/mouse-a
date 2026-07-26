@@ -188,6 +188,25 @@ async function expand() {
   showPanel({ resize: true });
 }
 
+// The window used to be resized to hardcoded pixel constants (380/460/480)
+// regardless of how much text actually came back — a one-line answer left a
+// large blank gap below it up to that fixed height. Instead, measure how
+// tall the panel's content actually wants to be (by briefly letting it hug
+// its content instead of stretching to fill the window) and resize the
+// native window to match, capped so a very long answer scrolls instead of
+// growing the window off-screen.
+async function syncOverlaySize(maxHeight = 560) {
+  if (!panel || panel.hidden) return;
+  const prevHeight = panel.style.height;
+  panel.style.height = "auto";
+  const natural = panel.scrollHeight;
+  panel.style.height = prevHeight;
+  const height = Math.min(maxHeight, Math.max(180, natural));
+  try {
+    await invoke("expand_overlay", { width: 460, height });
+  } catch { /* ignore */ }
+}
+
 async function showPanel({ resize }) {
   if (!hover) return;
   expanded = true;
@@ -207,9 +226,7 @@ async function showPanel({ resize }) {
   questionInput.value = "";
 
   if (resize) {
-    try {
-      await invoke("expand_overlay", { width: 440, height: 380 });
-    } catch { /* ignore */ }
+    await syncOverlaySize(380);
   }
   questionInput.focus();
 }
@@ -287,10 +304,6 @@ async function ask(question) {
       55000
     );
     answerEl.innerHTML = questionHeaderHtml(question) + renderMarkdown(result.text || "(no answer)");
-    // Grow the modal so the answer is comfortably readable.
-    try {
-      await invoke("expand_overlay", { width: 460, height: 460 });
-    } catch { /* ignore */ }
   } catch (err) {
     answerEl.innerHTML = questionHeaderHtml(question) + `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
   } finally {
@@ -299,6 +312,8 @@ async function ask(question) {
     setBusy(false);
     questionInput.value = "";
     questionInput.focus();
+    // Grow (or shrink) the window to fit whatever came back — answer or error.
+    await syncOverlaySize(460);
   }
 }
 
@@ -320,9 +335,7 @@ async function runAgentTask(task) {
   agentSummary = createAgentSummary();
   agentLogEl.appendChild(agentSummary.root);
   agentLogEl.scrollTop = 0;
-  try {
-    await invoke("expand_overlay", { width: 460, height: 480 });
-  } catch { /* ignore */ }
+  await syncOverlaySize(480);
 
   try {
     const result = await invoke("agent_run", {
@@ -344,6 +357,9 @@ async function runAgentTask(task) {
     setBusy(false);
     questionInput.value = "";
     questionInput.focus();
+    // The "Thought for Xs" summary just collapsed to one line — shrink the
+    // window to match instead of leaving the old expanded-log space behind.
+    await syncOverlaySize(480);
   }
 }
 
@@ -396,6 +412,7 @@ function createAgentSummary() {
     const currentlyExpanded = !body.hidden;
     state.userCollapsed = currentlyExpanded;
     applyExpanded();
+    syncOverlaySize(480);
   });
 
   state.tickInterval = setInterval(() => {
@@ -440,11 +457,13 @@ function renderAgentProgress(p) {
     agentSummary.applyExpanded();
     agentSummary.body.appendChild(buildConfirmPrompt(p));
     agentLogEl.scrollTop = agentLogEl.scrollHeight;
+    syncOverlaySize(480);
     return;
   }
 
   agentSummary.body.appendChild(buildAgentStep(p));
   agentLogEl.scrollTop = agentLogEl.scrollHeight;
+  syncOverlaySize(480);
 }
 
 // Icon badge + connecting rail beside the message — same timeline shape as
@@ -469,7 +488,10 @@ function buildAgentStep(p) {
   // Same friendly formatting the final error box uses — the log is normally
   // hidden before an error-kind row would be seen, but this covers the race
   // between the agent-progress event arriving and the invoke() rejecting.
-  body.textContent = p.kind === "error" ? friendlyError(p.message) : p.message;
+  // Rendered as inline markdown (not raw textContent) so `code` and **bold**
+  // in the model's own narration show up formatted instead of as literal
+  // backticks/asterisks.
+  body.innerHTML = renderInlineMarkdown(p.kind === "error" ? friendlyError(p.message) : p.message);
 
   step.appendChild(rail);
   step.appendChild(body);
@@ -620,5 +642,17 @@ function renderMarkdown(text) {
   html = html.replace(/\n\n/g, "</p><p>");
   html = html.replace(/\n/g, "<br>");
   if (!html.startsWith("<")) html = `<p>${html}</p>`;
+  return html;
+}
+
+// Same escaping as renderMarkdown but no block-level wrapping (no <p>/<br>) —
+// used for the compact single-line agent-step narration, where a full
+// markdown block layout would look broken in an 11px-tall row.
+function renderInlineMarkdown(text) {
+  if (!text) return "";
+  let html = escapeHtml(text);
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
   return html;
 }
