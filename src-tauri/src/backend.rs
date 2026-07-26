@@ -520,6 +520,40 @@ impl BackendClient {
         Ok(data.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string())
     }
 
+    /// Persists a finished agent task as a user+assistant message pair, same
+    /// as a normal chat exchange — agent runs go through /api/agent/step,
+    /// never /api/chat, so without this explicit call they'd never show up
+    /// in conversation history/the Threads list. Best-effort by design: the
+    /// caller should swallow errors here rather than fail the whole task
+    /// over a logging call. Returns the conversation id (new or reused).
+    pub async fn log_agent_run(
+        &self,
+        conversation_id: Option<&str>,
+        task: &str,
+        result: &str,
+    ) -> Result<String, String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let url = format!("{}/api/agent/log", self.base_url.read().await);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({ "conversationId": conversation_id, "task": task, "result": result }))
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        if !resp.status().is_success() {
+            return Err(format!("Failed to log agent run ({})", resp.status().as_u16()));
+        }
+        #[derive(Deserialize)]
+        struct Resp {
+            #[serde(rename = "conversationId")]
+            conversation_id: String,
+        }
+        let data: Resp = resp.json().await.map_err(|e| format!("Failed to parse log response: {}", e))?;
+        Ok(data.conversation_id)
+    }
+
     // ── Conversation history ───────────────────────────────────────
 
     /// Per-user counts (conversations/messages/memories/skills/...) — a

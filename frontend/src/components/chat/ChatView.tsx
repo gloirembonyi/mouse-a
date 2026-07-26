@@ -4,15 +4,17 @@ import { MessageList } from "./MessageList";
 import { InputBar } from "./InputBar";
 import { captureAnalyze, getCursorContext, newId } from "../../lib/tauri";
 import type { useChat } from "../../hooks/useChat";
-import type { CursorContext } from "../../lib/types";
+import type { Conversation, CursorContext } from "../../lib/types";
 
 interface ChatViewProps {
   chat: ReturnType<typeof useChat>;
   aiActive: boolean;
   onToggleHoverMode: () => void;
+  workspaceRoot: string | null;
+  conversations: Conversation[];
 }
 
-export function ChatView({ chat, aiActive, onToggleHoverMode }: ChatViewProps) {
+export function ChatView({ chat, aiActive, onToggleHoverMode, workspaceRoot, conversations }: ChatViewProps) {
   const [context, setContext] = useState<CursorContext | null>(null);
   const lastKeyRef = useRef("");
 
@@ -81,6 +83,8 @@ export function ChatView({ chat, aiActive, onToggleHoverMode }: ChatViewProps) {
         onSend={chat.send}
         disabled={chat.isLoading}
         onToggleHoverMode={onToggleHoverMode}
+        workspaceRoot={workspaceRoot}
+        conversations={conversations}
       />
     </div>
   );

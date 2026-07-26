@@ -265,7 +265,13 @@ async function ask(question) {
 
   setBusy(true);
   thinkingEl.hidden = false;
+  // Fully clear both panes (not just toggle `hidden`) — a stale previous
+  // answer's innerHTML sitting under a newly-visible agent-log (or vice
+  // versa) is exactly how two unrelated Q&A turns end up visually stacked.
   answerEl.hidden = true;
+  answerEl.innerHTML = "";
+  agentLogEl.hidden = true;
+  agentLogEl.innerHTML = "";
 
   try {
     // Watchdog: never let the panel spin forever, whatever happens below.
@@ -306,12 +312,14 @@ async function runAgentTask(task) {
   }
   setBusy(true);
   thinkingEl.hidden = true;
+  // Fully clear both panes — see the matching comment in ask() above.
   answerEl.hidden = true;
+  answerEl.innerHTML = "";
   agentLogEl.hidden = false;
   agentLogEl.innerHTML = questionHeaderHtml(task);
   agentSummary = createAgentSummary();
   agentLogEl.appendChild(agentSummary.root);
-  const startedAt = Date.now();
+  agentLogEl.scrollTop = 0;
   try {
     await invoke("expand_overlay", { width: 460, height: 480 });
   } catch { /* ignore */ }
@@ -325,17 +333,13 @@ async function runAgentTask(task) {
       autonomous: true,
     });
     finishAgentSummary(true);
-    agentLogEl.hidden = true;
-    answerEl.hidden = false;
-    answerEl.innerHTML = questionHeaderHtml(task) + renderMarkdown(result.text || "(done)") + durationFooterHtml(Date.now() - startedAt);
+    // The final answer joins the SAME scrollable log the collapsed "Thought
+    // for Xs" recap lives in (Cursor-style) — it doesn't replace it. Only the
+    // plain (non-agent) ask() path uses the separate #answer element.
+    appendFinalAnswer(renderMarkdown(result.text || "(done)"));
   } catch (err) {
     finishAgentSummary(false);
-    // Hide the activity log (it may still hold a raw "⚠️ ..." line from the
-    // agent-progress "error" event that fired just before this rejection) so
-    // the user sees one clean, friendly error box instead of both.
-    agentLogEl.hidden = true;
-    answerEl.hidden = false;
-    answerEl.innerHTML = questionHeaderHtml(task) + `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>` + durationFooterHtml(Date.now() - startedAt);
+    appendFinalAnswer(`<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`);
   } finally {
     setBusy(false);
     questionInput.value = "";
@@ -411,6 +415,20 @@ function finishAgentSummary(success) {
   agentSummary.icon.classList.toggle("failed", !success);
   if (agentSummary.userCollapsed === null) agentSummary.applyExpanded();
   agentSummary = null;
+}
+
+// Appends the final answer (or error box) below the now-collapsed "Thought
+// for Xs" summary, inside the same scrollable log — then scrolls down so the
+// answer is what's actually in view, not left scrolled up at the old step
+// log's position.
+function appendFinalAnswer(html) {
+  const wrap = document.createElement("div");
+  wrap.className = "agent-final-answer";
+  wrap.innerHTML = html;
+  agentLogEl.appendChild(wrap);
+  requestAnimationFrame(() => {
+    agentLogEl.scrollTop = agentLogEl.scrollHeight;
+  });
 }
 
 function renderAgentProgress(p) {

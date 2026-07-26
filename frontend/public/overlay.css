@@ -245,9 +245,10 @@ html, body {
 #agent-log {
   flex: 1;
   overflow-y: auto;
-  padding: 10px 14px 4px;
+  padding: 10px 14px 2px;
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 #agent-log::-webkit-scrollbar { width: 6px; }
 #agent-log::-webkit-scrollbar-thumb { background: var(--bg-tertiary); border-radius: 3px; }
@@ -309,9 +310,13 @@ html, body {
   transition: transform 150ms ease;
 }
 .agent-summary-body {
-  padding: 4px 12px 8px;
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 6px 12px 8px;
   border-top: 1px solid var(--border);
 }
+.agent-summary-body::-webkit-scrollbar { width: 5px; }
+.agent-summary-body::-webkit-scrollbar-thumb { background: var(--bg-tertiary); border-radius: 3px; }
 @keyframes agent-spin { to { transform: rotate(360deg); } }
 
 .agent-step {
@@ -419,14 +424,17 @@ html, body {
   color: var(--text-muted);
 }
 
-#answer p { margin-bottom: 8px; }
-#answer code {
+/* Same markdown rules apply whether the answer landed in the plain-ask
+   #answer element or the agent-task .agent-final-answer block (which lives
+   inside #agent-log, right after the collapsed "Thought for Xs" summary). */
+#answer p, .agent-final-answer p { margin-bottom: 8px; }
+#answer code, .agent-final-answer code {
   background: var(--bg-tertiary);
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 11.5px;
 }
-#answer pre {
+#answer pre, .agent-final-answer pre {
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -434,24 +442,38 @@ html, body {
   margin: 8px 0;
   overflow-x: auto;
 }
-#answer pre code { background: none; padding: 0; }
-#answer ul, #answer ol { margin: 6px 0 6px 18px; }
-#answer h1, #answer h2, #answer h3 { margin: 8px 0 4px; font-size: 13px; }
-#answer a { color: var(--accent); }
-#answer blockquote {
+#answer pre code, .agent-final-answer pre code { background: none; padding: 0; }
+#answer ul, #answer ol, .agent-final-answer ul, .agent-final-answer ol { margin: 6px 0 6px 18px; }
+#answer h1, #answer h2, #answer h3,
+.agent-final-answer h1, .agent-final-answer h2, .agent-final-answer h3 { margin: 8px 0 4px; font-size: 13px; }
+#answer a, .agent-final-answer a { color: var(--accent); }
+#answer blockquote, .agent-final-answer blockquote {
   border-left: 2px solid var(--accent);
   padding-left: 8px;
   color: var(--text-secondary);
   margin: 6px 0;
 }
 
-#answer .error-box {
+#answer .error-box, .agent-final-answer .error-box {
   padding: 10px 12px;
   border: 1px solid rgba(239, 83, 80, 0.35);
   border-radius: 10px;
   background: rgba(239, 83, 80, 0.1);
   color: #ffb4b2;
   font-size: 12px;
+}
+
+/* The final answer sits right below the (now-collapsed) Thought summary
+   inside the same scrollable #agent-log — a top border + small gap reads as
+   "here's the actual result" without a heavy visual break. */
+.agent-final-answer {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  user-select: text;
+  cursor: text;
 }
 
 /* ── Thinking dots ─────────────────────────────────────── */

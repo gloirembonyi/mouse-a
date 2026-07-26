@@ -401,13 +401,23 @@ pub async fn agent_run(
         cy,
         &source,
         autonomous,
-        conversation_id,
+        conversation_id.clone(),
         image_data_url,
     )
     .await;
 
     match result {
-        Ok(text) => Ok(ChatResult { text, conversation_id: None }),
+        Ok(text) => {
+            // Best-effort: an agent run otherwise never touches /api/chat, so
+            // without this it would be invisible in the Threads sidebar even
+            // though the user experiences it as the same assistant. A logging
+            // failure (offline, etc.) shouldn't undo an otherwise-successful task.
+            match state.backend.log_agent_run(conversation_id.as_deref(), &task, &text).await {
+                Ok(new_conversation_id) => *state.conversation_id.write().await = Some(new_conversation_id),
+                Err(_) => { /* the task itself still succeeded; just won't show up in history this time */ }
+            }
+            Ok(ChatResult { text, conversation_id: None })
+        }
         Err(e) => {
             let _ = app.emit(
                 "agent-progress",

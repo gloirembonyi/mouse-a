@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { agentRun, newId, onAgentProgress, sendChat } from "../lib/tauri";
 import { friendlyError } from "../lib/format";
-import type { UiMessage } from "../lib/chatTypes";
+import { resolveAttachments } from "../lib/attachments";
+import type { Attachment, UiMessage } from "../lib/chatTypes";
 import type { AgentStep } from "../components/chat/AgentActivity";
 
 interface UseChatOptions {
@@ -44,7 +45,7 @@ export function useChat({ onActivity }: UseChatOptions = {}) {
   const loadMessages = useCallback((msgs: UiMessage[]) => setMessages(msgs), []);
 
   const runAgent = useCallback(
-    async (text: string) => {
+    async (composedText: string, imageDataUrl: string | null) => {
       const id = newId();
       activeAgentMsgId.current = id;
       runStartedAt.current = Date.now();
@@ -52,7 +53,7 @@ export function useChat({ onActivity }: UseChatOptions = {}) {
       setIsLoading(true);
 
       try {
-        const result = await agentRun(text, "main");
+        const result = await agentRun(composedText, "main", imageDataUrl);
         const elapsedMs = Date.now() - runStartedAt.current;
         setMessages((prev) => [
           ...prev.map((m) => (m.id === id && m.kind === "agent" ? { ...m, status: "done" as const, elapsedMs } : m)),
@@ -73,16 +74,16 @@ export function useChat({ onActivity }: UseChatOptions = {}) {
     [onActivity],
   );
 
-  const runPlainChat = useCallback(async (text: string) => {
+  const runPlainChat = useCallback(async (composedText: string, imageDataUrl: string | null) => {
     const thinkingId = newId();
     setMessages((prev) => [...prev, { id: thinkingId, kind: "thinking" }]);
     setIsLoading(true);
     const shouldSearch =
-      text.toLowerCase().startsWith("search") ||
-      /latest|current|today|news/i.test(text);
+      composedText.toLowerCase().startsWith("search") ||
+      /latest|current|today|news/i.test(composedText);
 
     try {
-      const result = await sendChat(text, shouldSearch);
+      const result = await sendChat(composedText, shouldSearch, imageDataUrl);
       setMessages((prev) =>
         prev
           .filter((m) => m.id !== thinkingId)
@@ -100,14 +101,21 @@ export function useChat({ onActivity }: UseChatOptions = {}) {
   }, []);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, attachments: Attachment[] = []) => {
       const trimmed = text.trim();
-      if (!trimmed || isLoading) return;
-      setMessages((prev) => [...prev, { id: newId(), kind: "user", content: trimmed }]);
+      if ((!trimmed && attachments.length === 0) || isLoading) return;
+      setMessages((prev) => [
+        ...prev,
+        { id: newId(), kind: "user", content: trimmed, attachments: attachments.length ? attachments : undefined },
+      ]);
+
+      const { contextText, imageDataUrl } = await resolveAttachments(attachments);
+      const composedText = contextText ? `${contextText}\n\n${trimmed}` : trimmed;
+
       if (agentMode) {
-        await runAgent(trimmed);
+        await runAgent(composedText, imageDataUrl);
       } else {
-        await runPlainChat(trimmed);
+        await runPlainChat(composedText, imageDataUrl);
       }
     },
     [isLoading, agentMode, runAgent, runPlainChat],

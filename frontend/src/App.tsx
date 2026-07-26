@@ -75,6 +75,19 @@ export default function App() {
     [chat, conversations],
   );
 
+  const handleDeleteThread = useCallback(
+    async (id: string) => {
+      await conversations.remove(id);
+      // The deleted thread was the one open in the chat view — clear it so
+      // the next message doesn't try to continue a conversation that no
+      // longer exists.
+      if (conversations.activeId === id) {
+        await handleNewChat();
+      }
+    },
+    [conversations, handleNewChat],
+  );
+
   const handleToggleHoverMode = useCallback(() => {
     toggleAiActive().catch(() => {});
   }, []);
@@ -113,6 +126,7 @@ export default function App() {
           activeThreadId={conversations.activeId}
           onNewChat={handleNewChat}
           onOpenThread={handleOpenThread}
+          onDeleteThread={handleDeleteThread}
           onOpenSettings={() => setView("settings")}
           onToggleHoverMode={handleToggleHoverMode}
           aiActive={aiActive}
@@ -120,7 +134,13 @@ export default function App() {
           {view === "settings" ? (
             <SettingsPanel user={auth.user} onClose={() => setView("chat")} onSignedOut={auth.retry} />
           ) : (
-            <ChatView chat={chat} aiActive={aiActive} onToggleHoverMode={handleToggleHoverMode} />
+            <ChatView
+              chat={chat}
+              aiActive={aiActive}
+              onToggleHoverMode={handleToggleHoverMode}
+              workspaceRoot={workspace.root}
+              conversations={conversations.threads}
+            />
           )}
         </AppShell>
       </div>

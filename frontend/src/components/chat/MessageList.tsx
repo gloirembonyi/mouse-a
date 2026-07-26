@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Camera, MessageCircle, Search } from "lucide-react";
+import { Camera, FileText, MessageCircle, MessageSquare, Search } from "lucide-react";
 import { Markdown } from "./Markdown";
 import { AgentActivity } from "./AgentActivity";
 import type { UiMessage } from "../../lib/chatTypes";
@@ -67,11 +67,31 @@ function ActionChip({ icon, label, onClick }: { icon: React.ReactNode; label: st
 
 function MessageItem({ message }: { message: UiMessage }) {
   if (message.kind === "user") {
+    const attachments = message.attachments ?? [];
     return (
-      <div className="mb-3.5 flex justify-end border-b border-border-soft pb-3.5 last:border-none last:pb-0">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-gradient-to-br from-accent to-accent-light px-3.5 py-2.5 text-[13px] text-white shadow-[0_3px_12px_rgba(118,159,205,0.25)]">
-          {message.content}
-        </div>
+      <div className="mb-3.5 flex flex-col items-end gap-1.5 border-b border-border-soft pb-3.5 last:border-none last:pb-0">
+        {attachments.length > 0 && (
+          <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+            {attachments.map((a) =>
+              a.kind === "image" ? (
+                <img key={a.id} src={a.dataUrl} alt={a.name} className="h-14 w-14 rounded-lg border border-border-default object-cover" />
+              ) : (
+                <span
+                  key={a.id}
+                  className="flex items-center gap-1 rounded-full border border-border-default bg-bg-tertiary px-2.5 py-1 text-[11px] text-text-secondary"
+                >
+                  {a.kind === "file" ? <FileText size={11} /> : <MessageSquare size={11} />}
+                  {a.kind === "file" ? a.name : a.title}
+                </span>
+              ),
+            )}
+          </div>
+        )}
+        {message.content && (
+          <div className="max-w-[85%] rounded-2xl rounded-br-md bg-gradient-to-br from-accent to-accent-light px-3.5 py-2.5 text-[13px] text-white shadow-[0_3px_12px_rgba(118,159,205,0.25)]">
+            {message.content}
+          </div>
+        )}
       </div>
     );
   }
