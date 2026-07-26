@@ -195,13 +195,21 @@ async function expand() {
 // its content instead of stretching to fill the window) and resize the
 // native window to match, capped so a very long answer scrolls instead of
 // growing the window off-screen.
+//
+// Never shrinks below MIN_OVERLAY_HEIGHT even when content is just the
+// header + input row — a popup that shrinks to barely more than its own
+// title bar (as it briefly did while "Working…" with nothing logged yet)
+// reads as broken, not efficient, so there's always a comfortable default
+// amount of room regardless of how little is on screen yet.
+const MIN_OVERLAY_HEIGHT = 360;
+
 async function syncOverlaySize(maxHeight = 560) {
   if (!panel || panel.hidden) return;
   const prevHeight = panel.style.height;
   panel.style.height = "auto";
   const natural = panel.scrollHeight;
   panel.style.height = prevHeight;
-  const height = Math.min(maxHeight, Math.max(180, natural));
+  const height = Math.min(Math.max(maxHeight, MIN_OVERLAY_HEIGHT), Math.max(MIN_OVERLAY_HEIGHT, natural));
   try {
     await invoke("expand_overlay", { width: 460, height });
   } catch { /* ignore */ }
