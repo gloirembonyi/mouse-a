@@ -37,6 +37,12 @@ export function friendlyError(err: unknown): string {
     return "You've hit today's free message limit. It resets daily — try again tomorrow.";
   if (/referer|permission_denied|rejected every configured api key|api key not valid/i.test(msg))
     return "The backend's Gemini API key is misconfigured (not something you can fix here) — let the app owner know it needs a working key.";
+  // Distinct from a transient rate limit: a quota/billing error means the
+  // account's Gemini quota is actually exhausted — retrying (which the agent
+  // already tried several times before giving up) can't fix it, so this
+  // needs its own message rather than the generic "wait a few seconds" one.
+  if (/exceeded your current quota|check your plan and billing|quota_exceeded|resource_exhausted/i.test(msg))
+    return "The Gemini API quota/billing limit has been reached — this won't resolve by retrying. Check the plan/billing for the API key in use, or switch to a different key in Settings.";
   if (/429|rate limit/i.test(msg)) return "Too many requests right now — wait a few seconds and try again.";
   return msg;
 }

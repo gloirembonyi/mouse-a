@@ -770,6 +770,22 @@ const STEP_RETRY_MAX_DELAY_SECS: u64 = 30;
 
 fn is_retryable_step_error(err: &str) -> bool {
     let lower = err.to_lowercase();
+    // A quota/billing 429 ("You exceeded your current quota, please check
+    // your plan and billing…") is NOT the same as a transient rate limit —
+    // the quota is genuinely exhausted, so retrying 4 times with backoff
+    // (up to 45s) just delays an inevitable failure instead of recovering.
+    // Checked first so it wins even though the message also contains "429".
+    let quota_exhausted = [
+        "exceeded your current quota",
+        "check your plan and billing",
+        "quota_exceeded",
+        "resource_exhausted",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    if quota_exhausted {
+        return false;
+    }
     [
         "high demand",
         "overloaded",
