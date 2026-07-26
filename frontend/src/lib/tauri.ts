@@ -38,8 +38,8 @@ export interface ChatResult {
   conversation_id?: string | null;
 }
 
-export const sendChat = (text: string, webSearch = false) =>
-  invoke<ChatResult>("send_chat", { text, imageDataUrl: null, webSearch });
+export const sendChat = (text: string, webSearch = false, imageDataUrl: string | null = null) =>
+  invoke<ChatResult>("send_chat", { text, imageDataUrl, webSearch });
 
 export const captureAnalyze = () =>
   invoke<ChatResult>("analyze_at_cursor", { userQuestion: null, radius: 300 });
@@ -47,8 +47,8 @@ export const captureAnalyze = () =>
 export const newConversation = () => invoke<void>("new_conversation");
 
 // ── Agent ────────────────────────────────────────────────
-export const agentRun = (task: string, source: "main" | "overlay" = "main") =>
-  invoke<AgentRunResult>("agent_run", { task, source, autonomous: true });
+export const agentRun = (task: string, source: "main" | "overlay" = "main", imageDataUrl: string | null = null) =>
+  invoke<AgentRunResult>("agent_run", { task, source, autonomous: true, imageDataUrl });
 
 export const agentConfirm = (requestId: string, approved: boolean) =>
   invoke<boolean>("agent_confirm", { requestId, approved });
@@ -64,6 +64,7 @@ export const getConversationMessages = (id: string, limit = 200) =>
   invoke<ConversationMessage[]>("get_conversation_messages", { id, limit });
 export const setConversationId = (id: string | null) =>
   invoke<void>("set_conversation_id", { id });
+export const deleteConversation = (id: string) => invoke<void>("delete_conversation", { id });
 
 // ── Settings ──────────────────────────────────────────────
 export const getBackendUrl = () => invoke<string>("get_backend_url");
@@ -92,6 +93,8 @@ export const fsReadTextFile = (path: string) => invoke<string>("fs_read_text_fil
 export const fsWriteTextFile = (path: string, content: string) =>
   invoke<void>("fs_write_text_file", { path, content });
 export const fsParentDir = (path: string) => invoke<string | null>("fs_parent_dir", { path });
+export const fsSearchFiles = (root: string, query: string, limit = 30) =>
+  invoke<FsEntry[]>("fs_search_files", { root, query, limit });
 
 // ── Terminal (IDE dock) ───────────────────────────────────
 export const ptySpawn = (cwd: string | null, cols: number, rows: number) =>

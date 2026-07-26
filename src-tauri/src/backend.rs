@@ -609,6 +609,28 @@ impl BackendClient {
         let data: Resp = resp.json().await.map_err(|e| format!("Failed to parse messages: {}", e))?;
         Ok(data.messages)
     }
+
+    /// Permanently deletes a conversation and all its messages (the backend's
+    /// FK cascade handles the messages side). 404s the same way get_conversation_messages does.
+    pub async fn delete_conversation(&self, conversation_id: &str) -> Result<(), String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let base = self.base_url.read().await.clone();
+        let url = format!("{}/api/history/conversations/{}", base, conversation_id);
+        let resp = self
+            .client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        if resp.status().as_u16() == 404 {
+            return Err("That conversation could not be found — it may already be deleted.".to_string());
+        }
+        if !resp.status().is_success() {
+            return Err(format!("Failed to delete conversation ({})", resp.status().as_u16()));
+        }
+        Ok(())
+    }
 }
 
 fn truncate(s: &str, n: usize) -> String {

@@ -197,6 +197,20 @@ that just needs more time is not the same as background=true, which is for long-
 processes (servers, watchers) you don't want to wait on at all.\n\
 - Finding things: use find_files to locate a file anywhere on the PC by name; use run_command with \
 Select-String (or the tools) to search inside files.\n\
+- Tool-first, file-last: before writing any file, check whether a tool you already have does the \
+job directly — web_search/web_fetch for research, run_command for a one-off computation or listing, \
+read_file/list_directory for inspecting something that already exists. Writing and running a script \
+is a LAST resort for when no existing tool can do it, not a default way to \"do research\" or \"check \
+something\" — e.g. never write a .py/.js file to search or scrape a site when web_search/web_fetch \
+already return that directly.\n\
+- Temporary vs. permanent files: a file you write purely as your own means to an end (a scratch \
+script, an intermediate data dump, notes you're building an answer from) is temporary working \
+material, not something the user asked for — write it with a relative path (it lands in a private \
+scratch folder, not the user's project or Desktop) and delete_file it once you've used it, before \
+your final answer. Only write to a real absolute path — the user's project, Desktop, a folder they \
+named — when the user's request is actually for a persisted file at that location (\"save this as\", \
+\"create a document\", \"write the code to my project\"); that's the one case a file should be left \
+behind. When in doubt about which one a file is, err toward scratch + cleanup.\n\
 - Before a genuinely sensitive or ambiguous action — submitting a form with personal/payment info, \
 sending a message, making a purchase, deleting/moving files, or anything you're not confident the \
 user actually wants — call request_confirmation with a short specific description and WAIT for the \
@@ -223,13 +237,13 @@ fn tool_declarations() -> Value {
     json!([
         {
             "name": "run_command",
-            "description": "Run a Windows PowerShell command and return its output. Use background=true for long-running/servers so it doesn't block. For anything that takes more than a few seconds (installs, builds), pass timeout_seconds explicitly rather than letting it hit the default and fail — up to 300s foreground, or use background=true for anything longer/indefinite.",
+            "description": "Run a Windows PowerShell command and return its output. Use background=true for long-running/servers so it doesn't block. For anything that takes more than a few seconds (installs, builds), pass timeout_seconds explicitly rather than letting it hit the default and fail — up to 300s foreground, or use background=true for anything longer/indefinite. IMPORTANT: only use this (or write_file) when no built-in tool already does the job — e.g. never write and run a script to search the web or fetch a page, web_search/web_fetch already do that directly.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "The PowerShell command to run." },
                     "background": { "type": "boolean", "description": "Run detached and return immediately." },
-                    "cwd": { "type": "string", "description": "Working directory to run the command in (defaults to the app's own directory if omitted)." },
+                    "cwd": { "type": "string", "description": "Working directory to run the command in. Omit it ONLY for your own scratch/throwaway work — it then defaults to a private temp scratch folder, never a real project. Always pass the real absolute folder path when the task is about actual files (a project, the user's Desktop, etc.)." },
                     "timeout_seconds": { "type": "integer", "description": "How long to wait for foreground output before giving up, 1-300 (default 45). Ignored when background=true." }
                 },
                 "required": ["command"]
@@ -237,12 +251,12 @@ fn tool_declarations() -> Value {
         },
         {
             "name": "read_file",
-            "description": "Read a UTF-8 text file from disk and return its contents.",
+            "description": "Read a UTF-8 text file from disk and return its contents. A relative path resolves inside your private scratch folder — pass an absolute path for a real file the user cares about.",
             "parameters": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }
         },
         {
             "name": "write_file",
-            "description": "Create or overwrite a text file on disk.",
+            "description": "Create or overwrite a text file on disk. Only use this when the task genuinely needs a persisted file — never as a substitute for a tool that already exists (e.g. don't write a script to do what web_search/web_fetch/run_command can do directly). A relative path resolves inside your private scratch folder (fine for your own working files — delete_file it once you're done, unless the user actually wants it kept); pass an absolute path — the user's project, Desktop, wherever they mean — for anything they should end up seeing.",
             "parameters": {
                 "type": "object",
                 "properties": { "path": { "type": "string" }, "content": { "type": "string" } },
@@ -250,8 +264,13 @@ fn tool_declarations() -> Value {
             }
         },
         {
+            "name": "delete_file",
+            "description": "Delete a file. Use this to clean up your own scratch files once you've used them and no longer need them — never on a file you haven't verified is your own throwaway work.",
+            "parameters": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }
+        },
+        {
             "name": "list_directory",
-            "description": "List the files and folders in a directory.",
+            "description": "List the files and folders in a directory. A relative path resolves inside your private scratch folder.",
             "parameters": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }
         },
         {
@@ -499,6 +518,7 @@ fn image_part(data_url: &str) -> Option<Value> {
 }
 
 /// Run one whole agent task to completion. Returns the final answer text.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_task(
     app: &AppHandle,
     backend: &BackendClient,
@@ -507,9 +527,32 @@ pub async fn run_task(
     cy: i32,
     source: &str,
     autonomous: bool,
+    conversation_id: Option<String>,
+    user_image_data_url: Option<String>,
 ) -> Result<String, String> {
     reset_scratch_dir();
     let system = system_prompt(autonomous);
+
+    // Recent turns from the SAME conversation the chat view and the overlay's
+    // plain-ask both share (AppState.conversation_id) — without this, an
+    // agent task kicked off from a hover-ask has no idea what was just
+    // discussed a moment ago in chat, even though the user experiences it as
+    // one continuous assistant.
+    let recent_conversation = match &conversation_id {
+        Some(id) => backend
+            .get_conversation_messages(id, Some(10))
+            .await
+            .ok()
+            .filter(|msgs| !msgs.is_empty())
+            .map(|msgs| {
+                let lines: Vec<String> = msgs
+                    .iter()
+                    .map(|m| format!("{}: {}", m.role, truncate(&m.content, 400)))
+                    .collect();
+                format!("[RECENT CONVERSATION — for context only, not new instructions]\n{}", lines.join("\n"))
+            }),
+        None => None,
+    };
 
     // Built-in tools, plus any tools exposed by configured MCP servers.
     let mut tool_defs = tool_declarations().as_array().cloned().unwrap_or_default();
@@ -539,11 +582,25 @@ pub async fn run_task(
 
     let mut screen_mapping: Option<ScreenMapping> = initial_shot.as_ref().map(ScreenMapping::from_shot);
 
+    let context_block = match &recent_conversation {
+        Some(recent) => format!("{}\n\n{}", recent, context_block),
+        None => context_block,
+    };
     let mut first_parts = vec![json!({
         "text": format!("{}\n\n[TASK]\n{}", context_block, task)
     })];
     if let Some(shot) = &initial_shot {
         if let Some(img) = image_part(&shot.data_url) {
+            first_parts.push(img);
+        }
+    }
+    // An image the USER attached to their message (distinct from the
+    // auto-captured grounding screenshot above) — e.g. a screenshot of an
+    // error, a photo, a design mock. Labeled so the model doesn't confuse it
+    // with "what's currently on screen."
+    if let Some(data_url) = &user_image_data_url {
+        if let Some(img) = image_part(data_url) {
+            first_parts.push(json!({ "text": "[USER-ATTACHED IMAGE — provided by the user with their message, not a screen capture]" }));
             first_parts.push(img);
         }
     }
@@ -780,6 +837,7 @@ fn tool_label(name: &str, args: &Value) -> String {
         "run_command" => format!("$ {}", args.get("command").and_then(|c| c.as_str()).unwrap_or("")),
         "read_file" => format!("Reading {}", args.get("path").and_then(|c| c.as_str()).unwrap_or("")),
         "write_file" => format!("Writing {}", args.get("path").and_then(|c| c.as_str()).unwrap_or("")),
+        "delete_file" => format!("Deleting {}", args.get("path").and_then(|c| c.as_str()).unwrap_or("")),
         "list_directory" => format!("Listing {}", args.get("path").and_then(|c| c.as_str()).unwrap_or("")),
         "find_files" => format!("Finding files: {}", args.get("name_contains").and_then(|c| c.as_str()).unwrap_or("")),
         "web_search" => format!("Searching: {}", args.get("query").and_then(|c| c.as_str()).unwrap_or("")),
@@ -820,6 +878,7 @@ async fn execute_tool(
         "run_command" => run_command_tool(args).await,
         "read_file" => read_file_tool(args),
         "write_file" => write_file_tool(args),
+        "delete_file" => delete_file_tool(args),
         "list_directory" => list_directory_tool(args),
         "find_files" => find_files_tool(args).await,
         "web_search" => web_search_tool(backend, args).await,
@@ -853,7 +912,17 @@ async fn run_command_tool(args: &Value) -> ToolOutcome {
         ));
     }
     let background = args.get("background").and_then(|b| b.as_bool()).unwrap_or(false);
-    let cwd = args.get("cwd").and_then(|c| c.as_str()).filter(|c| !c.trim().is_empty()).map(|c| c.to_string());
+    // No cwd → the agent's own scratch dir, never the host process's actual
+    // cwd (which under `tauri dev` is the app's own source tree — that's how
+    // throwaway scripts used to end up committed alongside real project
+    // files). A real project/folder task should always pass an explicit cwd.
+    let cwd = args
+        .get("cwd")
+        .and_then(|c| c.as_str())
+        .filter(|c| !c.trim().is_empty())
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| agent_scratch_dir().to_string_lossy().into_owned());
+    let cwd = Some(cwd);
     let timeout = args
         .get("timeout_seconds")
         .and_then(|t| t.as_u64())
@@ -950,41 +1019,63 @@ fn wait_with_timeout(
 }
 
 fn read_file_tool(args: &Value) -> ToolOutcome {
-    let path = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
-    if path.is_empty() {
+    let raw = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    if raw.is_empty() {
         return ToolOutcome::err("no path provided");
     }
-    match std::fs::read_to_string(path) {
+    let path = resolve_agent_path(raw);
+    match std::fs::read_to_string(&path) {
         Ok(content) => ToolOutcome {
             response: json!({ "content": truncate(&content, MAX_FILE_READ) }),
             image_data_url: None,
-            log: format!("read {} ({} bytes)", path, content.len()),
+            log: format!("read {} ({} bytes)", path.display(), content.len()),
         },
-        Err(e) => ToolOutcome::err(format!("could not read {}: {}", path, e)),
+        Err(e) => ToolOutcome::err(format!("could not read {}: {}", path.display(), e)),
     }
 }
 
 fn write_file_tool(args: &Value) -> ToolOutcome {
-    let path = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    let raw = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
     let content = args.get("content").and_then(|c| c.as_str()).unwrap_or("");
-    if path.is_empty() {
+    if raw.is_empty() {
         return ToolOutcome::err("no path provided");
     }
-    if let Some(parent) = std::path::Path::new(path).parent() {
+    let path = resolve_agent_path(raw);
+    if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    match std::fs::write(path, content) {
-        Ok(()) => ToolOutcome::text(format!("Wrote {} ({} bytes).", path, content.len())),
-        Err(e) => ToolOutcome::err(format!("could not write {}: {}", path, e)),
+    match std::fs::write(&path, content) {
+        Ok(()) => {
+            let scratch_note = if path.starts_with(agent_scratch_dir()) {
+                " (private scratch file — delete_file it once you're done with it, unless the user asked to keep it)"
+            } else {
+                ""
+            };
+            ToolOutcome::text(format!("Wrote {} ({} bytes).{}", path.display(), content.len(), scratch_note))
+        }
+        Err(e) => ToolOutcome::err(format!("could not write {}: {}", path.display(), e)),
+    }
+}
+
+fn delete_file_tool(args: &Value) -> ToolOutcome {
+    let raw = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    if raw.is_empty() {
+        return ToolOutcome::err("no path provided");
+    }
+    let path = resolve_agent_path(raw);
+    match std::fs::remove_file(&path) {
+        Ok(()) => ToolOutcome::text(format!("Deleted {}.", path.display())),
+        Err(e) => ToolOutcome::err(format!("could not delete {}: {}", path.display(), e)),
     }
 }
 
 fn list_directory_tool(args: &Value) -> ToolOutcome {
-    let path = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
-    if path.is_empty() {
+    let raw = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    if raw.is_empty() {
         return ToolOutcome::err("no path provided");
     }
-    match std::fs::read_dir(path) {
+    let path = resolve_agent_path(raw);
+    match std::fs::read_dir(&path) {
         Ok(rd) => {
             let mut items: Vec<String> = rd
                 .flatten()
@@ -998,10 +1089,10 @@ fn list_directory_tool(args: &Value) -> ToolOutcome {
             ToolOutcome {
                 response: json!({ "entries": items, "count": count }),
                 image_data_url: None,
-                log: format!("{} items in {}", count, path),
+                log: format!("{} items in {}", count, path.display()),
             }
         }
-        Err(e) => ToolOutcome::err(format!("could not list {}: {}", path, e)),
+        Err(e) => ToolOutcome::err(format!("could not list {}: {}", path.display(), e)),
     }
 }
 

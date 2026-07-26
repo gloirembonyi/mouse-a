@@ -1,4 +1,5 @@
-import { Code2, Eye, MessageSquare, Plus, Settings } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, Code2, Eye, MessageSquare, Plus, Settings, Trash2 } from "lucide-react";
 import { relativeTime } from "../../lib/format";
 import type { Conversation } from "../../lib/types";
 
@@ -7,6 +8,7 @@ interface SidebarProps {
   activeId: string | null;
   onNewChat: () => void;
   onOpenThread: (id: string) => void;
+  onDeleteThread: (id: string) => void;
   onOpenSettings: () => void;
   onToggleHoverMode: () => void;
   onToggleIdeDock: () => void;
@@ -19,6 +21,7 @@ export function Sidebar({
   activeId,
   onNewChat,
   onOpenThread,
+  onDeleteThread,
   onOpenSettings,
   onToggleHoverMode,
   onToggleIdeDock,
@@ -49,30 +52,88 @@ export function Sidebar({
           <p className="p-2 text-center text-xs text-text-muted">No conversations yet.</p>
         ) : (
           threads.map((t) => (
-            <button
+            <ThreadRow
               key={t.id}
-              onClick={() => onOpenThread(t.id)}
-              className={`flex w-full flex-col gap-0.5 rounded-md border-l-2 px-2.5 py-2 text-left transition ${
-                t.id === activeId
-                  ? "border-accent bg-accent-soft text-text-primary"
-                  : "border-transparent text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-              }`}
-            >
-              <div className="flex items-center gap-1.5 overflow-hidden">
-                <MessageSquare size={11} className="flex-shrink-0 text-text-muted" />
-                <span className="truncate text-xs font-semibold">{t.title || "Untitled conversation"}</span>
-              </div>
-              <div className="flex items-center gap-1.5 pl-[18px] text-[10px] text-text-muted">
-                <span>{relativeTime(t.updated_at)}</span>
-                <span className="h-0.5 w-0.5 rounded-full bg-text-muted opacity-70" />
-                <span>
-                  {t.message_count ?? "?"} msg{t.message_count === 1 ? "" : "s"}
-                </span>
-              </div>
-            </button>
+              thread={t}
+              active={t.id === activeId}
+              onOpen={() => onOpenThread(t.id)}
+              onDelete={() => onDeleteThread(t.id)}
+            />
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+function ThreadRow({
+  thread,
+  active,
+  onOpen,
+  onDelete,
+}: {
+  thread: Conversation;
+  active: boolean;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+  }, []);
+
+  const armConfirm = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirming(true);
+    resetTimer.current = setTimeout(() => setConfirming(false), 3000);
+  };
+
+  const confirmDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+    onDelete();
+  };
+
+  return (
+    <div
+      className={`group relative flex w-full items-center rounded-md border-l-2 transition ${
+        active ? "border-accent bg-accent-soft text-text-primary" : "border-transparent text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+      }`}
+    >
+      <button onClick={onOpen} className="flex min-w-0 flex-1 flex-col gap-0.5 px-2.5 py-2 text-left">
+        <div className="flex items-center gap-1.5 overflow-hidden">
+          <MessageSquare size={11} className="flex-shrink-0 text-text-muted" />
+          <span className="truncate text-xs font-semibold">{thread.title || "Untitled conversation"}</span>
+        </div>
+        <div className="flex items-center gap-1.5 pl-[18px] text-[10px] text-text-muted">
+          <span>{relativeTime(thread.updated_at)}</span>
+          <span className="h-0.5 w-0.5 rounded-full bg-text-muted opacity-70" />
+          <span>
+            {thread.message_count ?? "?"} msg{thread.message_count === 1 ? "" : "s"}
+          </span>
+        </div>
+      </button>
+
+      {confirming ? (
+        <button
+          onClick={confirmDelete}
+          title="Click again to permanently delete"
+          className="mr-1.5 flex flex-shrink-0 items-center gap-1 rounded px-1.5 py-1 text-[10px] font-semibold text-danger transition hover:bg-danger-soft"
+        >
+          <Check size={12} />
+          Delete?
+        </button>
+      ) : (
+        <button
+          onClick={armConfirm}
+          title="Delete conversation"
+          className="mr-1.5 flex-shrink-0 rounded p-1 text-text-muted opacity-0 transition hover:bg-danger-soft hover:text-danger group-hover:opacity-100"
+        >
+          <Trash2 size={13} />
+        </button>
+      )}
     </div>
   );
 }

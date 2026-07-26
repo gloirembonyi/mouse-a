@@ -16,6 +16,7 @@ interface AppShellProps {
   activeThreadId: string | null;
   onNewChat: () => void;
   onOpenThread: (id: string) => void;
+  onDeleteThread: (id: string) => void;
   onOpenSettings: () => void;
   onToggleHoverMode: () => void;
   aiActive: boolean;
@@ -34,6 +35,7 @@ export function AppShell({
   activeThreadId,
   onNewChat,
   onOpenThread,
+  onDeleteThread,
   onOpenSettings,
   onToggleHoverMode,
   aiActive,
@@ -85,6 +87,7 @@ export function AppShell({
           activeId={activeThreadId}
           onNewChat={onNewChat}
           onOpenThread={onOpenThread}
+          onDeleteThread={onDeleteThread}
           onOpenSettings={onOpenSettings}
           onToggleHoverMode={onToggleHoverMode}
           onToggleIdeDock={onToggleRightDock}

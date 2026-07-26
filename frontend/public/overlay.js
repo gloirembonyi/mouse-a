@@ -30,6 +30,7 @@ let expanded = false;
 let busy = false;
 let autoHideTimer = null;
 let agentMode = false; // when on, the ask runs as a full agent task on the PC
+let agentSummary = null; // live "Thought for Xs" summary widget for the in-flight run
 
 // ── Events from Rust ───────────────────────────────────────
 window.addEventListener("DOMContentLoaded", async () => {
@@ -176,11 +177,11 @@ function setupUI() {
     } catch { /* ignore */ }
   });
 
-  // Clicking away on the desktop dismisses the modal (unless an answer is
-  // still being fetched — don't lose the user's question).
-  window.addEventListener("blur", () => {
-    if (expanded && !busy) collapse();
-  });
+  // Clicking elsewhere on the desktop used to auto-collapse the panel — lost
+  // in-progress research/answers the moment the user glanced at another
+  // window. The panel now stays open regardless of focus; ✕ / Esc / the
+  // pill's own collapse() are the only ways to dismiss it. Alt+Tab-ing back
+  // to it just works since the window was never hidden.
 }
 
 async function expand() {
@@ -308,7 +309,8 @@ async function runAgentTask(task) {
   answerEl.hidden = true;
   agentLogEl.hidden = false;
   agentLogEl.innerHTML = questionHeaderHtml(task);
-  agentLogEl.appendChild(buildAgentStep({ kind: "thinking", message: "Starting…" }));
+  agentSummary = createAgentSummary();
+  agentLogEl.appendChild(agentSummary.root);
   const startedAt = Date.now();
   try {
     await invoke("expand_overlay", { width: 460, height: 480 });
@@ -322,10 +324,12 @@ async function runAgentTask(task) {
       source: "overlay",
       autonomous: true,
     });
+    finishAgentSummary(true);
     agentLogEl.hidden = true;
     answerEl.hidden = false;
     answerEl.innerHTML = questionHeaderHtml(task) + renderMarkdown(result.text || "(done)") + durationFooterHtml(Date.now() - startedAt);
   } catch (err) {
+    finishAgentSummary(false);
     // Hide the activity log (it may still hold a raw "⚠️ ..." line from the
     // agent-progress "error" event that fired just before this rejection) so
     // the user sees one clean, friendly error box instead of both.
@@ -339,17 +343,89 @@ async function runAgentTask(task) {
   }
 }
 
+// Cursor/Codex-style collapsible "Thought for Xs" widget — the raw step-by-
+// step tool log defaults to hidden inside it (expanded automatically only
+// while running or when a confirm prompt needs the user's attention), so the
+// popup reads as a clean one-line status instead of a wall of tool-call text.
+function createAgentSummary() {
+  const root = document.createElement("div");
+  root.className = "agent-summary";
+
+  const header = document.createElement("button");
+  header.className = "agent-summary-header";
+  header.innerHTML = `
+    <span class="agent-summary-icon"><span class="agent-summary-spinner"></span></span>
+    <span class="agent-summary-label">Working</span>
+    <span class="agent-summary-duration"></span>
+    <span class="agent-summary-chevron">▾</span>`;
+
+  const body = document.createElement("div");
+  body.className = "agent-summary-body";
+
+  root.appendChild(header);
+  root.appendChild(body);
+
+  const state = {
+    root,
+    header,
+    body,
+    icon: header.querySelector(".agent-summary-icon"),
+    label: header.querySelector(".agent-summary-label"),
+    duration: header.querySelector(".agent-summary-duration"),
+    chevron: header.querySelector(".agent-summary-chevron"),
+    startedAt: Date.now(),
+    tickInterval: null,
+    userCollapsed: null, // null = auto (follow running/confirm state); true/false once the user toggles it
+    hasPendingConfirm: false,
+  };
+
+  const applyExpanded = () => {
+    const expand = state.userCollapsed === null ? state.running !== false || state.hasPendingConfirm : !state.userCollapsed;
+    body.hidden = !expand;
+    state.chevron.style.transform = expand ? "rotate(180deg)" : "rotate(0deg)";
+  };
+  state.applyExpanded = applyExpanded;
+  state.running = true;
+  applyExpanded();
+
+  header.addEventListener("click", () => {
+    const currentlyExpanded = !body.hidden;
+    state.userCollapsed = currentlyExpanded;
+    applyExpanded();
+  });
+
+  state.tickInterval = setInterval(() => {
+    state.duration.textContent = `for ${formatDuration(Date.now() - state.startedAt)}`;
+  }, 1000);
+
+  return state;
+}
+
+function finishAgentSummary(success) {
+  if (!agentSummary) return;
+  clearInterval(agentSummary.tickInterval);
+  agentSummary.running = false;
+  agentSummary.label.textContent = success ? "Thought" : "Failed";
+  agentSummary.duration.textContent = `for ${formatDuration(Date.now() - agentSummary.startedAt)}`;
+  agentSummary.icon.innerHTML = success ? "✓" : "✕";
+  agentSummary.icon.classList.toggle("failed", !success);
+  if (agentSummary.userCollapsed === null) agentSummary.applyExpanded();
+  agentSummary = null;
+}
+
 function renderAgentProgress(p) {
-  if (agentLogEl.hidden) return;
+  if (agentLogEl.hidden || !agentSummary) return;
   if (p.kind === "done") return;
 
   if (p.kind === "confirm") {
-    agentLogEl.appendChild(buildConfirmPrompt(p));
+    agentSummary.hasPendingConfirm = true;
+    agentSummary.applyExpanded();
+    agentSummary.body.appendChild(buildConfirmPrompt(p));
     agentLogEl.scrollTop = agentLogEl.scrollHeight;
     return;
   }
 
-  agentLogEl.appendChild(buildAgentStep(p));
+  agentSummary.body.appendChild(buildAgentStep(p));
   agentLogEl.scrollTop = agentLogEl.scrollHeight;
 }
 

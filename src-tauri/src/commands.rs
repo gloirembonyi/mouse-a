@@ -377,6 +377,7 @@ pub async fn agent_run(
     y: Option<i32>,
     source: Option<String>,
     autonomous: Option<bool>,
+    image_data_url: Option<String>,
 ) -> Result<ChatResult, String> {
     if task.trim().is_empty() {
         return Err("Empty task.".to_string());
@@ -387,8 +388,23 @@ pub async fn agent_run(
     };
     let source = source.unwrap_or_else(|| "main".to_string());
     let autonomous = autonomous.unwrap_or(true);
+    // Same shared conversation the chat view and the overlay's plain-ask both
+    // read/write — recent turns get folded into the agent's starting context
+    // below so a hover "ask AI" task isn't blind to what was just discussed.
+    let conversation_id = state.conversation_id.read().await.clone();
 
-    let result = crate::agent::run_task(&app, &state.backend, &task, cx, cy, &source, autonomous).await;
+    let result = crate::agent::run_task(
+        &app,
+        &state.backend,
+        &task,
+        cx,
+        cy,
+        &source,
+        autonomous,
+        conversation_id,
+        image_data_url,
+    )
+    .await;
 
     match result {
         Ok(text) => Ok(ChatResult { text, conversation_id: None }),
@@ -564,6 +580,19 @@ pub async fn get_conversation_messages(
 #[tauri::command]
 pub async fn set_conversation_id(state: State<'_, AppState>, id: Option<String>) -> Result<(), String> {
     *state.conversation_id.write().await = id;
+    Ok(())
+}
+
+/// Permanently delete a past conversation. If it's the one currently open,
+/// clears conversation_id too so the next message doesn't try to continue a
+/// thread that no longer exists.
+#[tauri::command]
+pub async fn delete_conversation(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    state.backend.delete_conversation(&id).await?;
+    let mut current = state.conversation_id.write().await;
+    if current.as_deref() == Some(id.as_str()) {
+        *current = None;
+    }
     Ok(())
 }
 
