@@ -28,6 +28,7 @@ chrono = "0.4"
 dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 dotenvy = "0.15"
+portable-pty = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = [

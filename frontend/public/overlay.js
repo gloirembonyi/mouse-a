@@ -245,6 +245,19 @@ function questionHeaderHtml(question) {
   return `<div class="asked-question">${escapeHtml(question)}</div>`;
 }
 
+// "Worked for 4m 28s" — same run-duration line shown under a finished agent
+// task in the main window (main.js's finishAgentActivity/formatDuration).
+function durationFooterHtml(elapsedMs) {
+  return `<div class="agent-activity-footer">Worked for ${formatDuration(elapsedMs)}</div>`;
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
 async function ask(question) {
   if (!hover || busy) return;
   if (agentMode) return runAgentTask(question);
@@ -294,7 +307,9 @@ async function runAgentTask(task) {
   thinkingEl.hidden = true;
   answerEl.hidden = true;
   agentLogEl.hidden = false;
-  agentLogEl.innerHTML = questionHeaderHtml(task) + `<div class="agent-line agent-thinking">💭 Starting…</div>`;
+  agentLogEl.innerHTML = questionHeaderHtml(task);
+  agentLogEl.appendChild(buildAgentStep({ kind: "thinking", message: "Starting…" }));
+  const startedAt = Date.now();
   try {
     await invoke("expand_overlay", { width: 460, height: 480 });
   } catch { /* ignore */ }
@@ -309,14 +324,14 @@ async function runAgentTask(task) {
     });
     agentLogEl.hidden = true;
     answerEl.hidden = false;
-    answerEl.innerHTML = questionHeaderHtml(task) + renderMarkdown(result.text || "(done)");
+    answerEl.innerHTML = questionHeaderHtml(task) + renderMarkdown(result.text || "(done)") + durationFooterHtml(Date.now() - startedAt);
   } catch (err) {
     // Hide the activity log (it may still hold a raw "⚠️ ..." line from the
     // agent-progress "error" event that fired just before this rejection) so
     // the user sees one clean, friendly error box instead of both.
     agentLogEl.hidden = true;
     answerEl.hidden = false;
-    answerEl.innerHTML = questionHeaderHtml(task) + `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
+    answerEl.innerHTML = questionHeaderHtml(task) + `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>` + durationFooterHtml(Date.now() - startedAt);
   } finally {
     setBusy(false);
     questionInput.value = "";
@@ -334,16 +349,37 @@ function renderAgentProgress(p) {
     return;
   }
 
-  const line = document.createElement("div");
-  line.className = `agent-line agent-${p.kind}`;
-  const icon = { thinking: "💭", tool: "⚙️", "tool-result": "↳", error: "⚠️" }[p.kind] || "•";
-  // Same friendly formatting the final error box uses — the log is normally
-  // hidden before an error-kind line would be seen, but this covers the race
-  // between the agent-progress event arriving and the invoke() rejecting.
-  const message = p.kind === "error" ? friendlyError(p.message) : p.message;
-  line.textContent = `${icon} ${message}`;
-  agentLogEl.appendChild(line);
+  agentLogEl.appendChild(buildAgentStep(p));
   agentLogEl.scrollTop = agentLogEl.scrollHeight;
+}
+
+// Icon badge + connecting rail beside the message — same timeline shape as
+// the main window's buildAgentStep (src/main.js), so both surfaces read as
+// one product instead of two different-looking activity logs.
+function buildAgentStep(p) {
+  const step = document.createElement("div");
+  step.className = `agent-step kind-${p.kind}`;
+
+  const rail = document.createElement("div");
+  rail.className = "agent-step-rail";
+  const icon = document.createElement("span");
+  icon.className = "agent-step-icon";
+  icon.textContent = { thinking: "💭", tool: "⚙", "tool-result": "↳", error: "!" }[p.kind] || "•";
+  const line = document.createElement("span");
+  line.className = "agent-step-line";
+  rail.appendChild(icon);
+  rail.appendChild(line);
+
+  const body = document.createElement("div");
+  body.className = "agent-step-body";
+  // Same friendly formatting the final error box uses — the log is normally
+  // hidden before an error-kind row would be seen, but this covers the race
+  // between the agent-progress event arriving and the invoke() rejecting.
+  body.textContent = p.kind === "error" ? friendlyError(p.message) : p.message;
+
+  step.appendChild(rail);
+  step.appendChild(body);
+  return step;
 }
 
 // Real Allow/Deny prompt the agent is waiting on — the click is reported

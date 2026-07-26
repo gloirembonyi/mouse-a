@@ -180,6 +180,15 @@ pub fn ask_at_cursor(app: AppHandle) {
     trigger_ask_at_cursor(&app);
 }
 
+// The header ✕ / window close intentionally only hides to the tray (see
+// lib.rs's on_window_event) — this is the one explicit way to actually exit,
+// surfaced as a "Quit Mouse AI" button in Settings since the tray menu isn't
+// discoverable from inside the app itself.
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 // ── Settings Commands ────────────────────────────────────────────
 
 #[tauri::command]

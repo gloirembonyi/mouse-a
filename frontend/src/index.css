@@ -1,0 +1,127 @@
+@import "tailwindcss";
+/* Font <link> lives in index.html/overlay.html — a CSS @import here would have
+   to precede Tailwind's own @import, which expands into non-import rules and
+   makes any @import after it invalid per the CSS spec. */
+
+/* Thothai's blue accent on a cool navy, solid (non-glass) dark theme — glass/
+   blur is reserved for the hover-overlay "Ask AI" popup only (see
+   public/overlay.css), which floats over arbitrary desktop content and needs
+   to blend with whatever's behind it; the main window has its own opaque
+   background so it doesn't need that treatment. Exposed as Tailwind theme
+   tokens (bg-bg-card, text-accent, etc.) instead of raw CSS custom
+   properties, so components can use utility classes directly. */
+@theme {
+  --font-sans: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+
+  --color-bg-primary: #0a0d12;
+  --color-bg-secondary: #10141c;
+  --color-bg-tertiary: #171d28;
+  --color-bg-hover: #1e2634;
+  --color-bg-card: rgba(255, 255, 255, 0.035);
+
+  --color-border-default: rgba(255, 255, 255, 0.06);
+  --color-border-soft: rgba(255, 255, 255, 0.045);
+  --color-border-focus: rgba(118, 159, 205, 0.45);
+
+  --color-text-primary: #e9edf3;
+  --color-text-secondary: #93a2b8;
+  --color-text-muted: #5c6678;
+
+  --color-accent: #769fcd;
+  --color-accent-light: #a8c8e8;
+  --color-accent-dark: #4a7ab0;
+  --color-accent-soft: rgba(118, 159, 205, 0.15);
+  --color-accent-glow: rgba(118, 159, 205, 0.4);
+
+  --color-success: #4caf50;
+  --color-success-soft: rgba(76, 175, 80, 0.15);
+  --color-danger: #ef5350;
+  --color-danger-soft: rgba(239, 83, 80, 0.15);
+  --color-warning: #ffb74d;
+  --color-warning-soft: rgba(255, 183, 77, 0.15);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Thin, unobtrusive scrollbars used throughout the app instead of the OS default. */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--color-bg-hover);
+  border-radius: 4px;
+}
+
+/* react-resizable-panels drag handle */
+.resize-handle {
+  position: relative;
+  flex-shrink: 0;
+  background: var(--color-border-default);
+  transition: background 120ms ease;
+}
+.resize-handle:hover,
+.resize-handle[data-resize-handle-active] {
+  background: var(--color-accent);
+}
+.resize-handle-v {
+  width: 1px;
+}
+.resize-handle-h {
+  height: 1px;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes pulse-ring {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 0.4;
+  }
+}
+
+@keyframes badge-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}

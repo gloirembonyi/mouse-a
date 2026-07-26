@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.thothai.mouseai",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../frontend/dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev --prefix frontend",
+    "beforeBuildCommand": "npm run build --prefix frontend"
   },
   "app": {
     "withGlobalTauri": true,
@@ -12,19 +15,17 @@
       {
         "label": "main",
         "title": "Mouse AI",
-        "width": 420,
-        "height": 680,
+        "width": 960,
+        "height": 700,
         "resizable": true,
         "decorations": false,
         "transparent": true,
         "shadow": true,
         "alwaysOnTop": true,
         "skipTaskbar": false,
-        "center": false,
-        "x": 100,
-        "y": 100,
-        "minWidth": 360,
-        "minHeight": 400
+        "center": true,
+        "minWidth": 680,
+        "minHeight": 460
       },
       {
         "label": "overlay",

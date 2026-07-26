@@ -37,6 +37,42 @@ const MAX_COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_TOOL_OUTPUT: usize = 6000;
 const MAX_FILE_READ: usize = 20_000;
 
+// ── Agent scratch space ──────────────────────────────────────────
+// Root cause of files like `yt_search.py` turning up inside the app's own
+// source tree: run_command/write_file/read_file resolve a relative path
+// against whatever the CURRENT PROCESS's cwd happens to be (src-tauri/ under
+// `tauri dev`) when the model doesn't pass an absolute one. Rather than
+// trust every future prompt revision to remember an absolute path, relative
+// paths now resolve here instead — a real OS temp folder, wiped clean at the
+// start of every task, so scratch work literally cannot accumulate or land
+// in the user's project regardless of what the model does.
+fn agent_scratch_dir() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join("mouse-ai-agent-scratch");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Wipes the scratch dir back to empty — called once at the start of every
+/// `run_task` so a previous run's throwaway files never linger, even if the
+/// model never called delete_file on them itself.
+fn reset_scratch_dir() {
+    let dir = agent_scratch_dir();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir);
+}
+
+/// Absolute paths are used as-is (the model explicitly means a real location
+/// — the user's project, Desktop, wherever). A relative path resolves inside
+/// the private scratch dir instead of the process's actual cwd.
+fn resolve_agent_path(raw: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(raw);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        agent_scratch_dir().join(p)
+    }
+}
+
 /// Emitted to the UI so the user sees each step the agent takes.
 #[derive(Clone, serde::Serialize)]
 pub struct AgentProgress {
@@ -472,6 +508,7 @@ pub async fn run_task(
     source: &str,
     autonomous: bool,
 ) -> Result<String, String> {
+    reset_scratch_dir();
     let system = system_prompt(autonomous);
 
     // Built-in tools, plus any tools exposed by configured MCP servers.

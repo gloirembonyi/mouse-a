@@ -6,11 +6,14 @@ mod backend;
 mod capture;
 mod commands;
 mod explorer;
+mod fs_browser;
+mod git_diff;
 mod hover;
 mod input;
 mod mcp;
 mod mouse;
 mod oauth;
+mod terminal;
 
 use commands::AppState;
 use std::sync::Arc;
@@ -57,6 +60,7 @@ pub fn run() {
             conversation_id: Arc::new(RwLock::new(None)),
             overlay_pinned: Arc::new(RwLock::new(false)),
         })
+        .manage(terminal::PtyState::default())
         .invoke_handler(tauri::generate_handler![
             commands::capture_screen,
             commands::capture_region,
@@ -92,6 +96,17 @@ pub fn run() {
             commands::set_backend_url,
             commands::get_mcp_servers,
             commands::set_mcp_servers,
+            commands::quit_app,
+            fs_browser::fs_home_dir,
+            fs_browser::fs_list_dir,
+            fs_browser::fs_read_text_file,
+            fs_browser::fs_write_text_file,
+            fs_browser::fs_parent_dir,
+            terminal::pty_spawn,
+            terminal::pty_write,
+            terminal::pty_resize,
+            git_diff::git_status,
+            git_diff::git_diff_file,
         ])
         .setup(|app| {
             // ── System Tray ──────────────────────────────────────

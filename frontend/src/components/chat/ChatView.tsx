@@ -1,0 +1,87 @@
+import { useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
+import { MessageList } from "./MessageList";
+import { InputBar } from "./InputBar";
+import { captureAnalyze, getCursorContext, newId } from "../../lib/tauri";
+import type { useChat } from "../../hooks/useChat";
+import type { CursorContext } from "../../lib/types";
+
+interface ChatViewProps {
+  chat: ReturnType<typeof useChat>;
+  aiActive: boolean;
+  onToggleHoverMode: () => void;
+}
+
+export function ChatView({ chat, aiActive, onToggleHoverMode }: ChatViewProps) {
+  const [context, setContext] = useState<CursorContext | null>(null);
+  const lastKeyRef = useRef("");
+
+  useEffect(() => {
+    if (!aiActive) {
+      setContext(null);
+      return;
+    }
+    const interval = setInterval(async () => {
+      try {
+        const ctx = await getCursorContext();
+        const key = `${ctx.process_name}|${ctx.window_title}`;
+        if (key !== lastKeyRef.current && ctx.process_name) {
+          lastKeyRef.current = key;
+          setContext(ctx);
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [aiActive]);
+
+  const handleQuickAction = async (action: "capture" | "ask" | "search") => {
+    if (action === "ask") return; // just focuses the input in the vanilla version; textarea auto-focus isn't critical here
+    if (action === "search") {
+      chat.send("Search the web for: ");
+      return;
+    }
+    if (action === "capture") {
+      chat.addSystemMessage("📸 Capturing screen around cursor...");
+      try {
+        const result = await captureAnalyze();
+        chat.loadMessages([
+          ...chat.messages,
+          { id: newId(), kind: "assistant", content: result.text },
+        ]);
+      } catch (err) {
+        chat.loadMessages([
+          ...chat.messages,
+          { id: newId(), kind: "assistant", content: `❌ Capture error: ${err}` },
+        ]);
+      }
+    }
+  };
+
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col">
+      {context && (
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-accent/20 bg-accent-soft px-3.5 py-1.5">
+          <div className="flex items-center gap-2 overflow-hidden text-[11px]">
+            <span className="font-semibold text-accent">{context.process_name}</span>
+            <span className="truncate text-text-muted">{context.window_title}</span>
+          </div>
+          <button onClick={() => setContext(null)} className="text-text-muted hover:text-text-primary">
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
+      <MessageList messages={chat.messages} onQuickAction={handleQuickAction} />
+
+      <InputBar
+        agentMode={chat.agentMode}
+        onToggleAgentMode={() => chat.setAgentMode((v) => !v)}
+        onSend={chat.send}
+        disabled={chat.isLoading}
+        onToggleHoverMode={onToggleHoverMode}
+      />
+    </div>
+  );
+}

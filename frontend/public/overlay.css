@@ -23,6 +23,7 @@
   --accent-dark: #4a7ab0;
   --accent-soft: rgba(118, 159, 205, 0.18);
   --accent-glow: rgba(118, 159, 205, 0.45);
+  --danger: #ef5350;
   --font: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
   /* Subtle top-edge highlight that reads as a glossy glass rim (extension's
@@ -237,28 +238,83 @@ html, body {
   color: #fff;
 }
 
-/* ── Agent activity log ────────────────────────────────── */
+/* ── Agent activity log ─────────────────────────────────────
+   Same icon-badge + connecting-rail timeline as the main window's
+   .agent-activity-log (src/styles.css) — kept visually identical so the
+   overlay and the main app read as one product. */
 #agent-log {
   flex: 1;
   overflow-y: auto;
-  padding: 10px 14px;
+  padding: 10px 14px 4px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
 }
 #agent-log::-webkit-scrollbar { width: 6px; }
 #agent-log::-webkit-scrollbar-thumb { background: var(--bg-tertiary); border-radius: 3px; }
-#agent-log .agent-line {
+
+.agent-step {
+  display: flex;
+  gap: 8px;
+}
+.agent-step-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 16px;
+  flex-shrink: 0;
+}
+.agent-step-icon {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8.5px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.agent-step-line {
+  flex: 1;
+  width: 1px;
+  min-height: 6px;
+  margin-top: 2px;
+  background: var(--border);
+}
+.agent-step:last-child .agent-step-line { background: transparent; }
+.agent-step-body {
+  flex: 1;
+  min-width: 0;
+  padding: 0 0 10px;
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
 }
-#agent-log .agent-tool { color: var(--text-primary); font-family: var(--font-mono); }
-#agent-log .agent-tool-result { color: var(--text-muted); padding-left: 10px; }
-#agent-log .agent-thinking { font-style: italic; }
-#agent-log .agent-error { color: var(--danger); }
+.agent-step.kind-tool .agent-step-icon {
+  background: var(--accent-soft);
+  border-color: rgba(118, 159, 205, 0.35);
+  color: var(--accent);
+}
+.agent-step.kind-tool .agent-step-body {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.agent-step.kind-tool-result .agent-step-body {
+  color: var(--text-muted);
+  font-size: 10.5px;
+}
+.agent-step.kind-thinking .agent-step-body { font-style: italic; }
+.agent-step.kind-error .agent-step-icon {
+  background: rgba(239, 83, 80, 0.15);
+  border-color: rgba(239, 83, 80, 0.4);
+  color: var(--danger, #ef5350);
+}
+.agent-step.kind-error .agent-step-body { color: var(--danger, #ef5350); }
 
 /* ── Answer area ───────────────────────────────────────── */
 #answer {
@@ -290,6 +346,15 @@ html, body {
   font-size: 12px;
   font-weight: 500;
   line-height: 1.4;
+}
+
+/* "Worked for Xs" — same shape as the main window's .agent-activity-footer. */
+.agent-activity-footer {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-muted);
 }
 
 #answer p { margin-bottom: 8px; }
