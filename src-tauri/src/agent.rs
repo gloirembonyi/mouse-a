@@ -17,7 +17,7 @@
 use crate::backend::BackendClient;
 use crate::{capture, explorer, input, mcp, mouse};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -168,27 +168,43 @@ data (run_command, read_file, list_directory, web_search) over guessing.\n\
 - COORDINATES: click/double_click/scroll take x and y NORMALIZED to a 0-1000 scale relative to \
 the width/height of the most recent screenshot (0,0 = top-left, 1000,1000 = bottom-right) — NOT \
 raw pixels, and independent of the screenshot's actual resolution. Always base coordinates on the \
-MOST RECENT screenshot only; if you're not looking at a fresh one, call capture_screen again first \
-— clicking from a stale or remembered screenshot is the #1 cause of clicking the wrong thing.\n\
+MOST RECENT screenshot only — including the ones automatically attached to action results (see \
+below); clicking from a stale or remembered screenshot is the #1 cause of clicking the wrong thing.\n\
+- OBSERVE → ACT → VERIFY: every UI action (click, double_click, scroll, type_text, press_key, \
+open_url, open_app, focus_window, wait) automatically returns a FRESH SCREENSHOT of the screen \
+after it ran. ALWAYS inspect that screenshot before your next step: confirm the click landed where \
+you meant, the text went into the right field, the page/window you expected is actually showing. \
+If the expected change is NOT visible in the screenshot, the action did NOT work — do not proceed \
+as if it did; diagnose (wrong coordinates? wrong window focused? page still loading?) and correct \
+course.\n\
+- NEVER CLAIM UNVERIFIED SUCCESS: you may only tell the user something was created/saved/sent/\
+submitted if the latest screenshot VISIBLY shows that end state (the new note appears in the list, \
+the message shows as sent, the confirmation is on screen). Typing text and pressing enter is NOT \
+success — seeing the result is. If you finish the actions but cannot see the confirmed result, \
+either verify it first (e.g. capture_screen after closing a dialog, or read_app_content) or tell \
+the user honestly exactly what you did and that you could not confirm the outcome. A false \"done!\" \
+is far worse than an honest \"I tried, but it doesn't appear to have saved.\"\n\
 - Browser tasks (be precise — don't guess a destination):\n\
   1. Check list_windows first — if a browser is already open, use focus_window to bring it forward \
 instead of launching a new one; only fall back to open_url for a brand-new window/tab.\n\
   2. If you already know the exact URL, open_url directly. If you don't, use web_search first and \
 open_url the exact result link — never guess or invent a URL, and never click a search result \
-before capture_screen confirms it's the one you mean.\n\
+before a screenshot confirms it's the one you mean.\n\
   3. If web_search returns 0 results (it can, for very fresh/niche/local queries), don't retry the \
 identical query — either rephrase it once with different/fewer keywords, or open_url directly to a \
 search engine results page (e.g. https://www.google.com/search?q=... or https://www.bing.com/search?q=...) \
-and read the results yourself via capture_screen. Never repeat the exact failed query a third time.\n\
-  4. After open_url or focus_window, wait ~2s, then capture_screen before doing anything else — the \
-page may still be loading, and acting on stale layout is the #2 cause of wrong clicks.\n\
-  5. To fill a form: capture_screen, click the exact field, type_text into it, repeat per field \
-(Tab also moves between fields). Verify with capture_screen before submitting (press_key 'enter' \
-or click Submit).\n\
+and read the results yourself from the attached screenshot. Never repeat the exact failed query a third time.\n\
+  4. open_url/focus_window results include an after-screenshot taken ~2s later — if the page still \
+looks mid-load in it, wait 2-3s (the wait result includes another fresh screenshot) before acting. \
+Acting on a half-loaded page is the #2 cause of wrong clicks.\n\
+  5. To fill a form: click the exact field, check the attached screenshot shows the cursor/focus \
+in that field, type_text into it, and check the screenshot shows YOUR text actually in THAT field \
+— then repeat per field (Tab also moves between fields). Only then submit (press_key 'enter' or \
+click Submit), and verify the submission from ITS screenshot.\n\
   6. To scroll a page (like a normal user would to see more): scroll with a point roughly in the \
-center of the page content, then capture_screen to see what's now visible before acting further.\n\
+center of the page content — the attached screenshot shows what's now visible.\n\
   7. If a page didn't load, looks wrong, or you're unsure you're on the right site, say so and \
-capture_screen again rather than clicking blindly — precision matters more than speed.\n\
+look again rather than clicking blindly — precision matters more than speed.\n\
 - Coding/editor tasks (e.g. in Cursor or VS Code): prefer the terminal (run_command) and read_file/\
 write_file/edit-style file writes over clicking around the editor UI — it's far more reliable. Use \
 run_command's cwd to run inside a specific project folder instead of cd-ing in the command string, and \
@@ -197,6 +213,10 @@ that just needs more time is not the same as background=true, which is for long-
 processes (servers, watchers) you don't want to wait on at all.\n\
 - Finding things: use find_files to locate a file anywhere on the PC by name; use run_command with \
 Select-String (or the tools) to search inside files.\n\
+- Understanding what's already open: list_windows tells you what's open and its rough category \
+(browser/office/editor/terminal/other) — check it before deciding whether to reuse a window or open \
+something new. For the content of whatever app has focus right now (spreadsheet cells, a document's \
+text, a list you can't read from the screenshot alone), call read_app_content rather than guessing.\n\
 - Tool-first, file-last: before writing any file, check whether a tool you already have does the \
 job directly — web_search/web_fetch for research, run_command for a one-off computation or listing, \
 read_file/list_directory for inspecting something that already exists. Writing and running a script \
@@ -215,6 +235,10 @@ behind. When in doubt about which one a file is, err toward scratch + cleanup.\n
 sending a message, making a purchase, deleting/moving files, or anything you're not confident the \
 user actually wants — call request_confirmation with a short specific description and WAIT for the \
 result before proceeding. If denied, stop that action and ask what they'd like instead.\n\
+- Separately, the FIRST time in a task that click/double_click/scroll/type_text/press_key would act \
+on a NEW application, the user is shown an Allow/Deny prompt automatically — you don't call anything \
+for this, it just happens. If that action's result comes back saying it was denied, treat it exactly \
+like a manual deny: stop that action and ask what they'd like instead, don't retry it.\n\
 - When the task is complete, stop calling tools and reply with a clear, concise final answer \
 in Markdown describing what you did and the result.\n\
 - Be efficient: don't repeat a tool call that already succeeded. If a tool fails twice the same way \
@@ -307,12 +331,17 @@ fn tool_declarations() -> Value {
         },
         {
             "name": "list_windows",
-            "description": "List currently open top-level windows (title + process name, with the currently-focused one flagged). Use this to check whether a browser or app is already open before deciding to launch a new one.",
+            "description": "List currently open top-level windows (title + process name + a coarse category — browser/office/editor/terminal/other — with the currently-focused one flagged). Use this to check whether a browser or app is already open (and what kind) before deciding to launch a new one.",
+            "parameters": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "read_app_content",
+            "description": "Read visible text/values out of whichever app currently has keyboard focus, via its accessibility tree — generalizes beyond File Explorer (which has its own real directory listing) to spreadsheets, documents, editors, and anything else that exposes accessible content, e.g. Excel cell values, a text editor's document, a list of emails. Use this instead of guessing from a screenshot alone when you need to know what's actually IN an open app.",
             "parameters": { "type": "object", "properties": {} }
         },
         {
             "name": "focus_window",
-            "description": "Bring an already-open window to the foreground by a case-insensitive substring match on its title or process name (e.g. 'chrome', 'comet', 'notepad'). Prefer this over open_url/open_app when list_windows shows the window already exists — reusing it is more reliable than opening a duplicate.",
+            "description": "Bring an already-open window to the foreground by a case-insensitive substring match on its title or process name (e.g. 'chrome', 'comet', 'notepad'). Prefer this over open_url/open_app when list_windows shows the window already exists — reusing it is more reliable than opening a duplicate. The result includes an after-screenshot — confirm the right window is now in front.",
             "parameters": {
                 "type": "object",
                 "properties": { "title_contains": { "type": "string", "description": "Substring to match against window titles/process names." } },
@@ -321,7 +350,7 @@ fn tool_declarations() -> Value {
         },
         {
             "name": "click",
-            "description": "Move the mouse to a point and click. x/y are normalized 0-1000 relative to the most recent screenshot's width/height (0,0=top-left, 1000,1000=bottom-right) — always base these on the LATEST screenshot.",
+            "description": "Move the mouse to a point and click. x/y are normalized 0-1000 relative to the most recent screenshot's width/height (0,0=top-left, 1000,1000=bottom-right) — always base these on the LATEST screenshot. The result automatically includes a fresh after-screenshot: inspect it to verify the click did what you intended.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -334,12 +363,12 @@ fn tool_declarations() -> Value {
         },
         {
             "name": "type_text",
-            "description": "Type the given text at the current focus (e.g. into a focused form field).",
+            "description": "Type the given text at the current focus (e.g. into a focused form field). The result automatically includes a fresh after-screenshot: verify YOUR text actually appeared in the RIGHT field before moving on.",
             "parameters": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }
         },
         {
             "name": "press_key",
-            "description": "Press a key or combo, e.g. 'enter', 'tab', 'ctrl+c', 'ctrl+shift+t', 'alt+tab'.",
+            "description": "Press a key or combo, e.g. 'enter', 'tab', 'ctrl+c', 'ctrl+shift+t', 'alt+tab'. The result automatically includes a fresh after-screenshot — verify the effect from it.",
             "parameters": { "type": "object", "properties": { "keys": { "type": "string" } }, "required": ["keys"] }
         },
         {
@@ -356,7 +385,7 @@ fn tool_declarations() -> Value {
         },
         {
             "name": "scroll",
-            "description": "Scroll the mouse wheel at a point. x/y are normalized 0-1000 relative to the most recent screenshot, same as click. Positive amount scrolls up, negative scrolls down (a few notches per call).",
+            "description": "Scroll the mouse wheel at a point. x/y are normalized 0-1000 relative to the most recent screenshot, same as click. Positive amount scrolls up, negative scrolls down (a few notches per call). The result includes an after-screenshot showing what's now visible.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -369,17 +398,17 @@ fn tool_declarations() -> Value {
         },
         {
             "name": "open_url",
-            "description": "Open a URL in the user's default browser (use this to start a browser task before clicking/typing).",
+            "description": "Open a URL in the user's default browser (use this to start a browser task before clicking/typing). The result includes an after-screenshot taken ~2s later — check whether the page has actually loaded in it before acting.",
             "parameters": { "type": "object", "properties": { "url": { "type": "string" } }, "required": ["url"] }
         },
         {
             "name": "open_app",
-            "description": "Launch an application or open a file/folder by path or name (e.g. 'notepad', 'C:/Users/me/Desktop').",
+            "description": "Launch an application or open a file/folder by path or name (e.g. 'notepad', 'C:/Users/me/Desktop'). The result includes an after-screenshot taken ~2s later — check the app actually opened in it.",
             "parameters": { "type": "object", "properties": { "target": { "type": "string" } }, "required": ["target"] }
         },
         {
             "name": "wait",
-            "description": "Pause briefly to let an app or web page finish loading before the next action.",
+            "description": "Pause briefly to let an app or web page finish loading. The result includes a fresh screenshot taken after the wait, so you can see the new state without a separate capture_screen call.",
             "parameters": { "type": "object", "properties": { "seconds": { "type": "number" } }, "required": ["seconds"] }
         },
         {
@@ -448,7 +477,7 @@ impl PhaseCounts {
     fn record(&mut self, tool_name: &str) {
         match tool_name {
             "read_file" | "list_directory" | "find_files" | "get_screen_context" | "capture_screen"
-            | "list_windows" | "focus_window" | "web_fetch" => self.files_touched += 1,
+            | "list_windows" | "focus_window" | "web_fetch" | "read_app_content" => self.files_touched += 1,
             "web_search" => self.searches += 1,
             "write_file" | "delete_file" => self.edited += 1,
             "run_command" => self.commands += 1,
@@ -888,6 +917,9 @@ async fn drive_loop(
     // end of the run), so the UI can show "Explored 12 files, 3 searches"
     // instead of 12 separate raw tool-call rows.
     let mut phase = PhaseCounts::default();
+    // Processes the user has already approved Mouse AI controlling THIS run —
+    // see `guard_target_app`. Empty at the start of every task, never persisted.
+    let mut trusted_apps: HashSet<String> = HashSet::new();
 
     for _ in 0..MAX_ITERATIONS {
         // Bound the payload: only the 2 most recent screenshots ride along.
@@ -1002,7 +1034,12 @@ the task is already done."
                     Err(e) => ToolOutcome::err(e),
                 }
             } else {
-                execute_tool(app, backend, source, &name, &args, screen).await
+                let mut outcome =
+                    execute_tool(app, backend, source, &name, &args, screen, &mut trusted_apps).await;
+                // Observe-act-verify: UI actions get a fresh screenshot attached
+                // automatically so the model SEES the result instead of assuming it.
+                attach_verification_shot(&name, &mut outcome, screen).await;
+                outcome
             };
             let (clean_log, diff) = extract_diff_marker(&outcome.log);
             phase.record(&name);
@@ -1050,6 +1087,7 @@ fn tool_label(name: &str, args: &Value) -> String {
         "get_screen_context" => "Reading screen context".to_string(),
         "list_windows" => "Listing open windows".to_string(),
         "focus_window" => format!("Focusing window: {}", args.get("title_contains").and_then(|c| c.as_str()).unwrap_or("")),
+        "read_app_content" => "Reading app content".to_string(),
         "click" => format!(
             "Clicking ({}, {})",
             args.get("x").and_then(|v| v.as_i64()).unwrap_or(0),
@@ -1077,6 +1115,7 @@ async fn execute_tool(
     name: &str,
     args: &Value,
     screen: &mut Option<ScreenMapping>,
+    trusted: &mut HashSet<String>,
 ) -> ToolOutcome {
     match name {
         "run_command" => run_command_tool(args).await,
@@ -1091,16 +1130,76 @@ async fn execute_tool(
         "get_screen_context" => get_screen_context_tool().await,
         "list_windows" => list_windows_tool().await,
         "focus_window" => focus_window_tool(args).await,
-        "click" => click_tool(args, screen),
-        "double_click" => double_click_tool(args, screen),
-        "scroll" => scroll_tool(args, screen),
-        "type_text" => type_text_tool(args),
-        "press_key" => press_key_tool(args),
+        "read_app_content" => read_app_content_tool().await,
+        "click" => click_tool(app, source, trusted, args, screen).await,
+        "double_click" => double_click_tool(app, source, trusted, args, screen).await,
+        "scroll" => scroll_tool(app, source, trusted, args, screen).await,
+        "type_text" => type_text_tool(app, source, trusted, args).await,
+        "press_key" => press_key_tool(app, source, trusted, args).await,
         "open_url" => open_target_tool(args, "url"),
         "open_app" => open_target_tool(args, "target"),
         "wait" => wait_tool(args).await,
         "request_confirmation" => request_confirmation_tool(app, source, args).await,
         other => ToolOutcome::err(format!("Unknown tool: {}", other)),
+    }
+}
+
+// ── Observe-act-verify: automatic post-action screenshots ────────
+// The root cause of the agent confidently claiming "I created the note!" when
+// nothing was saved: UI actions used to return only a text receipt ("Typed 22
+// characters."), so unless the model REMEMBERED to call capture_screen it was
+// flying blind and assumed success. Production browser/computer-use agents
+// (Manus, Claude computer use, OpenAI CUA) all close this loop by observing
+// after every act — so now every action that changes what's on screen gets a
+// fresh screenshot attached to its result automatically, after a short settle
+// delay. The screenshot also refreshes the coordinate mapping, keeping the
+// "coordinates are relative to the most recent screenshot" contract intact.
+
+/// Settle delay before the verification shot: instant for input synthesis,
+/// longer for actions that open/switch windows or load pages.
+fn post_action_delay_ms(tool_name: &str) -> Option<u64> {
+    match tool_name {
+        "click" | "double_click" | "scroll" | "type_text" | "press_key" => Some(900),
+        "open_url" | "open_app" | "focus_window" => Some(2000),
+        // After an explicit wait the whole point is to look again.
+        "wait" => Some(0),
+        _ => None,
+    }
+}
+
+/// Capture the screen for verification and refresh the coordinate mapping.
+async fn verification_shot(screen: &mut Option<ScreenMapping>, delay_ms: u64) -> Option<String> {
+    if delay_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+    }
+    let shot = tokio::task::spawn_blocking(capture::capture_agent_full).await.ok()?.ok()?;
+    *screen = Some(ScreenMapping::from_shot(&shot));
+    Some(shot.data_url)
+}
+
+/// Attach an automatic verification screenshot to a UI action's outcome (only
+/// when the action itself succeeded and didn't already produce an image).
+async fn attach_verification_shot(
+    name: &str,
+    outcome: &mut ToolOutcome,
+    screen: &mut Option<ScreenMapping>,
+) {
+    if outcome.image_data_url.is_some() || outcome.response.get("error").is_some() {
+        return;
+    }
+    let Some(delay) = post_action_delay_ms(name) else { return };
+    if let Some(data_url) = verification_shot(screen, delay).await {
+        outcome.image_data_url = Some(data_url);
+        if let Some(obj) = outcome.response.as_object_mut() {
+            obj.insert(
+                "verification".to_string(),
+                json!(
+                    "A fresh screenshot of the screen AFTER this action is attached. Inspect it to \
+confirm the action actually had the intended effect before moving on — if the expected change \
+isn't visible, the action did NOT work. Base any next click/scroll coordinates on this screenshot."
+                ),
+            );
+        }
     }
 }
 
@@ -1677,7 +1776,12 @@ async fn list_windows_tool() -> ToolOutcome {
     let entries: Vec<Value> = windows
         .iter()
         .take(40)
-        .map(|w| json!({ "title": w.title, "process": w.process_name, "focused": w.foreground }))
+        .map(|w| json!({
+            "title": w.title,
+            "process": w.process_name,
+            "category": classify_process(&w.process_name),
+            "focused": w.foreground,
+        }))
         .collect();
     ToolOutcome {
         response: json!({ "windows": entries, "count": count }),
@@ -1720,47 +1824,87 @@ fn resolve_point(args: &Value, screen: &Option<ScreenMapping>) -> Result<(i32, i
     Ok(mapping.to_real(nx, ny))
 }
 
-fn click_tool(args: &Value, screen: &Option<ScreenMapping>) -> ToolOutcome {
+/// Resolves whatever process/window sits at a real screen point, off the
+/// blocking thread pool (the underlying MSAA/Win32 calls aren't async).
+async fn context_at_point_async(x: i32, y: i32) -> mouse::CursorContext {
+    tokio::task::spawn_blocking(move || mouse::context_at_point(x, y))
+        .await
+        .unwrap_or(mouse::CursorContext {
+            x,
+            y,
+            window_title: String::new(),
+            process_name: String::new(),
+            class_name: String::new(),
+        })
+}
+
+async fn click_tool(
+    app: &AppHandle,
+    source: &str,
+    trusted: &mut HashSet<String>,
+    args: &Value,
+    screen: &Option<ScreenMapping>,
+) -> ToolOutcome {
     let (x, y) = match resolve_point(args, screen) {
         Ok(p) => p,
         Err(e) => return ToolOutcome::err(e),
     };
+    let target = context_at_point_async(x, y).await;
+    if let Err(e) = guard_target_app(app, source, trusted, &target.process_name, &target.window_title).await {
+        return ToolOutcome::err(e);
+    }
     let right = args.get("button").and_then(|b| b.as_str()).map(|b| b.eq_ignore_ascii_case("right")).unwrap_or(false);
     input::click(x, y, right);
     ToolOutcome::text(format!("Clicked {} at ({}, {}).", if right { "right" } else { "left" }, x, y))
 }
 
-fn double_click_tool(args: &Value, screen: &Option<ScreenMapping>) -> ToolOutcome {
-    match resolve_point(args, screen) {
-        Ok((x, y)) => {
-            input::double_click(x, y);
-            ToolOutcome::text(format!("Double-clicked ({}, {}).", x, y))
-        }
-        Err(e) => ToolOutcome::err(e),
+async fn double_click_tool(
+    app: &AppHandle,
+    source: &str,
+    trusted: &mut HashSet<String>,
+    args: &Value,
+    screen: &Option<ScreenMapping>,
+) -> ToolOutcome {
+    let (x, y) = match resolve_point(args, screen) {
+        Ok(p) => p,
+        Err(e) => return ToolOutcome::err(e),
+    };
+    let target = context_at_point_async(x, y).await;
+    if let Err(e) = guard_target_app(app, source, trusted, &target.process_name, &target.window_title).await {
+        return ToolOutcome::err(e);
     }
+    input::double_click(x, y);
+    ToolOutcome::text(format!("Double-clicked ({}, {}).", x, y))
 }
 
-fn scroll_tool(args: &Value, screen: &Option<ScreenMapping>) -> ToolOutcome {
-    let amount = args.get("amount").and_then(|v| v.as_i64());
-    let point = resolve_point(args, screen);
-    match (point, amount) {
-        (Ok((x, y)), Some(amount)) => {
-            input::scroll(x, y, amount as i32);
-            ToolOutcome::text(format!("Scrolled {} at ({}, {}).", amount, x, y))
-        }
-        (Err(e), _) => ToolOutcome::err(e),
-        (_, None) => ToolOutcome::err("scroll requires an integer amount"),
+async fn scroll_tool(
+    app: &AppHandle,
+    source: &str,
+    trusted: &mut HashSet<String>,
+    args: &Value,
+    screen: &Option<ScreenMapping>,
+) -> ToolOutcome {
+    let amount = match args.get("amount").and_then(|v| v.as_i64()) {
+        Some(a) => a,
+        None => return ToolOutcome::err("scroll requires an integer amount"),
+    };
+    let (x, y) = match resolve_point(args, screen) {
+        Ok(p) => p,
+        Err(e) => return ToolOutcome::err(e),
+    };
+    let target = context_at_point_async(x, y).await;
+    if let Err(e) = guard_target_app(app, source, trusted, &target.process_name, &target.window_title).await {
+        return ToolOutcome::err(e);
     }
+    input::scroll(x, y, amount as i32);
+    ToolOutcome::text(format!("Scrolled {} at ({}, {}).", amount, x, y))
 }
 
 /// Shows the user a real Allow/Deny button and waits for their click (with a
 /// 5-minute timeout, treated as a deny so the task doesn't hang forever).
-async fn request_confirmation_tool(app: &AppHandle, source: &str, args: &Value) -> ToolOutcome {
-    let message = args
-        .get("message")
-        .and_then(|m| m.as_str())
-        .unwrap_or("Proceed with this action?")
-        .to_string();
+/// Shared by the model-invoked `request_confirmation` tool and the automatic
+/// per-app gate in `guard_target_app`.
+async fn confirm(app: &AppHandle, source: &str, message: &str) -> bool {
     let request_id = uuid::Uuid::new_v4().to_string();
     let (tx, rx) = oneshot::channel();
     confirmations().lock().unwrap().insert(request_id.clone(), tx);
@@ -1770,20 +1914,70 @@ async fn request_confirmation_tool(app: &AppHandle, source: &str, args: &Value) 
         AgentProgress {
             source: source.to_string(),
             kind: "confirm".to_string(),
-            message: message.clone(),
+            message: message.to_string(),
             request_id: Some(request_id.clone()),
         },
     );
 
     const CONFIRM_TIMEOUT: Duration = Duration::from_secs(300);
     match tokio::time::timeout(CONFIRM_TIMEOUT, rx).await {
-        Ok(Ok(true)) => ToolOutcome::text("The user clicked Allow. Proceed."),
-        Ok(Ok(false)) => ToolOutcome::text("The user clicked Deny. Do not proceed with this action — ask what they'd like instead, or stop."),
-        Ok(Err(_)) => ToolOutcome::err("confirmation channel closed unexpectedly"),
+        Ok(Ok(approved)) => approved,
+        Ok(Err(_)) => false,
         Err(_) => {
             confirmations().lock().unwrap().remove(&request_id);
-            ToolOutcome::text("No response within 5 minutes — treat this as denied and stop this action.")
+            false
         }
+    }
+}
+
+async fn request_confirmation_tool(app: &AppHandle, source: &str, args: &Value) -> ToolOutcome {
+    let message = args
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("Proceed with this action?")
+        .to_string();
+    if confirm(app, source, &message).await {
+        ToolOutcome::text("The user clicked Allow. Proceed.")
+    } else {
+        ToolOutcome::text(
+            "The user clicked Deny (or didn't respond within 5 minutes). Do not proceed with this \
+action — ask what they'd like instead, or stop.",
+        )
+    }
+}
+
+/// Automatic safety net, independent of the model's own judgment: the first
+/// time in a run that an input-affecting tool (click/double_click/scroll/
+/// type_text/press_key) is about to act on a given process, this pauses and
+/// shows the user a real Allow/Deny prompt — exactly like `request_confirmation`,
+/// but the model doesn't have to remember to call it, and can't skip it either.
+/// Approval is remembered for the rest of THIS run only (not persisted), so a
+/// single task touching one app in a loop only interrupts once.
+async fn guard_target_app(
+    app: &AppHandle,
+    source: &str,
+    trusted: &mut HashSet<String>,
+    process_name: &str,
+    window_title: &str,
+) -> Result<(), String> {
+    let key = process_name.trim().to_lowercase();
+    if key.is_empty() || trusted.contains(&key) {
+        return Ok(());
+    }
+    let label = if window_title.trim().is_empty() {
+        process_name.to_string()
+    } else {
+        format!("{} ({})", window_title, process_name)
+    };
+    let message = format!("First action on \"{}\" this task — let Mouse AI control it?", label);
+    if confirm(app, source, &message).await {
+        trusted.insert(key);
+        Ok(())
+    } else {
+        Err(format!(
+            "Denied: the user has not approved Mouse AI controlling \"{}\" for this task.",
+            process_name
+        ))
     }
 }
 
@@ -1814,22 +2008,119 @@ async fn wait_tool(args: &Value) -> ToolOutcome {
     ToolOutcome::text(format!("Waited {:.1}s.", seconds))
 }
 
-fn type_text_tool(args: &Value) -> ToolOutcome {
+/// type_text/press_key act on whatever has keyboard FOCUS, not whatever's
+/// under the cursor — the foreground window is the correct thing to gate on.
+async fn foreground_context_async() -> mouse::CursorContext {
+    tokio::task::spawn_blocking(mouse::get_foreground_context)
+        .await
+        .unwrap_or(mouse::CursorContext {
+            x: 0,
+            y: 0,
+            window_title: String::new(),
+            process_name: String::new(),
+            class_name: String::new(),
+        })
+}
+
+async fn type_text_tool(app: &AppHandle, source: &str, trusted: &mut HashSet<String>, args: &Value) -> ToolOutcome {
     let text = args.get("text").and_then(|t| t.as_str()).unwrap_or("");
     if text.is_empty() {
         return ToolOutcome::err("no text provided");
+    }
+    let fg = foreground_context_async().await;
+    if let Err(e) = guard_target_app(app, source, trusted, &fg.process_name, &fg.window_title).await {
+        return ToolOutcome::err(e);
     }
     input::type_text(text);
     ToolOutcome::text(format!("Typed {} characters.", text.chars().count()))
 }
 
-fn press_key_tool(args: &Value) -> ToolOutcome {
+async fn press_key_tool(app: &AppHandle, source: &str, trusted: &mut HashSet<String>, args: &Value) -> ToolOutcome {
     let keys = args.get("keys").and_then(|k| k.as_str()).unwrap_or("");
     if keys.is_empty() {
         return ToolOutcome::err("no keys provided");
     }
+    let fg = foreground_context_async().await;
+    if let Err(e) = guard_target_app(app, source, trusted, &fg.process_name, &fg.window_title).await {
+        return ToolOutcome::err(e);
+    }
     match input::press_combo(keys) {
         Ok(()) => ToolOutcome::text(format!("Pressed {}.", keys)),
         Err(e) => ToolOutcome::err(e),
+    }
+}
+
+async fn read_app_content_tool() -> ToolOutcome {
+    let outcome = tokio::task::spawn_blocking(|| {
+        let fg = mouse::get_foreground_context();
+        let nodes = mouse::foreground_window_rect()
+            .map(|(x, y, w, h)| mouse::sample_window_content(x, y, w, h))
+            .unwrap_or_default();
+        (fg, nodes)
+    })
+    .await;
+
+    let (fg, nodes) = match outcome {
+        Ok(v) => v,
+        Err(e) => return ToolOutcome::err(format!("content read task failed: {}", e)),
+    };
+
+    if nodes.is_empty() {
+        return ToolOutcome::text(format!(
+            "No readable accessible content found in \"{}\" ({}) — it may not expose accessible \
+content, could be empty, or you may need to click into it first.",
+            fg.window_title, fg.process_name
+        ));
+    }
+
+    let mut text = format!("[APP CONTENT — {} ({})]\n", fg.window_title, fg.process_name);
+    for n in &nodes {
+        let line = [n.role.as_str(), n.name.as_str(), n.value.as_str()]
+            .iter()
+            .filter(|s| !s.trim().is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(": ");
+        if !line.trim().is_empty() {
+            text.push_str("- ");
+            text.push_str(&line);
+            text.push('\n');
+        }
+    }
+    let count = nodes.len();
+    ToolOutcome {
+        response: json!({ "result": truncate(&text, MAX_TOOL_OUTPUT) }),
+        image_data_url: None,
+        log: format!("read {} content node(s) from {}", count, fg.process_name),
+    }
+}
+
+/// Coarse app category from its process name — good enough for "should I
+/// reuse this window or open a new one", not a real app registry.
+fn classify_process(process_name: &str) -> &'static str {
+    let p = process_name.to_lowercase();
+    let browsers = [
+        "chrome.exe", "msedge.exe", "firefox.exe", "comet.exe", "brave.exe", "opera.exe",
+        "opera_gx.exe", "vivaldi.exe", "iexplore.exe",
+    ];
+    let office = [
+        "excel.exe", "winword.exe", "powerpnt.exe", "outlook.exe", "onenote.exe", "access.exe",
+        "msaccess.exe",
+    ];
+    let editors = [
+        "code.exe", "cursor.exe", "notepad.exe", "notepad++.exe", "sublime_text.exe", "vim.exe",
+        "gvim.exe", "devenv.exe", "idea64.exe", "pycharm64.exe",
+    ];
+    let terminals = ["powershell.exe", "pwsh.exe", "cmd.exe", "windowsterminal.exe", "conhost.exe"];
+    if browsers.contains(&p.as_str()) {
+        "browser"
+    } else if office.contains(&p.as_str()) {
+        "office"
+    } else if editors.contains(&p.as_str()) {
+        "editor"
+    } else if terminals.contains(&p.as_str()) {
+        "terminal"
+    } else {
+        "other"
     }
 }

@@ -29,24 +29,15 @@ pub fn get_cursor_position() -> (i32, i32) {
 }
 
 #[cfg(windows)]
-pub fn get_cursor_context() -> CursorContext {
+fn context_for_hwnd(hwnd: winapi::shared::windef::HWND, x: i32, y: i32) -> CursorContext {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
-    use winapi::shared::windef::POINT;
-    use winapi::um::winuser::{
-        GetClassNameW, GetCursorPos, GetWindowTextW, GetWindowThreadProcessId, WindowFromPoint,
-    };
+    use winapi::um::winuser::{GetClassNameW, GetWindowTextW, GetWindowThreadProcessId};
 
-    let mut point = POINT { x: 0, y: 0 };
-    unsafe {
-        GetCursorPos(&mut point);
-    }
-
-    let hwnd = unsafe { WindowFromPoint(point) };
     if hwnd.is_null() {
         return CursorContext {
-            x: point.x,
-            y: point.y,
+            x,
+            y,
             window_title: String::new(),
             process_name: String::new(),
             class_name: String::new(),
@@ -87,12 +78,35 @@ pub fn get_cursor_context() -> CursorContext {
     };
 
     CursorContext {
-        x: point.x,
-        y: point.y,
+        x,
+        y,
         window_title,
         process_name,
         class_name,
     }
+}
+
+/// Same lookup `get_cursor_context()` does, but for an arbitrary global point
+/// instead of always re-reading the live cursor position — lets a caller ask
+/// "what app/window is AT this specific point" (e.g. where a click is about
+/// to land) without first moving the mouse there.
+#[cfg(windows)]
+pub fn context_at_point(x: i32, y: i32) -> CursorContext {
+    use winapi::shared::windef::POINT;
+    use winapi::um::winuser::WindowFromPoint;
+    let hwnd = unsafe { WindowFromPoint(POINT { x, y }) };
+    context_for_hwnd(hwnd, x, y)
+}
+
+#[cfg(not(windows))]
+pub fn context_at_point(x: i32, y: i32) -> CursorContext {
+    CursorContext { x, y, window_title: String::new(), process_name: String::new(), class_name: String::new() }
+}
+
+#[cfg(windows)]
+pub fn get_cursor_context() -> CursorContext {
+    let (x, y) = get_cursor_position();
+    context_at_point(x, y)
 }
 
 /// The window that actually has keyboard focus right now — distinct from
@@ -233,23 +247,18 @@ fn truncate_text(mut s: String) -> String {
     s
 }
 
+/// Core lookup shared by `get_element_under_cursor` and `sample_window_content`
+/// — assumes COM is already initialized on this thread by the caller, so a
+/// multi-point sample only pays the CoInitializeEx/CoUninitialize cost once.
 #[cfg(windows)]
-pub fn get_element_under_cursor(x: i32, y: i32) -> ElementInfo {
+fn element_at_point_raw(x: i32, y: i32) -> ElementInfo {
     use windows::core::Interface;
     use windows::Win32::Foundation::POINT;
-    use windows::Win32::System::Com::{
-        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
-    };
     use windows::Win32::System::Variant::{VARIANT, VT_I4};
-    use windows::Win32::UI::Accessibility::{
-        AccessibleObjectFromPoint, GetRoleTextW, IAccessible,
-    };
+    use windows::Win32::UI::Accessibility::{AccessibleObjectFromPoint, GetRoleTextW, IAccessible};
 
     let mut info = ElementInfo::default();
-
     unsafe {
-        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-
         let point = POINT { x, y };
         let mut acc: Option<IAccessible> = None;
         let mut var_child = VARIANT::default();
@@ -283,16 +292,119 @@ pub fn get_element_under_cursor(x: i32, y: i32) -> ElementInfo {
                 }
             }
         }
+    }
+    info
+}
 
+#[cfg(windows)]
+pub fn get_element_under_cursor(x: i32, y: i32) -> ElementInfo {
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    unsafe {
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let info = element_at_point_raw(x, y);
         if com.is_ok() {
             CoUninitialize();
         }
+        info
     }
-
-    info
 }
 
 #[cfg(not(windows))]
 pub fn get_element_under_cursor(_x: i32, _y: i32) -> ElementInfo {
     ElementInfo::default()
+}
+
+// ── Generic "what's in this window" content sampling ─────────────
+// File Explorer gets a real directory listing (see explorer.rs); everything
+// else — Excel, Notepad, a browser, any other app — only exposes its content
+// through the accessibility tree. Rather than write a bespoke integration per
+// app, this walks a grid of points across the window's bounds and reads
+// whatever accessible element sits at each one via the same MSAA call
+// `get_element_under_cursor` already uses, deduplicating repeats. Cruder than
+// a proper accChild tree walk, but it's built entirely on the one accessibility
+// entry point already proven to work here, and it generalizes to any app
+// without per-app code.
+#[derive(Debug, Clone, Serialize)]
+pub struct ContentNode {
+    pub name: String,
+    pub value: String,
+    pub role: String,
+}
+
+const CONTENT_GRID_COLS: i32 = 12;
+const CONTENT_GRID_ROWS: i32 = 10;
+const MAX_CONTENT_NODES: usize = 80;
+
+#[cfg(windows)]
+pub fn sample_window_content(x: i32, y: i32, w: u32, h: u32) -> Vec<ContentNode> {
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+
+    let mut out = Vec::new();
+    if w == 0 || h == 0 {
+        return out;
+    }
+    let mut seen = std::collections::HashSet::new();
+
+    unsafe {
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        'grid: for row in 0..CONTENT_GRID_ROWS {
+            for col in 0..CONTENT_GRID_COLS {
+                if out.len() >= MAX_CONTENT_NODES {
+                    break 'grid;
+                }
+                let px = x + (col as i64 * w as i64 / CONTENT_GRID_COLS as i64) as i32
+                    + (w as i32 / (CONTENT_GRID_COLS * 2)).max(1);
+                let py = y + (row as i64 * h as i64 / CONTENT_GRID_ROWS as i64) as i32
+                    + (h as i32 / (CONTENT_GRID_ROWS * 2)).max(1);
+                let el = element_at_point_raw(px, py);
+                if el.name.trim().is_empty() && el.value.trim().is_empty() {
+                    continue;
+                }
+                let key = format!("{}\u{1}{}\u{1}{}", el.role, el.name, el.value);
+                if seen.insert(key) {
+                    out.push(ContentNode { name: el.name, value: el.value, role: el.role });
+                }
+            }
+        }
+        if com.is_ok() {
+            CoUninitialize();
+        }
+    }
+    out
+}
+
+#[cfg(not(windows))]
+pub fn sample_window_content(_x: i32, _y: i32, _w: u32, _h: u32) -> Vec<ContentNode> {
+    Vec::new()
+}
+
+/// Bounding rect of whichever window currently has keyboard focus — the
+/// counterpart to `explorer::window_rect_at` (which resolves a window under an
+/// arbitrary point) for tools that care about "the app the user is actually
+/// typing into right now" instead of whatever's under the cursor.
+#[cfg(windows)]
+pub fn foreground_window_rect() -> Option<(i32, i32, u32, u32)> {
+    use winapi::shared::windef::RECT;
+    use winapi::um::winuser::{GetForegroundWindow, GetWindowRect};
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return None;
+        }
+        let mut rect: RECT = std::mem::zeroed();
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return None;
+        }
+        let w = rect.right - rect.left;
+        let h = rect.bottom - rect.top;
+        if w <= 0 || h <= 0 {
+            return None;
+        }
+        Some((rect.left, rect.top, w as u32, h as u32))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn foreground_window_rect() -> Option<(i32, i32, u32, u32)> {
+    None
 }
