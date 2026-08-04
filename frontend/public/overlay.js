@@ -31,6 +31,7 @@ let busy = false;
 let autoHideTimer = null;
 let agentMode = false; // when on, the ask runs as a full agent task on the PC
 let agentSummary = null; // live "Thought for Xs" summary widget for the in-flight run
+let agentRunning = false; // an agent_run is in flight — the send button doubles as Stop
 
 // ── Events from Rust ───────────────────────────────────────
 window.addEventListener("DOMContentLoaded", async () => {
@@ -150,7 +151,16 @@ function setupUI() {
   makeDraggableClickable(pill, expand);
   btnClose.addEventListener("click", collapse);
   btnOpenApp.addEventListener("click", () => invoke("show_main_window").catch(() => {}));
-  btnAsk.addEventListener("click", () => ask(questionInput.value.trim() || null));
+  btnAsk.addEventListener("click", () => {
+    if (agentRunning) {
+      // The send button is a Stop button while an agent task runs.
+      btnAsk.disabled = true;
+      questionInput.placeholder = "Stopping…";
+      invoke("agent_cancel", { source: "overlay" }).catch(() => {});
+      return;
+    }
+    ask(questionInput.value.trim() || null);
+  });
   btnAnalyze.addEventListener("click", () => ask(null));
   btnAgent.addEventListener("click", toggleAgentMode);
 
@@ -334,6 +344,7 @@ async function runAgentTask(task) {
     answerEl.innerHTML = `<div class="error-box">Type what you'd like me to do first.</div>`;
     return;
   }
+  agentRunning = true;
   setBusy(true);
   questionInput.value = "";
   thinkingEl.hidden = true;
@@ -364,6 +375,7 @@ async function runAgentTask(task) {
     finishAgentSummary(false);
     appendFinalAnswer(`<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`);
   } finally {
+    agentRunning = false;
     setBusy(false);
     questionInput.value = "";
     questionInput.focus();
@@ -600,7 +612,11 @@ function friendlyError(err) {
 
 function setBusy(state) {
   busy = state;
-  btnAsk.disabled = state;
+  // While an agent task runs, the send button stays clickable as a Stop
+  // button (⏹) — a minutes-long run with no way out reads as a hang.
+  btnAsk.disabled = state && !agentRunning;
+  btnAsk.textContent = state && agentRunning ? "⏹" : "➤";
+  btnAsk.title = state && agentRunning ? "Stop the agent" : "Ask / do it (Enter)";
   btnAnalyze.disabled = state;
   // The question is already echoed above (questionHeaderHtml) once a task
   // starts — leaving the same text sitting in the input for the whole
@@ -608,7 +624,9 @@ function setBusy(state) {
   // so it visibly reads as busy rather than as an editable, stale question.
   questionInput.readOnly = state;
   questionInput.placeholder = state
-    ? "Working…"
+    ? agentRunning
+      ? "Working… (⏹ to stop)"
+      : "Working…"
     : agentMode
       ? "Tell Mouse AI what to do…"
       : "Ask about what's under your mouse…";

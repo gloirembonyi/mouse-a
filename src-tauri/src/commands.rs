@@ -440,6 +440,14 @@ pub fn agent_confirm(request_id: String, approved: bool) -> bool {
     crate::agent::resolve_confirmation(&request_id, approved)
 }
 
+/// Called when the user clicks Stop on a running agent task. `source` must
+/// match the one the task was started with ("overlay" | "main") — the loop
+/// checks the flag between steps and between tool calls and winds down.
+#[tauri::command]
+pub fn agent_cancel(source: Option<String>) {
+    crate::agent::request_cancel(source.as_deref().unwrap_or("main"));
+}
+
 // ── Chat Commands ────────────────────────────────────────────────
 
 #[tauri::command]

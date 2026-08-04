@@ -154,6 +154,27 @@ pub fn resolve_confirmation(request_id: &str, approved: bool) -> bool {
     }
 }
 
+// ── Cancellation ─────────────────────────────────────────────────
+// A long agent run used to be unstoppable short of killing the app — the UI
+// showed a spinner for minutes with no way out. The Stop button sets a flag
+// here (keyed by the same `source` string that routes progress events), and
+// the drive loop checks it between model steps and between tool calls.
+static CANCEL_REQUESTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn cancels() -> &'static Mutex<HashSet<String>> {
+    CANCEL_REQUESTS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Called by the `agent_cancel` Tauri command (the UI's Stop button).
+pub fn request_cancel(source: &str) {
+    cancels().lock().unwrap().insert(source.to_string());
+}
+
+/// Check-and-consume: returns true at most once per request_cancel call.
+fn cancel_requested(source: &str) -> bool {
+    cancels().lock().unwrap().remove(source)
+}
+
 fn system_prompt(autonomous: bool) -> String {
     let mut s = String::from(
         "You are Mouse AI, an autonomous desktop agent running on the user's Windows PC. \
@@ -697,6 +718,8 @@ pub async fn run_task(
     user_image_data_url: Option<String>,
 ) -> Result<String, String> {
     reset_scratch_dir();
+    // A stale Stop from a previous run must not instantly kill this one.
+    let _ = cancels().lock().unwrap().remove(source);
     let system = system_prompt(autonomous);
 
     // Recent turns from the SAME conversation the chat view and the overlay's
@@ -922,6 +945,11 @@ async fn drive_loop(
     let mut trusted_apps: HashSet<String> = HashSet::new();
 
     for _ in 0..MAX_ITERATIONS {
+        if cancel_requested(source) {
+            flush_phase(app, source, &mut phase);
+            emit(app, source, "done", "Stopped");
+            return Ok("⏹ Stopped at your request. I've halted the task — nothing further was done.".to_string());
+        }
         // Bound the payload: only the 2 most recent screenshots ride along.
         prune_old_images(&mut contents, 2);
         let step = agent_step_with_retry(app, backend, system, &contents, tools, source).await?;
@@ -1023,6 +1051,13 @@ the task is already done."
         // responses (+ any images) into one user turn, preserving alternation.
         let mut response_parts: Vec<Value> = Vec::new();
         for (name, args) in calls {
+            // Stop promptly mid-burst too — don't run the remaining tool calls
+            // of this turn after the user has already clicked Stop.
+            if cancel_requested(source) {
+                flush_phase(app, source, &mut phase);
+                emit(app, source, "done", "Stopped");
+                return Ok("⏹ Stopped at your request. I've halted the task — later steps were not run.".to_string());
+            }
             emit(app, source, "tool", tool_label(&name, &args));
             let outcome = if mcp.owns(&name) {
                 match mcp.call(&name, args.clone()).await {
@@ -1824,6 +1859,43 @@ fn resolve_point(args: &Value, screen: &Option<ScreenMapping>) -> Result<(i32, i
     Ok(mapping.to_real(nx, ny))
 }
 
+/// The agent's own always-on-top overlay floats above whatever app it's
+/// driving — a click aimed "at the page" can actually land on Mouse AI's own
+/// panel, and typing right after the user pressed Enter often goes into Mouse
+/// AI's own input box. Both look like success to the model while doing nothing
+/// to the target app (the classic "I created the note!" when nothing saved).
+/// These return a corrective error instead of letting that happen.
+async fn reject_own_window_at(x: i32, y: i32) -> Option<ToolOutcome> {
+    let own = tokio::task::spawn_blocking(move || mouse::is_own_process_at(x, y))
+        .await
+        .unwrap_or(false);
+    if own {
+        Some(ToolOutcome::err(
+            "those coordinates land on Mouse AI's OWN floating panel, which is covering that part \
+of the target app — the action was NOT performed. Aim at a point on the target app itself; if the \
+element you need is hidden behind the panel, pick the same element elsewhere on screen, scroll it \
+into a visible spot, or focus_window the target app and work from a fresh screenshot.",
+        ))
+    } else {
+        None
+    }
+}
+
+async fn reject_own_window_focused() -> Option<ToolOutcome> {
+    let own = tokio::task::spawn_blocking(mouse::is_own_process_foreground)
+        .await
+        .unwrap_or(false);
+    if own {
+        Some(ToolOutcome::err(
+            "keyboard focus is currently on Mouse AI's OWN window, so the keystrokes would go into \
+the assistant's UI instead of the target app — nothing was typed. First click on the target app or \
+focus_window it, verify focus from the attached screenshot, then type.",
+        ))
+    } else {
+        None
+    }
+}
+
 /// Resolves whatever process/window sits at a real screen point, off the
 /// blocking thread pool (the underlying MSAA/Win32 calls aren't async).
 async fn context_at_point_async(x: i32, y: i32) -> mouse::CursorContext {
@@ -1849,6 +1921,9 @@ async fn click_tool(
         Ok(p) => p,
         Err(e) => return ToolOutcome::err(e),
     };
+    if let Some(rejected) = reject_own_window_at(x, y).await {
+        return rejected;
+    }
     let target = context_at_point_async(x, y).await;
     if let Err(e) = guard_target_app(app, source, trusted, &target.process_name, &target.window_title).await {
         return ToolOutcome::err(e);
@@ -1869,6 +1944,9 @@ async fn double_click_tool(
         Ok(p) => p,
         Err(e) => return ToolOutcome::err(e),
     };
+    if let Some(rejected) = reject_own_window_at(x, y).await {
+        return rejected;
+    }
     let target = context_at_point_async(x, y).await;
     if let Err(e) = guard_target_app(app, source, trusted, &target.process_name, &target.window_title).await {
         return ToolOutcome::err(e);
@@ -1892,6 +1970,9 @@ async fn scroll_tool(
         Ok(p) => p,
         Err(e) => return ToolOutcome::err(e),
     };
+    if let Some(rejected) = reject_own_window_at(x, y).await {
+        return rejected;
+    }
     let target = context_at_point_async(x, y).await;
     if let Err(e) = guard_target_app(app, source, trusted, &target.process_name, &target.window_title).await {
         return ToolOutcome::err(e);
@@ -2027,6 +2108,9 @@ async fn type_text_tool(app: &AppHandle, source: &str, trusted: &mut HashSet<Str
     if text.is_empty() {
         return ToolOutcome::err("no text provided");
     }
+    if let Some(rejected) = reject_own_window_focused().await {
+        return rejected;
+    }
     let fg = foreground_context_async().await;
     if let Err(e) = guard_target_app(app, source, trusted, &fg.process_name, &fg.window_title).await {
         return ToolOutcome::err(e);
@@ -2039,6 +2123,9 @@ async fn press_key_tool(app: &AppHandle, source: &str, trusted: &mut HashSet<Str
     let keys = args.get("keys").and_then(|k| k.as_str()).unwrap_or("");
     if keys.is_empty() {
         return ToolOutcome::err("no keys provided");
+    }
+    if let Some(rejected) = reject_own_window_focused().await {
+        return rejected;
     }
     let fg = foreground_context_async().await;
     if let Err(e) = guard_target_app(app, source, trusted, &fg.process_name, &fg.window_title).await {

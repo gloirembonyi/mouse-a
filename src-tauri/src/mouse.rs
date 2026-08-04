@@ -378,6 +378,53 @@ pub fn sample_window_content(_x: i32, _y: i32, _w: u32, _h: u32) -> Vec<ContentN
     Vec::new()
 }
 
+/// True when the top-level window at the given global point belongs to THIS
+/// process (Mouse AI's own overlay/main window). The always-on-top overlay
+/// floats above the app the agent is trying to drive, so without this check
+/// the agent can click its own panel — or type into its own input box — and
+/// believe it acted on the target app.
+#[cfg(windows)]
+pub fn is_own_process_at(x: i32, y: i32) -> bool {
+    use winapi::shared::windef::POINT;
+    use winapi::um::winuser::{GetWindowThreadProcessId, WindowFromPoint};
+    unsafe {
+        let hwnd = WindowFromPoint(POINT { x, y });
+        if hwnd.is_null() {
+            return false;
+        }
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        pid == std::process::id()
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_own_process_at(_x: i32, _y: i32) -> bool {
+    false
+}
+
+/// True when keyboard focus is currently on one of THIS process's own windows
+/// — the state in which type_text/press_key would land in Mouse AI's own UI
+/// instead of the app the user meant.
+#[cfg(windows)]
+pub fn is_own_process_foreground() -> bool {
+    use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId};
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return false;
+        }
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        pid == std::process::id()
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_own_process_foreground() -> bool {
+    false
+}
+
 /// Bounding rect of whichever window currently has keyboard focus — the
 /// counterpart to `explorer::window_rect_at` (which resolves a window under an
 /// arbitrary point) for tools that care about "the app the user is actually
