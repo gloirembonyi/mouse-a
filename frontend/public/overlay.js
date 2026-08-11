@@ -18,9 +18,22 @@ const btnAnalyze = document.getElementById("btn-analyze");
 const btnClose = document.getElementById("btn-close");
 const btnOpenApp = document.getElementById("btn-open-app");
 const btnAgent = document.getElementById("btn-agent");
+const btnHistory = document.getElementById("btn-history");
 const agentLogEl = document.getElementById("agent-log");
+const workingIndicator = document.getElementById("working-indicator");
+const historyPanel = document.getElementById("history-panel");
+const historyList = document.getElementById("history-list");
+const historyNew = document.getElementById("history-new");
+const confirmHost = document.getElementById("confirm-host");
 const toast = document.getElementById("toast");
 const resizeGrip = document.getElementById("resize-grip");
+
+// Inline SVGs for the send/stop button so its state swap stays crisp (not an
+// emoji glyph that renders differently per-font).
+const SEND_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg>';
+const STOP_ICON =
+  '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>';
 
 const PILL_AUTOHIDE_MS = 4500;
 const TOAST_AUTOHIDE_MS = 2200;
@@ -167,6 +180,8 @@ function setupUI() {
   });
   btnAnalyze.addEventListener("click", () => ask(null));
   btnAgent.addEventListener("click", toggleAgentMode);
+  btnHistory.addEventListener("click", toggleHistory);
+  historyNew.addEventListener("click", startNewChatFromOverlay);
   // Reflect the default agent-mode state in the button + placeholder at startup.
   btnAgent.classList.toggle("active", agentMode);
   questionInput.placeholder = agentMode
@@ -181,7 +196,9 @@ function setupUI() {
   });
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") collapse();
+    // A pending confirm owns Escape (Deny) — don't collapse the panel out from
+    // under it.
+    if (e.key === "Escape" && confirmHost.hidden && !agentRunning) collapse();
   });
 
   // Manual resize handle — the window is also natively resizable from its
@@ -215,12 +232,12 @@ async function expand() {
 // native window to match, capped so a very long answer scrolls instead of
 // growing the window off-screen.
 //
-// Never shrinks below MIN_OVERLAY_HEIGHT even when content is just the
-// header + input row — a popup that shrinks to barely more than its own
-// title bar (as it briefly did while "Working…" with nothing logged yet)
-// reads as broken, not efficient, so there's always a comfortable default
-// amount of room regardless of how little is on screen yet.
-const MIN_OVERLAY_HEIGHT = 360;
+// A modest floor so a bare "Ask" state (header + input) still looks like a
+// deliberate compact panel rather than a sliver — but low enough that the
+// window truly hugs short answers instead of leaving a large empty gap above
+// the input (the content areas are sized to content + capped, not flex:1, so
+// the measured height is the real content height).
+const MIN_OVERLAY_HEIGHT = 132;
 
 async function syncOverlaySize(maxHeight = 560) {
   if (!panel || panel.hidden) return;
@@ -268,6 +285,11 @@ async function collapse() {
   agentLogEl.hidden = true;
   agentLogEl.innerHTML = "";
   questionInput.value = "";
+  // Reset the transient overlay surfaces so a re-expand starts clean.
+  hideHistory();
+  clearPinnedConfirm();
+  setWorkingIndicator(false);
+  btnHistory.classList.remove("active");
   setBusy(false);
   try {
     await invoke("collapse_overlay");
@@ -355,6 +377,9 @@ async function runAgentTask(task) {
   }
   agentRunning = true;
   setBusy(true);
+  setWorkingIndicator(true);
+  hideHistory();
+  clearPinnedConfirm();
   questionInput.value = "";
   thinkingEl.hidden = true;
   // Fully clear both panes — see the matching comment in ask() above.
@@ -385,6 +410,8 @@ async function runAgentTask(task) {
     appendFinalAnswer(`<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`);
   } finally {
     agentRunning = false;
+    setWorkingIndicator(false);
+    clearPinnedConfirm();
     setBusy(false);
     questionInput.value = "";
     questionInput.focus();
@@ -392,6 +419,163 @@ async function runAgentTask(task) {
     // window to match instead of leaving the old expanded-log space behind.
     await syncOverlaySize(480);
   }
+}
+
+// The panel border animates and a "don't touch" banner shows while the agent
+// is acting on the machine — a clear, unmissable "AI is driving" signal so the
+// user doesn't grab the mouse/keyboard and fight it mid-run.
+function setWorkingIndicator(on) {
+  panel.classList.toggle("agent-running", on);
+  workingIndicator.hidden = !on;
+}
+
+// ── Chat history (from the cursor overlay) ─────────────────────────
+// The overlay could only ask/act — you couldn't get back to earlier chats
+// without opening the main window. This lets you browse recent conversations
+// and jump into one (its transcript loads here, and the next message continues
+// that thread) right from the pill.
+let historyOpen = false;
+
+function hideHistory() {
+  historyOpen = false;
+  historyPanel.hidden = true;
+  btnHistory.classList.remove("active");
+}
+
+async function toggleHistory() {
+  if (historyOpen) { hideHistory(); await syncOverlaySize(480); return; }
+  if (agentRunning) return; // don't switch threads mid-run
+  historyOpen = true;
+  historyPanel.hidden = false;
+  btnHistory.classList.add("active");
+  // History replaces the content area — never stacks on top of a previous
+  // answer/log (which is how the two used to end up visible at once).
+  answerEl.hidden = true;
+  agentLogEl.hidden = true;
+  thinkingEl.hidden = true;
+  clearPinnedConfirm();
+  historyList.innerHTML = `<div class="history-empty">Loading…</div>`;
+  await syncOverlaySize(520);
+  try {
+    const convos = await invoke("get_conversations", { limit: 25 });
+    renderHistoryList(convos || []);
+  } catch (err) {
+    historyList.innerHTML = `<div class="history-empty">${escapeHtml(friendlyError(err))}</div>`;
+  }
+  await syncOverlaySize(520);
+}
+
+function renderHistoryList(convos) {
+  if (!convos.length) {
+    historyList.innerHTML = `<div class="history-empty">No saved chats yet.</div>`;
+    return;
+  }
+  historyList.innerHTML = "";
+  for (const c of convos) {
+    const item = document.createElement("button");
+    item.className = "history-item";
+    const title = cleanTitle(c.title);
+    const when = relativeTime(c.updated_at || c.created_at);
+    item.innerHTML =
+      `<span class="history-item-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>` +
+      `<span class="history-item-text">` +
+      `<span class="history-item-title">${escapeHtml(title)}</span>` +
+      `<span class="history-item-meta">${escapeHtml(when)}</span>` +
+      `</span>` +
+      `<span class="history-item-chevron" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>`;
+    item.addEventListener("click", () => openConversation(c.id, title));
+    historyList.appendChild(item);
+  }
+}
+
+async function openConversation(id, title) {
+  hideHistory();
+  answerEl.hidden = false;
+  agentLogEl.hidden = true;
+  answerEl.innerHTML = `<div class="history-loading">Loading “${escapeHtml(title)}”…</div>`;
+  await syncOverlaySize(560);
+  try {
+    await invoke("set_conversation_id", { id });
+    const messages = await invoke("get_conversation_messages", { id, limit: 40 });
+    renderTranscript(title, messages || []);
+  } catch (err) {
+    answerEl.innerHTML = `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
+  }
+  // A transcript deserves room to read — a taller cap so it rarely needs a
+  // manual resize to see the whole conversation.
+  await syncOverlaySize(600);
+}
+
+// Titles and stored user messages carry the agent's internal prompt scaffolding
+// (hover context, "[TASK]" markers, "…on their screen and asks:"). None of that
+// belongs in a human-facing list/transcript — reduce it to what the user meant.
+function cleanUserText(raw) {
+  let s = String(raw || "");
+  const taskIdx = s.lastIndexOf("[TASK]");
+  if (taskIdx !== -1) s = s.slice(taskIdx + "[TASK]".length);
+  const asksIdx = s.toLowerCase().lastIndexOf("asks:");
+  if (asksIdx !== -1) s = s.slice(asksIdx + "asks:".length);
+  s = s
+    .split("\n")
+    .filter((line) => !/^\s*(\[[A-Z][A-Z0-9 _\-]+\]|Application:|Window:|Cursor position:|URL:|Page:|Selected text)/.test(line))
+    .join("\n")
+    .trim();
+  return s;
+}
+
+function cleanTitle(rawTitle) {
+  const raw = String(rawTitle || "").trim();
+  if (!raw) return "Untitled chat";
+  const looksScaffolded = /hovering over this|desktop hover context|\[task\]|\[current page\]|application:\s|cursor position:/i.test(raw);
+  const base = looksScaffolded ? cleanUserText(raw) : raw;
+  const t = base.replace(/\s+/g, " ").trim() || "Chat";
+  return t.length > 46 ? t.slice(0, 46).trimEnd() + "…" : t;
+}
+
+function renderTranscript(title, messages) {
+  const rows = messages
+    .map((m) => {
+      const isUser = m.role === "user";
+      const who = isUser ? "You" : "Mouse AI";
+      const cls = isUser ? "transcript-user" : "transcript-ai";
+      const text = isUser ? cleanUserText(m.content) : (m.content || "");
+      if (!text.trim()) return "";
+      return `<div class="transcript-row ${cls}"><span class="transcript-who">${who}</span>${renderMarkdown(text)}</div>`;
+    })
+    .join("");
+  answerEl.innerHTML =
+    `<div class="transcript-head"><span class="transcript-title">${escapeHtml(title)}</span><span class="transcript-hint">Continuing this chat — type below</span></div>` +
+    `<div class="transcript-body">${rows || `<div class="history-empty">This chat has no messages.</div>`}</div>`;
+  // Reading a past chat starts at the BEGINNING, not the last reply — scrolling
+  // to the bottom is what made an opened chat look like only its final message.
+  requestAnimationFrame(() => { answerEl.scrollTop = 0; });
+}
+
+async function startNewChatFromOverlay() {
+  try { await invoke("new_conversation"); } catch { /* ignore */ }
+  hideHistory();
+  btnHistory.classList.remove("active");
+  answerEl.hidden = true;
+  answerEl.innerHTML = "";
+  agentLogEl.hidden = true;
+  agentLogEl.innerHTML = "";
+  questionInput.focus();
+  await syncOverlaySize(480);
+}
+
+// "3m ago" / "2h ago" / "5d ago" from an ISO timestamp; falls back to the raw
+// date string if it can't parse.
+function relativeTime(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso || "";
+  const secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (secs < 60) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return days < 30 ? `${days}d ago` : new Date(t).toLocaleDateString();
 }
 
 // Cursor/Codex-style collapsible "Thought for Xs" widget — the raw step-by-
@@ -484,11 +668,7 @@ function renderAgentProgress(p) {
   if (p.kind === "done") return;
 
   if (p.kind === "confirm") {
-    agentSummary.hasPendingConfirm = true;
-    agentSummary.applyExpanded();
-    agentSummary.body.appendChild(buildConfirmPrompt(p));
-    agentLogEl.scrollTop = agentLogEl.scrollHeight;
-    syncOverlaySize(480);
+    showPinnedConfirm(p);
     return;
   }
 
@@ -539,6 +719,51 @@ function buildAgentStep(p) {
   return step;
 }
 
+// Approval requests used to be appended into the scrollable step log, where a
+// long run pushed them below the fold — the user had to scroll/expand to even
+// see the Allow/Deny buttons. Now they render into a pinned host that sits
+// above the input and is ALWAYS visible, slides in with a pulse, and auto-
+// focuses Allow (Enter = Allow, Esc = Deny) so a decision is one keypress away.
+let confirmKeyHandler = null;
+
+function showPinnedConfirm(p) {
+  clearPinnedConfirm();
+  // While waiting on the human, the "don't touch" banner is wrong — the user
+  // MUST interact to answer. Hide it for the duration of the prompt.
+  workingIndicator.hidden = true;
+
+  const prompt = buildConfirmPrompt(p);
+  confirmHost.innerHTML = "";
+  confirmHost.appendChild(prompt);
+  confirmHost.hidden = false;
+  confirmHost.classList.remove("confirm-enter");
+  // Restart the entrance animation each time a new prompt appears.
+  void confirmHost.offsetWidth;
+  confirmHost.classList.add("confirm-enter");
+
+  const allowBtn = prompt.querySelector(".agent-confirm-btn.allow");
+  const denyBtn = prompt.querySelector(".agent-confirm-btn.deny");
+  requestAnimationFrame(() => allowBtn?.focus());
+
+  confirmKeyHandler = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); allowBtn?.click(); }
+    else if (e.key === "Escape") { e.preventDefault(); denyBtn?.click(); }
+  };
+  document.addEventListener("keydown", confirmKeyHandler, true);
+
+  syncOverlaySize(480);
+}
+
+function clearPinnedConfirm() {
+  if (confirmKeyHandler) {
+    document.removeEventListener("keydown", confirmKeyHandler, true);
+    confirmKeyHandler = null;
+  }
+  confirmHost.hidden = true;
+  confirmHost.innerHTML = "";
+  confirmHost.classList.remove("confirm-enter");
+}
+
 // Real Allow/Deny prompt the agent is waiting on — the click is reported
 // straight back to the paused tool call in Rust via agent_confirm.
 function buildConfirmPrompt(p) {
@@ -564,11 +789,22 @@ function buildConfirmPrompt(p) {
   const decide = async (approved) => {
     allowBtn.disabled = true;
     denyBtn.disabled = true;
+    if (confirmKeyHandler) {
+      document.removeEventListener("keydown", confirmKeyHandler, true);
+      confirmKeyHandler = null;
+    }
     try {
       await invoke("agent_confirm", { requestId: p.request_id, approved });
     } catch { /* ignore */ }
-    msg.textContent = approved ? `✅ Allowed: ${p.message}` : `🚫 Denied: ${p.message}`;
+    // Briefly show the outcome, then dismiss the pinned host and — if the run
+    // is still going — restore the "AI working" banner.
+    msg.textContent = approved ? `✅ Allowed — continuing…` : `🚫 Denied — stopping that action.`;
     row.remove();
+    setTimeout(() => {
+      clearPinnedConfirm();
+      if (agentRunning) workingIndicator.hidden = false;
+      syncOverlaySize(480);
+    }, 900);
   };
 
   allowBtn.addEventListener("click", () => decide(true));
@@ -622,10 +858,12 @@ function friendlyError(err) {
 function setBusy(state) {
   busy = state;
   // While an agent task runs, the send button stays clickable as a Stop
-  // button (⏹) — a minutes-long run with no way out reads as a hang.
+  // button — a minutes-long run with no way out reads as a hang.
   btnAsk.disabled = state && !agentRunning;
-  btnAsk.textContent = state && agentRunning ? "⏹" : "➤";
-  btnAsk.title = state && agentRunning ? "Stop the agent" : "Ask / do it (Enter)";
+  const isStop = state && agentRunning;
+  btnAsk.innerHTML = isStop ? STOP_ICON : SEND_ICON;
+  btnAsk.classList.toggle("is-stop", isStop);
+  btnAsk.title = isStop ? "Stop the agent" : "Ask / do it (Enter)";
   btnAnalyze.disabled = state;
   // The question is already echoed above (questionHeaderHtml) once a task
   // starts — leaving the same text sitting in the input for the whole

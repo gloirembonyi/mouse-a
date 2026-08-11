@@ -31,10 +31,11 @@ use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, 
 use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::Message;
 
-/// Small fixed range; the desktop binds the first free one and the extension
-/// probes the same list until a handshake succeeds. Deliberately uncommon so it
-/// doesn't collide with dev servers on popular ports like 8765.
-const PORTS: [u16; 4] = [47821, 47822, 47823, 47824];
+/// A single deterministic, uncommon port both sides agree on. One fixed port
+/// (not a range) means the extension makes at most one connection attempt, so a
+/// desktop that isn't running costs the extension at most one quiet console log
+/// per retry. Well outside the common dev-server ports that caused earlier 404s.
+const PORTS: [u16; 1] = [47821];
 const DEFAULT_TASK_TIMEOUT_SECS: u64 = 600;
 
 #[derive(Clone)]
