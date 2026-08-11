@@ -29,7 +29,11 @@ let hover = null; // latest hover-dwell payload from Rust
 let expanded = false;
 let busy = false;
 let autoHideTimer = null;
-let agentMode = false; // when on, the ask runs as a full agent task on the PC
+// Default ON so the cursor pill acts like the main window: a submission runs a
+// full agent task (which can now also delegate web work to the browser
+// extension), not just a one-shot question. The toggle still switches back to
+// quick "what's under my mouse" answers.
+let agentMode = true; // when on, the ask runs as a full agent task on the PC
 let agentSummary = null; // live "Thought for Xs" summary widget for the in-flight run
 let agentRunning = false; // an agent_run is in flight — the send button doubles as Stop
 
@@ -163,6 +167,11 @@ function setupUI() {
   });
   btnAnalyze.addEventListener("click", () => ask(null));
   btnAgent.addEventListener("click", toggleAgentMode);
+  // Reflect the default agent-mode state in the button + placeholder at startup.
+  btnAgent.classList.toggle("active", agentMode);
+  questionInput.placeholder = agentMode
+    ? "Tell Mouse AI what to do…"
+    : "Ask about what's under your mouse…";
 
   questionInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {

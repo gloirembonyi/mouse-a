@@ -3,6 +3,7 @@
 
 mod agent;
 mod backend;
+mod bridge;
 mod capture;
 mod commands;
 mod explorer;
@@ -110,6 +111,7 @@ pub fn run() {
             terminal::pty_resize,
             git_diff::git_status,
             git_diff::git_diff_file,
+            commands::bridge_status,
         ])
         .setup(|app| {
             // ── System Tray ──────────────────────────────────────
@@ -226,6 +228,14 @@ pub fn run() {
 
             // ── Hover Watcher ────────────────────────────────────
             hover::spawn_hover_watcher(app.handle().clone());
+
+            // ── Browser bridge (WebSocket server for the extension) ──
+            // Lets the desktop agent delegate web tasks to the Thothai browser
+            // extension in real time. Runs for the whole app lifetime.
+            let bridge_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                bridge::serve(bridge_app).await;
+            });
 
             Ok(())
         })

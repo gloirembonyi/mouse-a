@@ -168,6 +168,27 @@ fn cancels() -> &'static Mutex<HashSet<String>> {
 /// Called by the `agent_cancel` Tauri command (the UI's Stop button).
 pub fn request_cancel(source: &str) {
     cancels().lock().unwrap().insert(source.to_string());
+    // Also cancel any web task this run delegated to the browser extension.
+    crate::bridge::bridge().cancel_source(source);
+}
+
+// ── Last target window ───────────────────────────────────────────
+// The window the agent last clicked or explicitly focused, kept so
+// type_text/press_key can hand keyboard focus BACK to it when focus has
+// drifted onto Mouse AI's own UI (typically: the user touched the overlay
+// mid-run to watch the log). Without this the step fails with a corrective
+// error and burns a whole model round-trip on something the app can fix
+// itself in milliseconds.
+static LAST_TARGET_WINDOW: Mutex<Option<(isize, String)>> = Mutex::new(None);
+
+fn remember_target_window(hwnd: isize, label: &str) {
+    if hwnd != 0 {
+        *LAST_TARGET_WINDOW.lock().unwrap() = Some((hwnd, label.to_string()));
+    }
+}
+
+fn last_target_window() -> Option<(isize, String)> {
+    LAST_TARGET_WINDOW.lock().unwrap().clone()
 }
 
 /// Check-and-consume: returns true at most once per request_cancel call.
@@ -205,7 +226,15 @@ success — seeing the result is. If you finish the actions but cannot see the c
 either verify it first (e.g. capture_screen after closing a dialog, or read_app_content) or tell \
 the user honestly exactly what you did and that you could not confirm the outcome. A false \"done!\" \
 is far worse than an honest \"I tried, but it doesn't appear to have saved.\"\n\
-- Browser tasks (be precise — don't guess a destination):\n\
+- Web/browser tasks — STRONGLY PREFER delegate_to_browser: if the task happens on a website \
+(filling a form, reading/extracting page content, searching a site, clicking through a web flow), \
+call delegate_to_browser with a clear instruction instead of driving the browser yourself with \
+coordinate clicks. The extension drives the page through the DOM, which is far more reliable than \
+clicking a browser by screen position, and it returns a text result you can use. If you have \
+independent LOCAL work to do meanwhile, pass background=true and collect the result later with \
+check_browser_task — that runs the desktop and browser in parallel. Only fall back to the manual \
+open_url + click/type flow below if delegate_to_browser reports no extension is connected.\n\
+- Manual browser fallback (only when no extension is connected):\n\
   1. Check list_windows first — if a browser is already open, use focus_window to bring it forward \
 instead of launching a new one; only fall back to open_url for a brand-new window/tab.\n\
   2. If you already know the exact URL, open_url directly. If you don't, use web_search first and \
@@ -439,6 +468,28 @@ fn tool_declarations() -> Value {
                 "type": "object",
                 "properties": { "message": { "type": "string", "description": "A short, specific description of exactly what you're about to do." } },
                 "required": ["message"]
+            }
+        },
+        {
+            "name": "delegate_to_browser",
+            "description": "Delegate a WEB task to the connected Thothai browser extension, which drives the page through the DOM (far more reliable than clicking a browser by screen coordinates). Use this for anything on a website: filling and submitting a form, reading/extracting content from a page, searching a site, clicking through a web flow. By default this waits for the browser to finish and returns its result. Set background=true to fire it off and keep working locally, then call check_browser_task later to collect the result.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "instruction": { "type": "string", "description": "A clear, self-contained description of what to do on the web, including the target site/URL and what 'done' looks like." },
+                    "url": { "type": "string", "description": "Optional starting URL for the browser to open first." },
+                    "background": { "type": "boolean", "description": "If true, return a task_id immediately instead of waiting; collect the result later with check_browser_task." }
+                },
+                "required": ["instruction"]
+            }
+        },
+        {
+            "name": "check_browser_task",
+            "description": "Wait for and collect the result of a browser task previously started with delegate_to_browser(background=true). Call this when you've finished the local work you could do in parallel and now need the browser's result.",
+            "parameters": {
+                "type": "object",
+                "properties": { "task_id": { "type": "string", "description": "The task_id returned by delegate_to_browser." } },
+                "required": ["task_id"]
             }
         }
     ])
@@ -718,8 +769,10 @@ pub async fn run_task(
     user_image_data_url: Option<String>,
 ) -> Result<String, String> {
     reset_scratch_dir();
-    // A stale Stop from a previous run must not instantly kill this one.
+    // A stale Stop from a previous run must not instantly kill this one, and a
+    // window remembered from a previous run is not this task's target.
     let _ = cancels().lock().unwrap().remove(source);
+    *LAST_TARGET_WINDOW.lock().unwrap() = None;
     let system = system_prompt(autonomous);
 
     // Recent turns from the SAME conversation the chat view and the overlay's
@@ -801,9 +854,17 @@ pub async fn run_task(
     // the plain-heading narration ("thinking") sent between later tool bursts.
     emit(app, source, "plan", "Understanding your request…");
 
+    // While the agent runs, the overlay must never seize keyboard focus — the
+    // user watching/scrolling the live log used to pull focus onto Mouse AI's
+    // own window, sending the agent's keystrokes into its own UI instead of
+    // the target app. WS_EX_NOACTIVATE keeps the overlay visible and clickable
+    // (Stop still works) but unfocusable until the run ends.
+    let _ = tokio::task::spawn_blocking(|| mouse::set_own_window_no_activate("mouse ai overlay", true)).await;
+
     // Drive the loop, then always shut the MCP servers down (whatever the outcome).
     let result = drive_loop(app, backend, &system, &tools, contents, source, &mut mcp, &mut screen_mapping).await;
     mcp.shutdown().await;
+    let _ = tokio::task::spawn_blocking(|| mouse::set_own_window_no_activate("mouse ai overlay", false)).await;
     result
 }
 
@@ -1139,6 +1200,11 @@ fn tool_label(name: &str, args: &Value) -> String {
         "open_url" => format!("Opening {}", args.get("url").and_then(|c| c.as_str()).unwrap_or("")),
         "open_app" => format!("Opening {}", args.get("target").and_then(|c| c.as_str()).unwrap_or("")),
         "wait" => format!("Waiting {}s", args.get("seconds").and_then(|v| v.as_f64()).unwrap_or(0.0)),
+        "delegate_to_browser" => format!(
+            "🌐 Browser: {}",
+            truncate(args.get("instruction").and_then(|c| c.as_str()).unwrap_or(""), 70)
+        ),
+        "check_browser_task" => "Collecting browser result".to_string(),
         other => other.to_string(),
     }
 }
@@ -1175,6 +1241,8 @@ async fn execute_tool(
         "open_app" => open_target_tool(args, "target"),
         "wait" => wait_tool(args).await,
         "request_confirmation" => request_confirmation_tool(app, source, args).await,
+        "delegate_to_browser" => delegate_to_browser_tool(source, args).await,
+        "check_browser_task" => check_browser_task_tool(args).await,
         other => ToolOutcome::err(format!("Unknown tool: {}", other)),
     }
 }
@@ -1794,6 +1862,7 @@ fn focus_window_by_title(needle: &str) -> Result<String, String> {
             ));
         }
     }
+    remember_target_window(hwnd as isize, &label);
     Ok(label)
 }
 
@@ -1881,19 +1950,38 @@ into a visible spot, or focus_window the target app and work from a fresh screen
     }
 }
 
-async fn reject_own_window_focused() -> Option<ToolOutcome> {
+/// Keyboard-focus gate for type_text/press_key. When focus is on Mouse AI's
+/// own window (the user touched the overlay mid-run), first try to hand focus
+/// back to the last window the agent clicked or focused — only if that isn't
+/// possible does the step fail with the corrective error. Returns an optional
+/// note describing the auto-recovery for the tool's success message.
+async fn ensure_target_focused() -> Result<Option<String>, Box<ToolOutcome>> {
     let own = tokio::task::spawn_blocking(mouse::is_own_process_foreground)
         .await
         .unwrap_or(false);
-    if own {
-        Some(ToolOutcome::err(
-            "keyboard focus is currently on Mouse AI's OWN window, so the keystrokes would go into \
+    if !own {
+        return Ok(None);
+    }
+    if let Some((hwnd, label)) = last_target_window() {
+        let refocused = tokio::task::spawn_blocking(move || mouse::focus_hwnd(hwnd)).await;
+        if matches!(refocused, Ok(Ok(()))) {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let still_own = tokio::task::spawn_blocking(mouse::is_own_process_foreground)
+                .await
+                .unwrap_or(true);
+            if !still_own {
+                return Ok(Some(format!(
+                    "focus had drifted to Mouse AI's own window — auto-refocused \"{}\" first",
+                    label
+                )));
+            }
+        }
+    }
+    Err(Box::new(ToolOutcome::err(
+        "keyboard focus is currently on Mouse AI's OWN window, so the keystrokes would go into \
 the assistant's UI instead of the target app — nothing was typed. First click on the target app or \
 focus_window it, verify focus from the attached screenshot, then type.",
-        ))
-    } else {
-        None
-    }
+    )))
 }
 
 /// Resolves whatever process/window sits at a real screen point, off the
@@ -1928,6 +2016,8 @@ async fn click_tool(
     if let Err(e) = guard_target_app(app, source, trusted, &target.process_name, &target.window_title).await {
         return ToolOutcome::err(e);
     }
+    let hwnd = tokio::task::spawn_blocking(move || mouse::target_hwnd_at_point(x, y)).await.unwrap_or(0);
+    remember_target_window(hwnd, &target.window_title);
     let right = args.get("button").and_then(|b| b.as_str()).map(|b| b.eq_ignore_ascii_case("right")).unwrap_or(false);
     input::click(x, y, right);
     ToolOutcome::text(format!("Clicked {} at ({}, {}).", if right { "right" } else { "left" }, x, y))
@@ -1951,6 +2041,8 @@ async fn double_click_tool(
     if let Err(e) = guard_target_app(app, source, trusted, &target.process_name, &target.window_title).await {
         return ToolOutcome::err(e);
     }
+    let hwnd = tokio::task::spawn_blocking(move || mouse::target_hwnd_at_point(x, y)).await.unwrap_or(0);
+    remember_target_window(hwnd, &target.window_title);
     input::double_click(x, y);
     ToolOutcome::text(format!("Double-clicked ({}, {}).", x, y))
 }
@@ -2024,6 +2116,53 @@ async fn request_confirmation_tool(app: &AppHandle, source: &str, args: &Value) 
             "The user clicked Deny (or didn't respond within 5 minutes). Do not proceed with this \
 action — ask what they'd like instead, or stop.",
         )
+    }
+}
+
+/// Hand a web task to the connected browser extension over the local bridge.
+/// Inline by default (waits for the result); background=true returns a task_id
+/// so the desktop agent can keep working and collect it later via
+/// check_browser_task — that's how desktop + browser run in parallel.
+async fn delegate_to_browser_tool(source: &str, args: &Value) -> ToolOutcome {
+    let instruction = args.get("instruction").and_then(|v| v.as_str()).unwrap_or("").trim();
+    if instruction.is_empty() {
+        return ToolOutcome::err("delegate_to_browser needs an 'instruction' describing the web task.");
+    }
+    let background = args.get("background").and_then(|v| v.as_bool()).unwrap_or(false);
+    let mut options = json!({});
+    if let Some(url) = args.get("url").and_then(|v| v.as_str()) {
+        if !url.trim().is_empty() {
+            options["url"] = json!(url.trim());
+        }
+    }
+
+    let b = crate::bridge::bridge();
+    if background {
+        match b.start_task(source, instruction, options) {
+            Ok(id) => ToolOutcome::text(format!(
+                "Started the browser task in the background (task_id: {}). Continue with other \
+local work, then call check_browser_task with this id to get the result.",
+                id
+            )),
+            Err(e) => ToolOutcome::err(e),
+        }
+    } else {
+        match b.run_task(source, instruction, options).await {
+            Ok(result) => ToolOutcome::text(format!("Browser task result:\n{}", result)),
+            Err(e) => ToolOutcome::err(e),
+        }
+    }
+}
+
+/// Collect the result of a background browser task started earlier.
+async fn check_browser_task_tool(args: &Value) -> ToolOutcome {
+    let id = args.get("task_id").and_then(|v| v.as_str()).unwrap_or("").trim();
+    if id.is_empty() {
+        return ToolOutcome::err("check_browser_task needs the 'task_id' from delegate_to_browser.");
+    }
+    match crate::bridge::bridge().await_task(id, 600).await {
+        Ok(result) => ToolOutcome::text(format!("Browser task result:\n{}", result)),
+        Err(e) => ToolOutcome::err(e),
     }
 }
 
@@ -2108,15 +2247,19 @@ async fn type_text_tool(app: &AppHandle, source: &str, trusted: &mut HashSet<Str
     if text.is_empty() {
         return ToolOutcome::err("no text provided");
     }
-    if let Some(rejected) = reject_own_window_focused().await {
-        return rejected;
-    }
+    let focus_note = match ensure_target_focused().await {
+        Ok(note) => note,
+        Err(rejected) => return *rejected,
+    };
     let fg = foreground_context_async().await;
     if let Err(e) = guard_target_app(app, source, trusted, &fg.process_name, &fg.window_title).await {
         return ToolOutcome::err(e);
     }
     input::type_text(text);
-    ToolOutcome::text(format!("Typed {} characters.", text.chars().count()))
+    match focus_note {
+        Some(note) => ToolOutcome::text(format!("Typed {} characters ({}).", text.chars().count(), note)),
+        None => ToolOutcome::text(format!("Typed {} characters.", text.chars().count())),
+    }
 }
 
 async fn press_key_tool(app: &AppHandle, source: &str, trusted: &mut HashSet<String>, args: &Value) -> ToolOutcome {
@@ -2124,15 +2267,19 @@ async fn press_key_tool(app: &AppHandle, source: &str, trusted: &mut HashSet<Str
     if keys.is_empty() {
         return ToolOutcome::err("no keys provided");
     }
-    if let Some(rejected) = reject_own_window_focused().await {
-        return rejected;
-    }
+    let focus_note = match ensure_target_focused().await {
+        Ok(note) => note,
+        Err(rejected) => return *rejected,
+    };
     let fg = foreground_context_async().await;
     if let Err(e) = guard_target_app(app, source, trusted, &fg.process_name, &fg.window_title).await {
         return ToolOutcome::err(e);
     }
     match input::press_combo(keys) {
-        Ok(()) => ToolOutcome::text(format!("Pressed {}.", keys)),
+        Ok(()) => match focus_note {
+            Some(note) => ToolOutcome::text(format!("Pressed {} ({}).", keys, note)),
+            None => ToolOutcome::text(format!("Pressed {}.", keys)),
+        },
         Err(e) => ToolOutcome::err(e),
     }
 }

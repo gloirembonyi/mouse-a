@@ -455,3 +455,132 @@ pub fn foreground_window_rect() -> Option<(i32, i32, u32, u32)> {
 pub fn foreground_window_rect() -> Option<(i32, i32, u32, u32)> {
     None
 }
+
+/// Top-level window handle at a global screen point, as a plain integer so it
+/// can be stored across threads (a raw HWND is !Send). Returns 0 when nothing
+/// is there or the window belongs to THIS process — 0 is "nothing worth
+/// remembering", never a valid target.
+#[cfg(windows)]
+pub fn target_hwnd_at_point(x: i32, y: i32) -> isize {
+    use winapi::shared::windef::POINT;
+    use winapi::um::winuser::{GetAncestor, GetWindowThreadProcessId, WindowFromPoint, GA_ROOT};
+    unsafe {
+        let hwnd = WindowFromPoint(POINT { x, y });
+        if hwnd.is_null() {
+            return 0;
+        }
+        let root = GetAncestor(hwnd, GA_ROOT);
+        let hwnd = if root.is_null() { hwnd } else { root };
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == std::process::id() {
+            return 0;
+        }
+        hwnd as isize
+    }
+}
+
+#[cfg(not(windows))]
+pub fn target_hwnd_at_point(_x: i32, _y: i32) -> isize {
+    0
+}
+
+/// Bring a remembered window handle back to the foreground — the same
+/// AttachThreadInput dance agent::focus_window_by_title uses, but by handle,
+/// so it still works when the window's title has changed (unread-count
+/// prefixes etc.). Fails cleanly if the window has since closed.
+#[cfg(windows)]
+pub fn focus_hwnd(hwnd_raw: isize) -> Result<(), String> {
+    use winapi::um::processthreadsapi::GetCurrentThreadId;
+    use winapi::um::winuser::{
+        AttachThreadInput, BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId,
+        IsIconic, IsWindow, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+    let hwnd = hwnd_raw as winapi::shared::windef::HWND;
+    unsafe {
+        if hwnd.is_null() || IsWindow(hwnd) == 0 || IsWindowVisible(hwnd) == 0 {
+            return Err("the target window no longer exists".to_string());
+        }
+        if IsIconic(hwnd) != 0 {
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        let foreground = GetForegroundWindow();
+        let current_thread = GetCurrentThreadId();
+        let fg_thread = if !foreground.is_null() {
+            GetWindowThreadProcessId(foreground, std::ptr::null_mut())
+        } else {
+            0
+        };
+        if fg_thread != 0 && fg_thread != current_thread {
+            AttachThreadInput(current_thread, fg_thread, 1);
+        }
+        BringWindowToTop(hwnd);
+        let ok = SetForegroundWindow(hwnd);
+        if fg_thread != 0 && fg_thread != current_thread {
+            AttachThreadInput(current_thread, fg_thread, 0);
+        }
+        if ok == 0 {
+            return Err("Windows refused to move focus to the target window".to_string());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn focus_hwnd(_hwnd_raw: isize) -> Result<(), String> {
+    Err("window focus is only supported on Windows".to_string())
+}
+
+/// Toggle WS_EX_NOACTIVATE on this process's own windows whose title contains
+/// `title_contains` (case-insensitive). While ON, the window stays visible and
+/// still takes mouse clicks (Stop keeps working), but it can never seize
+/// keyboard focus — so the user watching or scrolling the overlay mid-run no
+/// longer redirects the agent's keystrokes into Mouse AI's own UI.
+#[cfg(windows)]
+pub fn set_own_window_no_activate(title_contains: &str, enable: bool) {
+    use winapi::shared::minwindef::{BOOL, LPARAM, TRUE};
+    use winapi::shared::windef::HWND;
+    use winapi::um::winuser::{
+        EnumWindows, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW,
+        GetWindowThreadProcessId, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+    };
+
+    struct Ctx {
+        needle: String,
+        enable: bool,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = &*(lparam as *const Ctx);
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid != std::process::id() {
+            return TRUE;
+        }
+        let len = GetWindowTextLengthW(hwnd);
+        if len == 0 {
+            return TRUE;
+        }
+        let mut buf = vec![0u16; (len + 1) as usize];
+        let actual = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        let title = String::from_utf16_lossy(&buf[..actual.max(0) as usize]).to_lowercase();
+        if !title.contains(&ctx.needle) {
+            return TRUE;
+        }
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let flag = WS_EX_NOACTIVATE as isize;
+        let new_style = if ctx.enable { style | flag } else { style & !flag };
+        if new_style != style {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style);
+        }
+        TRUE
+    }
+
+    let ctx = Ctx { needle: title_contains.to_lowercase(), enable };
+    unsafe {
+        EnumWindows(Some(enum_proc), &ctx as *const Ctx as LPARAM);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_own_window_no_activate(_title_contains: &str, _enable: bool) {}

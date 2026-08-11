@@ -448,6 +448,20 @@ pub fn agent_cancel(source: Option<String>) {
     crate::agent::request_cancel(source.as_deref().unwrap_or("main"));
 }
 
+#[derive(Serialize)]
+pub struct BridgeStatus {
+    pub connected: bool,
+    pub port: u16,
+}
+
+/// Whether the browser extension is currently connected to the desktop bridge,
+/// so the UI can show a "browser linked" indicator.
+#[tauri::command]
+pub fn bridge_status() -> BridgeStatus {
+    let b = crate::bridge::bridge();
+    BridgeStatus { connected: b.is_connected(), port: b.port() }
+}
+
 // ── Chat Commands ────────────────────────────────────────────────
 
 #[tauri::command]
