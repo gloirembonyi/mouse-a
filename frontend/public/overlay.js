@@ -363,7 +363,7 @@ async function ask(question) {
     questionInput.value = "";
     questionInput.focus();
     // Grow (or shrink) the window to fit whatever came back — answer or error.
-    await syncOverlaySize(460);
+    await syncOverlaySize(520);
   }
 }
 
