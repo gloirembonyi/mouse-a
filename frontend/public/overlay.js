@@ -540,7 +540,7 @@ function renderTranscript(title, messages) {
       const cls = isUser ? "transcript-user" : "transcript-ai";
       const text = isUser ? cleanUserText(m.content) : (m.content || "");
       if (!text.trim()) return "";
-      return `<div class="transcript-row ${cls}"><span class="transcript-who">${who}</span>${renderMarkdown(text)}</div>`;
+      return `<div class="transcript-row ${cls}"><span class="transcript-who">${who}</span><div class="transcript-bubble">${renderMarkdown(text)}</div></div>`;
     })
     .join("");
   answerEl.innerHTML =
