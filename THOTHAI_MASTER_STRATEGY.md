@@ -59,11 +59,45 @@ Real, verified capabilities:
 - **Listen / Interview mode** — Web Speech API transcribes the meeting; `interviewMode` prepends a
   concise-spoken-answer / STAR-format instruction; `autoAnswer` detects questions and auto-sends them,
   rendering a dismissible "live answer" card.
-- **Multi-tab research groups** — select several tabs; merged context answered as one.
-- **In-browser agent ("Act")** — 13 DOM/browser tools (`read_page, click, fill, press_key, scroll,
-  navigate, screenshot, list_tabs, switch_tab, wait, web_search, web_fetch, run_subagent`).
+- **Research collections** — the Research▾ popover in both UIs now manages source groups end-to-end:
+  create a collection, add the current page / picked open tabs / a pasted URL (YouTube, any site) /
+  an uploaded file (PDF/txt/md/csv), have the AI **Find** sources on the web and import the ones you
+  pick, and remove any of them. Selecting a collection scopes the answer to that curated set. This is
+  the "combine pages for research / collaboration" surface.
+- **@-mentions & /-commands in the composer** — type `@` to attach the current page, another open tab,
+  a research collection, an uploaded file, or the page selection as first-class context (chips above
+  the input); type `/` for quick commands (`/summarize`, `/keypoints`, `/explain`, `/table`,
+  `/extract`, `/translate`, `/rewrite`, and mode toggles `/act`, `/research`, `/page`, `/selection`).
+  Follows the industry `@`=context / `/`=action convention.
+- **Multi-tab tab picker** — an undercover page-bar picker to pin one tab or group several as the
+  context Thothai reads (and Acts on); "Auto" follows the focused tab.
+- **In-browser agent ("Act")** — now **~22 tools**: page tools `read_page, click, fill, press_key`
+  (with modifier combos), `scroll, hover, find` (in-page text search), `get_page_text` (paged),
+  `wait_for` (poll until text appears/disappears), `get_options`/`select_option` (dropdown/ARIA
+  listbox), `drag_and_drop`, `upload_file`; browser tools `navigate, back, new_tab, close_tab,
+  screenshot, list_tabs, switch_tab, wait, web_search, web_fetch`; delegation `run_subagent` and
+  **`run_subagents`** (up to 4 in parallel, each in its own isolated background tab); and the sandbox
+  tool **`run_js`**.
+- **In-browser code sandbox (`run_js`)** — the agent can run JavaScript on the page via a locked-down
+  `chrome.userScripts` world (CSP-proof — works even on strict sites like GitHub), falling back to
+  `executeScript`. Full DOM access, isolated from the page's own JS, ephemeral (leaves nothing behind).
+  Every run is **gated behind a human confirmation that shows the code first**.
+- **Sensitive-action confirmation** — before the agent clicks anything classified as spending money,
+  deleting, sending/publishing, signing out, or moving funds, it pauses and shows an inline Approve /
+  Skip card (fail-closed: cancel or 90s timeout = declined). Matches Anthropic/OpenAI agent-safety
+  guidance (human-in-the-loop for irreversible actions).
+- **Resilient loop** — prunes stale page snapshots to avoid quadratic context growth, injects a
+  course-correction nudge after 4 consecutive tool errors, a graceful "wrap up and verify" nudge as
+  the step budget runs low, stale-ref detection, and restricted-page fail-fast (won't thrash on the
+  Chrome Web Store / add-on galleries Chrome forbids scripting).
 - **History, memories, skills, sources** — mirrored to the backend and Postgres.
 - **Auth + billing** — Google sign-in; client shows Free / Plus / Pro; Stripe checkout via backend.
+
+> **UI/UX & correctness pass (Aug 2026):** the assistant renders a full Markdown set (headings,
+> tables, blockquotes, nested lists, `hr`, strikethrough — no raw `**`/`##`/`---` leaking), each answer
+> has a hover **Copy** button, a duplicate-send guard prevents the "same answer twice" bug, the send
+> button becomes a **Stop** while the agent runs, and every panel opens on a proper welcome screen with
+> one-click suggestion chips. All features work in **both** in-page and undercover modes.
 
 ### 1.2 The desktop app (the real moat)
 
@@ -105,7 +139,15 @@ Mouse AI is a genuine **computer-use agent** — the hard, defensible part of th
   sign-in** for the desktop app.
 - **Billing:** Stripe subscriptions with **daily quota metering** — free 500/day, plus 2000/day, pro
   100000/day; **BYOK bypasses quota**.
-- **Server-side web research** — Brave + DuckDuckGo + Bing + Wikipedia, raced and deduped.
+- **Server-side web research** — Brave + DuckDuckGo + Bing + Wikipedia, raced and deduped; exposed to
+  the extension both for chat augmentation and for the research **Find sources** feature
+  (`/api/agent/search`).
+- **Latency pass (Aug 2026):** the chat turn used to run **3 sequential Gemini calls** (answer + title
+  + memory-extraction) plus ~16 serial DB round-trips before responding. Now context assembly runs
+  concurrently and persistence/title/memory run **after** the response via `@vercel/functions`
+  `waitUntil` (falling back to parallel-await off-Vercel) — the user waits on **one** Gemini call.
+  Agent steps use a dedicated `GEMINI_AGENT_MODEL` (full flash, not lite — lite misclicked and looped),
+  `/api/agent/fetch` has an SSRF guard, and `vercel.json` sets `maxDuration: 60`.
 
 ### 1.4 The landing site (the gap)
 
@@ -325,7 +367,12 @@ These are the highest-leverage items and several are near-trivial relative to th
 
 1. **Wire the conversion funnel** *(Not yet built — critical)* — real Chrome Web Store + download
    links, signup, waitlist/email capture, and analytics on the landing site. Today every CTA is a dead
-   anchor. This is the #1 blocker to *any* growth.
+   anchor. This is the #1 blocker to *any* growth. **The extension is submission-ready except for the
+   store-listing paperwork** — see `stealth-ai-extension/DEPLOYMENT.md` for the exact steps, field
+   values, permission justifications, and the two hard requirements: a **privacy policy URL** and a
+   **stable extension key + OAuth client for the published ID**. Note the newly-added `userScripts`
+   permission (for the `run_js` sandbox) triggers heightened Web Store review — be ready to justify it
+   or ship it behind an optional permission if review stalls.
 2. **One-click onboarding & activation** — sign in → first successful answer in under 60 seconds, with
    an interactive first-run that demonstrates area capture and the hover pill.
 3. **Reliability & trust for the agent** — visible task success/failure, a "why did it do that" trace,
@@ -446,3 +493,8 @@ today to a company worth ten figures.
 *Prepared from a direct audit of all four repositories. Capabilities marked as existing were verified
 in source; items marked "Not yet built" / "Roadmap" are recommendations. Where marketing copy and code
 disagree (e.g. desktop-app "stealth," pricing numbers, stale docs), this document sides with the code.*
+
+*Last updated: Aug 2026 — extension §1.1 and backend §1.3 refreshed for the research-collections,
+@-mention/slash-command, run_js sandbox, sensitive-action confirmation, parallel-sub-agent, expanded
+tool set, and chat-latency work shipped this cycle. Deployment steps for the extension now live in
+`stealth-ai-extension/DEPLOYMENT.md`.*
