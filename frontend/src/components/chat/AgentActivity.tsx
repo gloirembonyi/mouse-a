@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ThinkingOrb } from "thinking-orbs";
 import {
   Check,
   ChevronDown,
   FileText,
   Globe,
-  Loader2,
   MousePointerClick,
   Search,
   Terminal,
@@ -37,18 +37,30 @@ export function AgentActivity({ steps, status, elapsedMs }: AgentActivityProps) 
   const [userToggled, setUserToggled] = useState<boolean | null>(null);
   const expanded = userToggled ?? (status === "running" || hasPendingConfirm);
 
-  const [liveElapsed, setLiveElapsed] = useState(0);
+  // The elapsed counter used to re-render this whole activity card - every step row
+  // in it - once a second, purely to change one number, and it kept ticking while the
+  // window was hidden. Write the text straight into the node instead, and stop the
+  // timer whenever the window is not visible.
+  const elapsedRef = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
     if (status !== "running") return;
     const startedAt = Date.now();
-    const interval = setInterval(() => setLiveElapsed(Date.now() - startedAt), 1000);
-    return () => clearInterval(interval);
+    const paint = () => {
+      if (elapsedRef.current) elapsedRef.current.textContent = ` for ${formatDuration(Date.now() - startedAt)}`;
+    };
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const start = () => { if (!interval) { paint(); interval = setInterval(paint, 1000); } };
+    const stop = () => { if (interval) { clearInterval(interval); interval = null; } };
+    const onVisibility = () => (document.hidden ? stop() : start());
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { stop(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [status]);
 
-  const durationLabel = useMemo(() => {
-    const ms = status === "running" ? liveElapsed : elapsedMs;
-    return typeof ms === "number" ? formatDuration(ms) : null;
-  }, [status, liveElapsed, elapsedMs]);
+  const durationLabel = useMemo(
+    () => (status === "running" ? null : typeof elapsedMs === "number" ? formatDuration(elapsedMs) : null),
+    [status, elapsedMs],
+  );
 
   return (
     <div className="max-w-full overflow-hidden rounded-xl border border-border-soft bg-bg-card">
@@ -59,7 +71,9 @@ export function AgentActivity({ steps, status, elapsedMs }: AgentActivityProps) 
         }`}
       >
         {status === "running" ? (
-          <Loader2 size={13} className="flex-shrink-0 animate-spin text-accent" />
+          // "solving" is the multi-step reasoning state, which is exactly what an
+          // agent run is - a generic spinner said only that something was happening.
+          <ThinkingOrb state="solving" size={20} theme="dark" aria-label="Agent working" className="flex-shrink-0" />
         ) : status === "failed" ? (
           <X size={13} className="flex-shrink-0" />
         ) : (
@@ -67,7 +81,9 @@ export function AgentActivity({ steps, status, elapsedMs }: AgentActivityProps) 
         )}
         <span className="flex-1">
           {status === "running" ? "Working" : status === "failed" ? "Failed" : "Thought"}
-          {durationLabel && <span className="font-normal text-text-muted"> for {durationLabel}</span>}
+          {status === "running"
+            ? <span ref={elapsedRef} className="font-normal text-text-muted" />
+            : durationLabel && <span className="font-normal text-text-muted"> for {durationLabel}</span>}
         </span>
         <ChevronDown size={14} className={`flex-shrink-0 text-text-muted transition-transform ${expanded ? "rotate-180" : ""}`} />
       </button>

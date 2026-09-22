@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Camera, FileText, MessageCircle, MessageSquare, Search } from "lucide-react";
+import { ThinkingOrb } from "thinking-orbs";
 import { Markdown } from "./Markdown";
 import { AgentActivity } from "./AgentActivity";
 import type { UiMessage } from "../../lib/chatTypes";
@@ -110,14 +111,12 @@ function MessageItem({ message }: { message: UiMessage }) {
     return (
       <div className="mb-3.5 flex items-start gap-2 border-b border-border-soft pb-3.5">
         <Avatar />
-        <div className="flex gap-1 px-2 py-3">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-muted"
-              style={{ animationDelay: `${i * 0.15}s` }}
-            />
-          ))}
+        {/* Same indicator as the browser extension — one loading language across both
+            products. Nothing streams on this path yet, so this orb is the only signal
+            the user gets for the whole model latency; it has to read as deliberate. */}
+        <div className="flex items-center gap-2.5 px-2 py-2">
+          <ThinkingOrb state="working" size={20} theme="dark" aria-label="Thinking" />
+          <span className="text-[12.5px] text-text-muted">Thinking…</span>
         </div>
       </div>
     );

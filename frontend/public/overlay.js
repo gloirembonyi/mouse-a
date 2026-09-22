@@ -12,6 +12,28 @@ const panelApp = document.getElementById("panel-app");
 const panelElement = document.getElementById("panel-element");
 const answerEl = document.getElementById("answer");
 const thinkingEl = document.getElementById("thinking");
+
+// The overlay never streams — the user watches this indicator for the whole model
+// latency — so it is worth being the same considered orb the extension uses rather
+// than three bouncing dots. If the orb scripts are absent the original dots remain.
+const thinkingLabelEl = thinkingEl?.querySelector(".thinking-label");
+let thinkingOrb = null;
+if (thinkingEl && typeof window.GhostOrb !== "undefined" && window.GhostOrb.isAvailable()) {
+  thinkingEl.querySelectorAll(".dot").forEach((d) => d.remove());
+  thinkingOrb = window.GhostOrb.create(thinkingEl, { state: "working", size: 22, preset: 64, theme: "dark" });
+  // Keep the existing label markup (it is styled by overlay.css) and put the orb first.
+  if (thinkingLabelEl) thinkingEl.appendChild(thinkingLabelEl);
+}
+
+/** Show the indicator in the state that matches what is actually happening. */
+function setThinking(on, state, label) {
+  if (!thinkingEl) return;
+  thinkingEl.hidden = !on;
+  if (!on) { thinkingOrb?.pause(); return; }
+  thinkingOrb?.resume();
+  if (state) thinkingOrb?.setState(state);
+  if (label && thinkingLabelEl) thinkingLabelEl.textContent = label;
+}
 const questionInput = document.getElementById("question");
 const btnAsk = document.getElementById("btn-ask");
 const btnAnalyze = document.getElementById("btn-analyze");
@@ -266,7 +288,7 @@ async function showPanel({ resize }) {
   answerEl.innerHTML = "";
   agentLogEl.hidden = true;
   agentLogEl.innerHTML = "";
-  thinkingEl.hidden = true;
+  setThinking(false);
   questionInput.value = "";
 
   if (resize) {
@@ -331,7 +353,7 @@ async function ask(question) {
 
   setBusy(true);
   questionInput.value = "";
-  thinkingEl.hidden = false;
+  setThinking(true, "shaping", "Looking at your screen…");
   // Fully clear both panes (not just toggle `hidden`) — a stale previous
   // answer's innerHTML sitting under a newly-visible agent-log (or vice
   // versa) is exactly how two unrelated Q&A turns end up visually stacked.
@@ -357,7 +379,7 @@ async function ask(question) {
   } catch (err) {
     answerEl.innerHTML = questionHeaderHtml(question) + `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
   } finally {
-    thinkingEl.hidden = true;
+    setThinking(false);
     answerEl.hidden = false;
     setBusy(false);
     questionInput.value = "";
@@ -381,7 +403,7 @@ async function runAgentTask(task) {
   hideHistory();
   clearPinnedConfirm();
   questionInput.value = "";
-  thinkingEl.hidden = true;
+  setThinking(false);
   // Fully clear both panes — see the matching comment in ask() above.
   answerEl.hidden = true;
   answerEl.innerHTML = "";
@@ -452,7 +474,7 @@ async function toggleHistory() {
   // answer/log (which is how the two used to end up visible at once).
   answerEl.hidden = true;
   agentLogEl.hidden = true;
-  thinkingEl.hidden = true;
+  setThinking(false);
   clearPinnedConfirm();
   historyList.innerHTML = `<div class="history-empty">Loading…</div>`;
   await syncOverlaySize(520);

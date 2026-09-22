@@ -28,7 +28,8 @@
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.12.2",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "thinking-orbs": "^0.3.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

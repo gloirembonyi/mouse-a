@@ -23,7 +23,10 @@ export function ChatView({ chat, aiActive, onToggleHoverMode, workspaceRoot, con
       setContext(null);
       return;
     }
-    const interval = setInterval(async () => {
+    // Each tick crosses into Win32 UI Automation through Tauri, so it must not keep
+    // running while the window is hidden — there is no cursor context worth reading
+    // when nobody is looking at the app.
+    const poll = async () => {
       try {
         const ctx = await getCursorContext();
         const key = `${ctx.process_name}|${ctx.window_title}`;
@@ -34,8 +37,14 @@ export function ChatView({ chat, aiActive, onToggleHoverMode, workspaceRoot, con
       } catch {
         /* ignore */
       }
-    }, 1000);
-    return () => clearInterval(interval);
+    };
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const start = () => { if (!interval) { void poll(); interval = setInterval(poll, 1000); } };
+    const stop = () => { if (interval) { clearInterval(interval); interval = null; } };
+    const onVisibility = () => (document.hidden ? stop() : start());
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { stop(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [aiActive]);
 
   const handleQuickAction = async (action: "capture" | "ask" | "search") => {
