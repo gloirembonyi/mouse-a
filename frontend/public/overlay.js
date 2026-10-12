@@ -269,7 +269,7 @@ async function syncOverlaySize(maxHeight = 560) {
   panel.style.height = prevHeight;
   const height = Math.min(Math.max(maxHeight, MIN_OVERLAY_HEIGHT), Math.max(MIN_OVERLAY_HEIGHT, natural));
   try {
-    await invoke("expand_overlay", { width: 460, height });
+    await invoke("expand_overlay", { width: 480, height });
   } catch { /* ignore */ }
 }
 
@@ -375,7 +375,10 @@ async function ask(question) {
       }),
       55000
     );
-    answerEl.innerHTML = questionHeaderHtml(question) + renderMarkdown(result.text || "(no answer)");
+    answerEl.innerHTML =
+      questionHeaderHtml(question) +
+      `<div class="answer-body">${renderMarkdown(result.text || "(no answer)")}</div>` +
+      answerActionsHtml();
   } catch (err) {
     answerEl.innerHTML = questionHeaderHtml(question) + `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
   } finally {
@@ -426,7 +429,7 @@ async function runAgentTask(task) {
     // The final answer joins the SAME scrollable log the collapsed "Thought
     // for Xs" recap lives in (Cursor-style) — it doesn't replace it. Only the
     // plain (non-agent) ask() path uses the separate #answer element.
-    appendFinalAnswer(renderMarkdown(result.text || "(done)"));
+    appendFinalAnswer(`<div class="answer-body">${renderMarkdown(result.text || "(done)")}</div>` + answerActionsHtml());
   } catch (err) {
     finishAgentSummary(false);
     appendFinalAnswer(`<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`);
@@ -437,9 +440,9 @@ async function runAgentTask(task) {
     setBusy(false);
     questionInput.value = "";
     questionInput.focus();
-    // The "Thought for Xs" summary just collapsed to one line — shrink the
-    // window to match instead of leaving the old expanded-log space behind.
-    await syncOverlaySize(480);
+    // Size to the answer (up to ~75% of the screen) so it's readable
+    // without dragging the window bigger.
+    await syncOverlaySize(answerHeight());
   }
 }
 
@@ -612,12 +615,20 @@ function createAgentSummary() {
   header.className = "agent-summary-header";
   header.innerHTML = `
     <span class="agent-summary-icon"><span class="agent-summary-spinner"></span></span>
-    <span class="agent-summary-label">Working</span>
-    <span class="agent-summary-duration"></span>
+    <span class="agent-summary-text">
+      <span class="agent-summary-label is-live">Understanding your request…</span>
+      <span class="agent-summary-meta"><span class="agent-summary-duration"></span><span class="agent-summary-count"></span></span>
+    </span>
     <span class="agent-summary-chevron">▾</span>`;
 
   const body = document.createElement("div");
   body.className = "agent-summary-body";
+  // Visible from the first frame: the model's first decision can take
+  // several seconds, and an empty box read as "stuck".
+  const placeholder = document.createElement("div");
+  placeholder.className = "agent-step agent-step-placeholder";
+  placeholder.innerHTML = `<div class="agent-step-rail"><span class="agent-step-icon">•</span></div><div class="agent-step-body is-live">Planning the steps…</div>`;
+  body.appendChild(placeholder);
 
   root.appendChild(header);
   root.appendChild(body);
@@ -630,6 +641,9 @@ function createAgentSummary() {
     label: header.querySelector(".agent-summary-label"),
     duration: header.querySelector(".agent-summary-duration"),
     chevron: header.querySelector(".agent-summary-chevron"),
+    count: header.querySelector(".agent-summary-count"),
+    placeholder,
+    steps: 0,
     startedAt: Date.now(),
     tickInterval: null,
     userCollapsed: null, // null = auto (follow running/confirm state); true/false once the user toggles it
@@ -652,6 +666,11 @@ function createAgentSummary() {
     syncOverlaySize(480);
   });
 
+  if (typeof window.GhostOrb !== "undefined" && window.GhostOrb.isAvailable()) {
+    state.icon.innerHTML = "";
+    state.orb = window.GhostOrb.create(state.icon, { state: "solving", size: 20, preset: 20 });
+  }
+
   state.tickInterval = setInterval(() => {
     state.duration.textContent = `for ${formatDuration(Date.now() - state.startedAt)}`;
   }, 1000);
@@ -663,7 +682,11 @@ function finishAgentSummary(success) {
   if (!agentSummary) return;
   clearInterval(agentSummary.tickInterval);
   agentSummary.running = false;
-  agentSummary.label.textContent = success ? "Thought" : "Failed";
+  try { agentSummary.orb?.destroy?.(); } catch { /* orb already gone */ }
+  agentSummary.placeholder?.remove();
+  agentSummary.label.classList.remove("is-live");
+  agentSummary.label.textContent = success ? "Done" : "Stopped";
+  if (agentSummary.steps) agentSummary.count.textContent = ` · ${agentSummary.steps} step${agentSummary.steps === 1 ? "" : "s"}`;
   agentSummary.duration.textContent = `for ${formatDuration(Date.now() - agentSummary.startedAt)}`;
   agentSummary.icon.innerHTML = success ? "✓" : "✕";
   agentSummary.icon.classList.toggle("failed", !success);
@@ -694,7 +717,22 @@ function renderAgentProgress(p) {
     return;
   }
 
-  agentSummary.body.appendChild(p.kind === "phase-summary" ? buildPhaseSummary(p) : buildAgentStep(p));
+  agentSummary.placeholder?.remove();
+  agentSummary.body.querySelector(".agent-step.is-current")?.classList.remove("is-current");
+  const stepEl = p.kind === "phase-summary" ? buildPhaseSummary(p) : buildAgentStep(p);
+  agentSummary.body.appendChild(stepEl);
+  // The header always says what's happening RIGHT NOW, so the run is
+  // readable at a glance even if the step list is scrolled or collapsed.
+  if (p.kind === "tool" || p.kind === "thinking" || p.kind === "plan") {
+    stepEl.classList.add("is-current");
+    const line = String(p.message || "").replace(/[`*_]/g, "").split("\n")[0].trim();
+    if (line) agentSummary.label.textContent = line.length > 70 ? line.slice(0, 69) + "…" : line;
+  }
+  if (p.kind === "tool") {
+    agentSummary.steps += 1;
+    agentSummary.count.textContent = ` · ${agentSummary.steps} step${agentSummary.steps === 1 ? "" : "s"}`;
+  }
+  agentSummary.body.scrollTop = agentSummary.body.scrollHeight;
   agentLogEl.scrollTop = agentLogEl.scrollHeight;
   syncOverlaySize(480);
 }
@@ -902,10 +940,23 @@ function setBusy(state) {
 }
 
 // ── Helpers ────────────────────────────────────────────────
+// Window titles from UI Automation are sometimes internal class names
+// ("Chrome Legacy Window", "Intermediate D3D Window") rather than anything a
+// person would recognize — those are dropped instead of shown in the pill.
+const JUNK_TITLE = /^(chrome legacy window|chrome_widgetwin_\d+|chrome_renderwidgethosthwnd|intermediate d3d window|default ime|msctfime ui|desktop|program manager)$/i;
+
+function prettyApp(name) {
+  const app = (name || "").replace(/\.exe$/i, "").trim();
+  return app ? app.charAt(0).toUpperCase() + app.slice(1) : "";
+}
+
 function appSummary(p) {
-  const app = (p?.context?.process_name || "").replace(/\.exe$/i, "");
-  const title = p?.context?.window_title || "";
-  if (app && title) return `${app} — ${title}`;
+  const app = prettyApp(p?.context?.process_name);
+  let title = (p?.context?.window_title || "").trim();
+  if (JUNK_TITLE.test(title)) title = "";
+  // Browsers/editors append " - Google Chrome" etc.; the app name already says that.
+  if (app && title.toLowerCase().endsWith(app.toLowerCase())) title = title.slice(0, -app.length).replace(/[\s\-–—|]+$/, "");
+  if (app && title) return `${app} · ${title}`;
   return app || title;
 }
 
@@ -913,8 +964,10 @@ function elementSummary(p) {
   const el = p?.element;
   if (!el) return "";
   const parts = [];
-  if (el.role) parts.push(el.role);
-  if (el.name) parts.push(el.name);
+  // Generic container roles ("pane", "document", "group") say nothing on
+  // their own — only keep the role when it adds meaning ("button", "link").
+  if (el.role && !/^(pane|document|group|window|custom|client)$/i.test(el.role)) parts.push(el.role);
+  if (el.name && !JUNK_TITLE.test(el.name)) parts.push(el.name);
   if (el.value && el.value !== el.name) parts.push(el.value);
   return parts.join(" · ");
 }
@@ -942,29 +995,176 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-// Same lightweight markdown renderer as the main window.
+// Line-based markdown renderer (the overlay is plain JS, not React, so it
+// can't share the main window's react-markdown). The old regex chain left
+// "####" headings, "---" rules, numbered lists and tables as raw text.
+// Everything is escaped first; only the markup below is generated.
+function renderInlineRich(text) {
+  const codes = [];
+  let html = escapeHtml(text).replace(/`([^`]+)`/g, (_, c) => {
+    codes.push(c);
+    return `\u0000${codes.length - 1}\u0000`;
+  });
+  html = html
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/__(.+?)__/g, "<strong>$1</strong>")
+    .replace(/(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])/g, "<em>$1</em>")
+    .replace(/~~(.+?)~~/g, "<del>$1</del>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+  return html.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[Number(i)]}</code>`);
+}
+
 function renderMarkdown(text) {
   if (!text) return "";
-  let html = escapeHtml(text);
+  const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let para = [];
+  const flushPara = () => {
+    if (para.length) out.push(`<p>${para.map(renderInlineRich).join("<br>")}</p>`);
+    para = [];
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
 
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    return `<pre><code class="language-${lang}">${code.trim()}</code></pre>`;
-  });
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
-  html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
-  html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
-  html = html.replace(/^# (.+)$/gm, "<h1>$1</h1>");
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-  html = html.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
-  html = html.replace(/^[*\-] (.+)$/gm, "<li>$1</li>");
-  html = html.replace(/(<li>.*<\/li>\n?)+/g, "<ul>$&</ul>");
-  html = html.replace(/^\d+\. (.+)$/gm, "<li>$1</li>");
-  html = html.replace(/\n\n/g, "</p><p>");
-  html = html.replace(/\n/g, "<br>");
-  if (!html.startsWith("<")) html = `<p>${html}</p>`;
-  return html;
+    // Fenced code block
+    const fence = /^```\s*([\w+-]*)/.exec(trimmed);
+    if (fence) {
+      flushPara();
+      const lang = fence[1] || "";
+      const body = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i].trim())) body.push(lines[i++]);
+      i++;
+      out.push(
+        `<div class="md-code"><div class="md-code-head"><span>${escapeHtml(lang || "code")}</span>` +
+          `<button class="md-copy" data-act="copy-code" type="button">Copy</button></div>` +
+          `<pre><code>${escapeHtml(body.join("\n"))}</code></pre></div>`,
+      );
+      continue;
+    }
+    if (!trimmed) {
+      flushPara();
+      i++;
+      continue;
+    }
+    // Horizontal rule
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      flushPara();
+      out.push("<hr>");
+      i++;
+      continue;
+    }
+    // Heading (#..######)
+    const h = /^(#{1,6})\s+(.+?)\s*#*$/.exec(trimmed);
+    if (h) {
+      flushPara();
+      const level = Math.min(h[1].length + 1, 5); // # → h2 … keeps sizes calm in a small panel
+      out.push(`<h${level}>${renderInlineRich(h[2])}</h${level}>`);
+      i++;
+      continue;
+    }
+    // Table: header row, then a |---| separator row
+    if (trimmed.startsWith("|") && i + 1 < lines.length && /^\|?\s*:?-{2,}/.test(lines[i + 1].trim())) {
+      flushPara();
+      const cells = (row) => row.trim().replace(/^\||\|$/g, "").split("|").map((c) => renderInlineRich(c.trim()));
+      const head = cells(lines[i]);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) rows.push(cells(lines[i++]));
+      out.push(
+        `<div class="md-table"><table><thead><tr>${head.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>` +
+          rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("") +
+          "</tbody></table></div>",
+      );
+      continue;
+    }
+    // Blockquote
+    if (trimmed.startsWith(">")) {
+      flushPara();
+      const quote = [];
+      while (i < lines.length && lines[i].trim().startsWith(">")) quote.push(lines[i++].trim().replace(/^>\s?/, ""));
+      out.push(`<blockquote>${renderMarkdown(quote.join("\n"))}</blockquote>`);
+      continue;
+    }
+    // Lists (unordered/ordered, one level of nesting by indent)
+    const li = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line);
+    if (li) {
+      flushPara();
+      const ordered = /\d/.test(li[2]);
+      const items = [];
+      while (i < lines.length) {
+        const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
+        if (m) {
+          items.push({ indent: m[1].length, text: m[3] });
+          i++;
+        } else if (lines[i].trim() && /^\s{2,}/.test(lines[i]) && items.length) {
+          items[items.length - 1].text += " " + lines[i].trim(); // wrapped continuation line
+          i++;
+        } else break;
+      }
+      const base = items[0].indent;
+      let html = ordered ? "<ol>" : "<ul>";
+      let nested = false;
+      for (const it of items) {
+        if (it.indent > base + 1 && !nested) {
+          html = html.replace(/<\/li>$/, "") + "<ul>";
+          nested = true;
+        } else if (it.indent <= base + 1 && nested) {
+          html += "</ul></li>";
+          nested = false;
+        }
+        html += `<li>${renderInlineRich(it.text)}</li>`;
+      }
+      if (nested) html += "</ul></li>";
+      out.push(html + (ordered ? "</ol>" : "</ul>"));
+      continue;
+    }
+    para.push(trimmed);
+    i++;
+  }
+  flushPara();
+  return out.join("");
+}
+
+/** Copy / open-in-app row under every finished answer. */
+function answerActionsHtml() {
+  return `<div class="answer-actions">
+    <button type="button" data-act="copy-answer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span></button>
+    <button type="button" data-act="open-app"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg><span>Continue in Mouse AI</span></button>
+  </div>`;
+}
+
+// One delegated handler for answer actions and code-block copy buttons in
+// both result areas.
+function onAnswerAction(e) {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) return;
+  const act = btn.dataset.act;
+  const flash = (label) => {
+    const span = btn.querySelector("span") || btn;
+    const old = span.textContent;
+    span.textContent = label;
+    setTimeout(() => (span.textContent = old), 1300);
+  };
+  if (act === "copy-code") {
+    const code = btn.closest(".md-code")?.querySelector("code")?.textContent || "";
+    navigator.clipboard.writeText(code).then(() => flash("Copied")).catch(() => {});
+  } else if (act === "copy-answer") {
+    const body = btn.closest(".agent-final-answer, #answer")?.querySelector(".answer-body");
+    navigator.clipboard.writeText(body?.innerText || "").then(() => flash("Copied")).catch(() => {});
+  } else if (act === "open-app") {
+    invoke("show_main_window").catch(() => {});
+  }
+}
+answerEl.addEventListener("click", onAnswerAction);
+agentLogEl.addEventListener("click", onAnswerAction);
+
+/** Tall enough for a real answer: up to ~75% of the screen. */
+function answerHeight() {
+  return Math.round(Math.min(760, Math.max(520, (window.screen?.availHeight || 900) * 0.75)));
 }
 
 // Same escaping as renderMarkdown but no block-level wrapping (no <p>/<br>) —

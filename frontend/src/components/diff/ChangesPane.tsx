@@ -47,8 +47,8 @@ export function ChangesPane({ root }: ChangesPaneProps) {
 
   return (
     <div className="flex h-full min-w-0 flex-1">
-      <div className="flex w-[260px] flex-shrink-0 flex-col border-r border-border-default">
-        <div className="flex items-center justify-between border-b border-border-default px-3 py-2">
+      <div className="flex w-[240px] flex-shrink-0 flex-col border-r border-border-soft">
+        <div className="flex h-9 items-center justify-between px-3">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
             {files ? `${files.length} changed file${files.length === 1 ? "" : "s"}` : "Changes"}
           </span>
@@ -69,7 +69,7 @@ export function ChangesPane({ root }: ChangesPaneProps) {
                 key={f.path}
                 onClick={() => setSelected(f.path)}
                 className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition ${
-                  selected === f.path ? "bg-accent-soft text-accent" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  selected === f.path ? "bg-bg-hover text-text-primary" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                 }`}
               >
                 <FileDiff size={12} className="flex-shrink-0" />
@@ -91,7 +91,7 @@ export function ChangesPane({ root }: ChangesPaneProps) {
         </div>
       </div>
 
-      <div className="scrollbar-thin min-w-0 flex-1 overflow-auto">
+      <div className="scrollbar-thin min-w-0 flex-1 overflow-auto bg-bg-primary">
         {!selected ? (
           <div className="flex h-full items-center justify-center text-xs text-text-muted">Select a file to view its diff.</div>
         ) : loadingDiff ? (
@@ -116,7 +116,7 @@ function DiffView({ text }: { text: string }) {
         if (line.startsWith("+++") || line.startsWith("---")) cls = "text-text-muted font-semibold";
         else if (line.startsWith("+")) cls = "bg-success-soft text-success";
         else if (line.startsWith("-")) cls = "bg-danger-soft text-danger";
-        else if (line.startsWith("@@")) cls = "text-accent bg-accent-soft";
+        else if (line.startsWith("@@")) cls = "text-accent bg-accent-soft my-1";
         return (
           <div key={i} className={cls}>
             {line || " "}

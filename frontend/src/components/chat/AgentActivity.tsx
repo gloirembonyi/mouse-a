@@ -63,24 +63,24 @@ export function AgentActivity({ steps, status, elapsedMs }: AgentActivityProps) 
   );
 
   return (
-    <div className="max-w-full overflow-hidden rounded-xl border border-border-soft bg-bg-card">
+    <div className="max-w-full overflow-hidden rounded-2xl border border-border-default bg-bg-card">
       <button
         onClick={() => setUserToggled(!expanded)}
-        className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12.5px] font-semibold transition hover:bg-white/[0.02] ${
+        className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12.5px] font-semibold transition hover:bg-bg-hover/60 ${
           status === "failed" ? "text-danger" : "text-text-primary"
         }`}
       >
         {status === "running" ? (
           // "solving" is the multi-step reasoning state, which is exactly what an
           // agent run is - a generic spinner said only that something was happening.
-          <ThinkingOrb state="solving" size={20} theme="dark" aria-label="Agent working" className="flex-shrink-0" />
+          <ThinkingOrb state="solving" size={20} theme="auto" aria-label="Agent working" className="flex-shrink-0" />
         ) : status === "failed" ? (
           <X size={13} className="flex-shrink-0" />
         ) : (
           <Check size={13} className="flex-shrink-0 text-success" />
         )}
         <span className="flex-1">
-          {status === "running" ? "Working" : status === "failed" ? "Failed" : "Thought"}
+          {status === "running" ? <span className="shimmer-text">Working</span> : status === "failed" ? "Failed" : "Worked"}
           {status === "running"
             ? <span ref={elapsedRef} className="font-normal text-text-muted" />
             : durationLabel && <span className="font-normal text-text-muted"> for {durationLabel}</span>}
@@ -119,7 +119,7 @@ function renderInline(text: string): React.ReactNode[] {
     const token = match[0];
     if (token.startsWith("`")) {
       parts.push(
-        <code key={key++} className="rounded bg-white/10 px-1 py-0.5 font-mono text-[10px]">
+        <code key={key++} className="rounded bg-bg-tertiary px-1 py-0.5 font-mono text-[10px]">
           {token.slice(1, -1)}
         </code>,
       );

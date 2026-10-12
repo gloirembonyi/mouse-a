@@ -1,0 +1,1248 @@
+// Mouse AI Desktop — Meeting & Interview Copilot
+//
+// Live transcription + context-aware assistance for meetings, interviews and
+// interview practice. Same split as the agent: this file does the *doing*
+// (audio capture, chunking, silence detection, prompt assembly) and the
+// Thothai backend does the *thinking* — every model call goes through
+// /api/agent/step (no tools), so there is still no Gemini key in this app.
+//
+// Audio pipeline:
+//   cpal capture thread ──► per-source mono f32 buffers ("them" = WASAPI
+//   loopback of the default output device, i.e. the other participants;
+//   "me" = default microphone)
+//   ──► chunker task: cuts at a natural pause (or a hard cap), drops silent
+//   chunks, resamples to 16 kHz WAV ──► Whisper (whisper-large-v3 on Groq)
+//   transcribes each speaker's clip in parallel ──► `meeting-transcript`
+//   events. If Whisper is unavailable, one Gemini call via /api/agent/step
+//   transcribes both clips instead.
+//
+// Whisper route, in order: a local GROQ_API_KEY (dev / bring-your-own-key,
+// read from .env.local by lib.rs) → the backend's /api/meeting/transcribe
+// (production; the key stays server-side) → Gemini fallback.
+//
+// Privacy: audio only ever lives in memory and is sent to the backend for
+// transcription; nothing is written to disk. The transcript stays in memory
+// until the next session starts, and is only saved to the user's history
+// when they explicitly ask (meeting_save_notes). The user profile used for
+// grounding answers lives in a local file, never on the server.
+
+use crate::backend::BackendClient;
+use crate::commands::AppState;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{FromSample, SampleFormat, SizedSample};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, State};
+
+// ── Tunables ─────────────────────────────────────────────────────
+
+const TARGET_RATE: u32 = 16_000;
+/// Don't cut a chunk before this much audio — very short clips transcribe
+/// badly and burn a backend call each. Short enough that a question shows up
+/// (and can be answered) a beat after the speaker pauses.
+const MIN_CHUNK: Duration = Duration::from_secs(3);
+/// Always cut by this point, pause or not, so the transcript never lags far.
+const MAX_CHUNK: Duration = Duration::from_secs(9);
+/// After Whisper rate-limits us (Groq's free tier: 20 requests/min), cut less
+/// often for a while instead of falling back to the slower Gemini path.
+const MIN_CHUNK_THROTTLED: Duration = Duration::from_secs(8);
+const THROTTLE_FOR_MS: i64 = 60_000;
+static THROTTLED_UNTIL_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+/// A chunk is cut early at a pause: the trailing window must be quiet.
+const PAUSE_WINDOW_SECS: f32 = 0.45;
+/// 30 ms frames above this RMS count as voiced (normalized -1..1 samples).
+const VOICE_RMS: f32 = 0.012;
+/// A clip needs at least this much voiced audio to be worth transcribing.
+const MIN_VOICED_SECS: f32 = 0.35;
+/// Lowest speech threshold the adaptive detector will use (quiet mics).
+const MIN_VOICE_RMS: f32 = 0.0025;
+/// After this long live, a mic that never rose above near-silence gets a warning.
+const MIC_SILENCE_WARN_AFTER: Duration = Duration::from_secs(20);
+/// Hard cap on buffered audio per source, in case transcription stalls.
+const MAX_BUFFER_SECS: usize = 60;
+/// Transcript budget sent with live actions (most recent part wins).
+const LIVE_TRANSCRIPT_CHARS: usize = 12_000;
+/// Transcript budget for whole-session actions (notes).
+const FULL_TRANSCRIPT_CHARS: usize = 60_000;
+
+// ── Types ────────────────────────────────────────────────────────
+
+/// What the user tells us about themselves so suggestions are grounded in
+/// their real experience instead of generic advice.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MeetingProfile {
+    /// Role, experience, skills — or a pasted resume.
+    #[serde(default)]
+    pub about: String,
+    /// Current projects, responsibilities, numbers they care about.
+    #[serde(default)]
+    pub projects: String,
+    /// This session: agenda, attendees, job description, goals.
+    #[serde(default)]
+    pub session_context: String,
+    /// How answers should read (e.g. "short bullets", "formal").
+    #[serde(default)]
+    pub style: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TranscriptEntry {
+    pub id: u64,
+    /// "them" | "me" | "coach" | "note"
+    pub speaker: String,
+    pub text: String,
+    pub at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MeetingStatus {
+    pub live: bool,
+    pub mode: String,
+    pub mic: bool,
+    pub system: bool,
+    pub started_at_ms: Option<i64>,
+    /// Non-fatal problem to surface (a failed chunk, a missing device…).
+    pub warning: Option<String>,
+}
+
+#[derive(Default)]
+struct AudioBuf {
+    samples: Vec<f32>,
+    rate: u32,
+    /// Running estimate of this source's background noise (frame RMS), so
+    /// speech detection adapts to the device: a quiet laptop mic and a hot
+    /// USB mic need very different thresholds. 0 = not measured yet.
+    noise_floor: f32,
+    /// Loudest frame seen this session — lets us warn about a muted mic.
+    peak_rms: f32,
+}
+
+type SharedBuf = Arc<Mutex<AudioBuf>>;
+
+struct LiveSession {
+    mode: String,
+    stop: Arc<AtomicBool>,
+    /// Set by the chunker once its final flush is done.
+    finished: Arc<AtomicBool>,
+    mic: Option<SharedBuf>,
+    system: Option<SharedBuf>,
+    started_at_ms: i64,
+}
+
+static LIVE: Mutex<Option<LiveSession>> = Mutex::new(None);
+static TRANSCRIPT: Mutex<Vec<TranscriptEntry>> = Mutex::new(Vec::new());
+static LAST_MODE: Mutex<String> = Mutex::new(String::new());
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+/// Name of the input device actually opened — quoted in the "mic is silent"
+/// warning, since the usual cause is Windows defaulting to the wrong input.
+static MIC_NAME: Mutex<String> = Mutex::new(String::new());
+
+/// Serializes drain → transcribe → append, so the background chunker and an
+/// on-demand flush (from an assist request) can never reorder the transcript.
+fn flush_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+// ── Profile persistence ──────────────────────────────────────────
+// Its own file rather than config.json: BackendClient rewrites config.json
+// from a fixed struct, which would silently drop any field it doesn't know.
+
+fn profile_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("mouse-ai").join("meeting_profile.json"))
+}
+
+fn load_profile() -> MeetingProfile {
+    profile_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_profile(profile: &MeetingProfile) -> Result<(), String> {
+    let path = profile_path().ok_or("No config directory available")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(profile).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| format!("Failed to save profile: {}", e))
+}
+
+// ── Audio capture ────────────────────────────────────────────────
+
+fn build_stream_typed<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    channels: usize,
+    buf: SharedBuf,
+    label: &'static str,
+) -> Result<cpal::Stream, String>
+where
+    T: SizedSample,
+    f32: FromSample<T>,
+{
+    let cap = {
+        let b = buf.lock().unwrap();
+        b.rate as usize * MAX_BUFFER_SECS
+    };
+    device
+        .build_input_stream(
+            config,
+            move |data: &[T], _: &cpal::InputCallbackInfo| {
+                let mut b = match buf.lock() {
+                    Ok(b) => b,
+                    Err(_) => return,
+                };
+                for frame in data.chunks(channels.max(1)) {
+                    let sum: f32 = frame.iter().map(|s| <f32 as FromSample<T>>::from_sample_(*s)).sum();
+                    b.samples.push(sum / frame.len() as f32);
+                }
+                if b.samples.len() > cap {
+                    let excess = b.samples.len() - cap;
+                    b.samples.drain(..excess);
+                }
+            },
+            move |e| eprintln!("[meeting] {} stream error: {}", label, e),
+            None,
+        )
+        .map_err(|e| format!("Couldn't open {} audio: {}", label, e))
+}
+
+fn build_stream(
+    device: &cpal::Device,
+    supported: cpal::SupportedStreamConfig,
+    buf: SharedBuf,
+    label: &'static str,
+) -> Result<cpal::Stream, String> {
+    let channels = supported.channels() as usize;
+    buf.lock().unwrap().rate = supported.sample_rate().0;
+    let config = supported.config();
+    match supported.sample_format() {
+        SampleFormat::F32 => build_stream_typed::<f32>(device, &config, channels, buf, label),
+        SampleFormat::I16 => build_stream_typed::<i16>(device, &config, channels, buf, label),
+        SampleFormat::U16 => build_stream_typed::<u16>(device, &config, channels, buf, label),
+        SampleFormat::I32 => build_stream_typed::<i32>(device, &config, channels, buf, label),
+        other => Err(format!("Unsupported {} sample format: {:?}", label, other)),
+    }
+}
+
+/// Opens the requested sources on a dedicated thread (cpal streams aren't
+/// Send on every platform, so they must live and die on one thread) and
+/// keeps them alive until `stop` is set. Reports which sources actually
+/// opened, or why none did.
+fn spawn_capture_thread(
+    stop: Arc<AtomicBool>,
+    mic: Option<SharedBuf>,
+    system: Option<SharedBuf>,
+) -> Result<(bool, bool, Vec<String>), String> {
+    let (tx, rx) = std::sync::mpsc::channel::<(bool, bool, Vec<String>)>();
+    std::thread::Builder::new()
+        .name("meeting-audio".into())
+        .spawn(move || {
+            let host = cpal::default_host();
+            let mut streams: Vec<cpal::Stream> = Vec::new();
+            let mut problems = Vec::new();
+            let (mut mic_ok, mut sys_ok) = (false, false);
+
+            if let Some(buf) = mic {
+                let opened = host
+                    .default_input_device()
+                    .ok_or_else(|| "No microphone found".to_string())
+                    .and_then(|d| {
+                        *MIC_NAME.lock().unwrap() = d.name().unwrap_or_default();
+                        let cfg = d.default_input_config().map_err(|e| format!("Microphone unavailable: {}", e))?;
+                        build_stream(&d, cfg, buf, "microphone")
+                    })
+                    .and_then(|s| s.play().map(|_| s).map_err(|e| format!("Microphone failed to start: {}", e)));
+                match opened {
+                    Ok(s) => {
+                        streams.push(s);
+                        mic_ok = true;
+                    }
+                    Err(e) => problems.push(e),
+                }
+            }
+
+            if let Some(buf) = system {
+                // On Windows/WASAPI, an *input* stream built on an *output*
+                // device is a loopback capture of whatever that device plays —
+                // i.e. the other people on the call.
+                let opened = host
+                    .default_output_device()
+                    .ok_or_else(|| "No speaker/output device found for system audio".to_string())
+                    .and_then(|d| {
+                        let cfg = d
+                            .default_output_config()
+                            .map_err(|e| format!("System audio unavailable: {}", e))?;
+                        build_stream(&d, cfg, buf, "system audio")
+                    })
+                    .and_then(|s| s.play().map(|_| s).map_err(|e| format!("System audio failed to start: {}", e)));
+                match opened {
+                    Ok(s) => {
+                        streams.push(s);
+                        sys_ok = true;
+                    }
+                    Err(e) => problems.push(e),
+                }
+            }
+
+            let _ = tx.send((mic_ok, sys_ok, problems));
+            if streams.is_empty() {
+                return;
+            }
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            drop(streams);
+        })
+        .map_err(|e| format!("Couldn't start audio thread: {}", e))?;
+
+    rx.recv_timeout(Duration::from_secs(10))
+        .map_err(|_| "Audio devices didn't respond in time".to_string())
+}
+
+// ── DSP helpers ──────────────────────────────────────────────────
+
+fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+}
+
+/// Speech = clearly above this source's own noise floor, never below a
+/// small absolute minimum (pure digital silence) and never above VOICE_RMS
+/// (a noisy room must not make normal speech "silent").
+fn voice_threshold(noise_floor: f32) -> f32 {
+    if noise_floor <= 0.0 {
+        return VOICE_RMS;
+    }
+    (noise_floor * 3.5).clamp(MIN_VOICE_RMS, VOICE_RMS)
+}
+
+fn voiced_seconds(samples: &[f32], rate: u32, threshold: f32) -> f32 {
+    let frame = (rate as usize * 30 / 1000).max(1);
+    let voiced = samples.chunks(frame).filter(|f| rms(f) > threshold).count();
+    voiced as f32 * 0.03
+}
+
+fn tail_is_quiet(buf: &SharedBuf) -> bool {
+    let b = buf.lock().unwrap();
+    let n = (b.rate as f32 * PAUSE_WINDOW_SECS) as usize;
+    if b.samples.len() < n || n == 0 {
+        return true;
+    }
+    rms(&b.samples[b.samples.len() - n..]) < voice_threshold(b.noise_floor)
+}
+
+/// Called ~4×/s: track the noise floor (falls fast to quieter frames, rises
+/// slowly so speech doesn't drag it up) and the session's loudest frame.
+fn update_noise(buf: &Option<SharedBuf>) {
+    let Some(buf) = buf else { return };
+    let mut b = buf.lock().unwrap();
+    let n = (b.rate as usize * 30 / 1000).max(1);
+    if b.samples.len() < n {
+        return;
+    }
+    let r = rms(&b.samples[b.samples.len() - n..]);
+    b.peak_rms = b.peak_rms.max(r);
+    b.noise_floor = if b.noise_floor <= 0.0 || r < b.noise_floor { r.max(1e-5) } else { (b.noise_floor * 1.015).min(r) };
+}
+
+fn peak_rms(buf: &Option<SharedBuf>) -> f32 {
+    buf.as_ref().map(|b| b.lock().unwrap().peak_rms).unwrap_or(0.0)
+}
+
+/// Loudness of the last ~200 ms of a source, scaled to 0..1 for the UI's
+/// level meter (speech sits around 0.3–0.8).
+fn level(buf: &Option<SharedBuf>) -> f32 {
+    let Some(buf) = buf else { return 0.0 };
+    let b = buf.lock().unwrap();
+    let n = (b.rate as f32 * 0.2) as usize;
+    if n == 0 || b.samples.is_empty() {
+        return 0.0;
+    }
+    let tail = &b.samples[b.samples.len().saturating_sub(n)..];
+    // Log scale (-60 dB → 0, -12 dB → 1): a quiet mic still visibly moves.
+    let db = 20.0 * rms(tail).max(1e-6).log10();
+    ((db + 60.0) / 48.0).clamp(0.0, 1.0)
+}
+
+fn resample_linear(samples: &[f32], from: u32, to: u32) -> Vec<f32> {
+    if from == to || samples.is_empty() || from == 0 {
+        return samples.to_vec();
+    }
+    let ratio = from as f64 / to as f64;
+    let out_len = (samples.len() as f64 / ratio) as usize;
+    (0..out_len)
+        .map(|i| {
+            let pos = i as f64 * ratio;
+            let idx = pos as usize;
+            let frac = (pos - idx as f64) as f32;
+            let a = samples[idx.min(samples.len() - 1)];
+            let b = samples[(idx + 1).min(samples.len() - 1)];
+            a + (b - a) * frac
+        })
+        .collect()
+}
+
+fn encode_wav_16k(samples: &[f32]) -> Vec<u8> {
+    let data_len = (samples.len() * 2) as u32;
+    let mut out = Vec::with_capacity(44 + data_len as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data_len).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&TARGET_RATE.to_le_bytes());
+    out.extend_from_slice(&(TARGET_RATE * 2).to_le_bytes()); // byte rate
+    out.extend_from_slice(&2u16.to_le_bytes()); // block align
+    out.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_len.to_le_bytes());
+    for s in samples {
+        let v = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+/// Takes everything buffered so far for one source and returns it as 16 kHz
+/// WAV bytes — or None when it's effectively silence (not worth a backend call,
+/// and silence is exactly where speech models hallucinate words).
+fn drain_clip(buf: &Option<SharedBuf>) -> Option<Vec<u8>> {
+    let buf = buf.as_ref()?;
+    let (samples, rate, threshold) = {
+        let mut b = buf.lock().unwrap();
+        let threshold = voice_threshold(b.noise_floor);
+        (std::mem::take(&mut b.samples), b.rate, threshold)
+    };
+    if samples.is_empty() || voiced_seconds(&samples, rate, threshold) < MIN_VOICED_SECS {
+        return None;
+    }
+    let mut mono16k = resample_linear(&samples, rate, TARGET_RATE);
+    // Auto-gain: Whisper does much better on a normalized clip than on a
+    // quiet laptop-mic recording (capped so noise isn't blown up).
+    let peak = mono16k.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    if peak > 0.0 {
+        let gain = (0.9 / peak).clamp(1.0, 12.0);
+        if gain > 1.05 {
+            mono16k.iter_mut().for_each(|s| *s *= gain);
+        }
+    }
+    Some(encode_wav_16k(&mono16k))
+}
+
+// ── Backend calls ────────────────────────────────────────────────
+
+fn response_text(resp: &Value) -> String {
+    resp.get("parts")
+        .and_then(|p| p.as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter(|p| !p.get("thought").and_then(|t| t.as_bool()).unwrap_or(false))
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+const TRANSCRIBE_SYSTEM: &str = "You are a precise speech-to-text engine for a live meeting. \
+Transcribe the audio clips verbatim in the language spoken (do not translate, summarize, answer, or comment). \
+Output exactly two lines and nothing else:\n\
+THEM: <transcript of the THEM clip>\n\
+ME: <transcript of the ME clip>\n\
+Leave a line's text empty when that clip is missing or has no intelligible speech — never guess or invent words. \
+If the ME clip only contains the same speech as the THEM clip (speaker echo picked up by the microphone), leave ME empty.";
+
+async fn transcribe_gemini(
+    backend: &BackendClient,
+    them: Option<&[u8]>,
+    me: Option<&[u8]>,
+) -> Result<Vec<(String, String)>, String> {
+    let mut parts = vec![json!({ "text": "Transcribe these clips." })];
+    if let Some(wav) = them {
+        parts.push(json!({ "text": "THEM clip (the other participants, captured from the computer's speakers):" }));
+        parts.push(json!({ "inlineData": { "mimeType": "audio/wav", "data": STANDARD.encode(wav) } }));
+    }
+    if let Some(wav) = me {
+        parts.push(json!({ "text": "ME clip (the user's own microphone):" }));
+        parts.push(json!({ "inlineData": { "mimeType": "audio/wav", "data": STANDARD.encode(wav) } }));
+    }
+    let contents = json!([{ "role": "user", "parts": parts }]);
+    let resp = backend.agent_step(TRANSCRIBE_SYSTEM, contents, json!([])).await?;
+    Ok(parse_transcription(&response_text(&resp)))
+}
+
+// ── Whisper ──────────────────────────────────────────────────────
+
+const GROQ_TRANSCRIBE_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
+
+/// Set once the backend reports it can't transcribe, so a session doesn't pay
+/// a wasted round-trip on every chunk before falling back.
+static BACKEND_WHISPER_MISSING: AtomicBool = AtomicBool::new(false);
+
+fn whisper_model() -> String {
+    std::env::var("MOUSE_AI_WHISPER_MODEL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "whisper-large-v3".to_string())
+}
+
+fn local_groq_key() -> Option<String> {
+    ["MOUSE_AI_GROQ_API_KEY", "GROQ_API_KEY"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok())
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+}
+
+fn groq_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(6))
+            .timeout(Duration::from_secs(20))
+            .build()
+            .expect("Failed to create HTTP client")
+    })
+}
+
+async fn groq_transcribe(key: &str, wav: Vec<u8>, prompt: &str) -> Result<String, String> {
+    let file = reqwest::multipart::Part::bytes(wav)
+        .file_name("chunk.wav")
+        .mime_str("audio/wav")
+        .map_err(|e| e.to_string())?;
+    let mut form = reqwest::multipart::Form::new()
+        .part("file", file)
+        .text("model", whisper_model())
+        .text("response_format", "json")
+        .text("temperature", "0");
+    if !prompt.is_empty() {
+        form = form.text("prompt", prompt.to_string());
+    }
+    let resp = groq_client()
+        .post(GROQ_TRANSCRIBE_URL)
+        .bearer_auth(key)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("Whisper request failed: {}", e))?;
+    let status = resp.status().as_u16();
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        if status == 429 {
+            THROTTLED_UNTIL_MS.store(now_ms() + THROTTLE_FOR_MS, Ordering::Relaxed);
+        }
+        return Err(format!("Whisper failed ({}): {}", status, truncate_chars(&body, 200)));
+    }
+    let data: Value = resp.json().await.map_err(|e| format!("Bad Whisper response: {}", e))?;
+    Ok(data.get("text").and_then(|t| t.as_str()).unwrap_or("").trim().to_string())
+}
+
+/// One clip through Whisper. `Ok(None)` = no Whisper route available.
+async fn whisper_one(backend: &BackendClient, wav: Vec<u8>, prompt: &str) -> Result<Option<String>, String> {
+    if let Some(key) = local_groq_key() {
+        return groq_transcribe(&key, wav, prompt).await.map(Some);
+    }
+    if BACKEND_WHISPER_MISSING.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
+    let result = backend.transcribe_audio(&STANDARD.encode(&wav), prompt).await.map_err(|e| {
+        if e.contains("429") || e.to_lowercase().contains("rate limit") {
+            THROTTLED_UNTIL_MS.store(now_ms() + THROTTLE_FOR_MS, Ordering::Relaxed);
+        }
+        e
+    })?;
+    if result.is_none() {
+        BACKEND_WHISPER_MISSING.store(true, Ordering::Relaxed);
+    }
+    Ok(result)
+}
+
+/// Phrases Whisper is known to produce from near-silence or noise (learned
+/// from subtitle-heavy training data). Only dropped when they are the
+/// *entire* utterance.
+fn is_whisper_hallucination(text: &str) -> bool {
+    let t: String = text
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect();
+    let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+    t.is_empty()
+        || matches!(
+            t.as_str(),
+            "you" | "thank you" | "thanks" | "thank you very much" | "thanks for watching" | "thank you for watching"
+                | "bye" | "okay" | "so" | "um" | "uh" | "music" | "applause" | "silence"
+        )
+        || t.contains("subtitles by")
+        || t.contains("amaraorg")
+        || t.contains("please subscribe")
+}
+
+/// Fraction of shared words — catches the mic picking up the other side's
+/// voice from the speakers (no headphones) and re-transcribing it as "me".
+fn word_overlap(a: &str, b: &str) -> f32 {
+    let words = |s: &str| -> std::collections::HashSet<String> {
+        s.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() > 2)
+            .map(String::from)
+            .collect()
+    };
+    let (wa, wb) = (words(a), words(b));
+    if wa.is_empty() || wb.is_empty() {
+        return 0.0;
+    }
+    wa.intersection(&wb).count() as f32 / wa.len().min(wb.len()) as f32
+}
+
+/// Recent transcript, handed to Whisper as its prompt: it keeps spelling of
+/// names/jargon consistent and gives context across chunk boundaries.
+fn whisper_prompt() -> String {
+    let tail = transcript_text(600);
+    let start = tail.len().saturating_sub(400);
+    let start = (start..tail.len()).find(|i| tail.is_char_boundary(*i)).unwrap_or(tail.len());
+    tail[start..].to_string()
+}
+
+async fn transcribe(
+    backend: &BackendClient,
+    them: Option<Vec<u8>>,
+    me: Option<Vec<u8>>,
+) -> Result<Vec<(String, String)>, String> {
+    let prompt = whisper_prompt();
+    // Ok(Some(text)) per clip = transcribed (None when that source had no
+    // speech); Ok(None) = no Whisper route; Err = Whisper failed.
+    let run = |clip: Option<Vec<u8>>| {
+        let prompt = prompt.clone();
+        async move {
+            match clip {
+                Some(wav) => whisper_one(backend, wav, &prompt).await.map(|t| t.map(Some)),
+                None => Ok(Some(None)),
+            }
+        }
+    };
+    let (them_res, me_res) = tokio::join!(run(them.clone()), run(me.clone()));
+
+    match (them_res, me_res) {
+        (Ok(Some(them_text)), Ok(Some(me_text))) => {
+            let them_text = them_text.filter(|t| !is_whisper_hallucination(t));
+            let me_text = me_text
+                .filter(|t| !is_whisper_hallucination(t))
+                .filter(|t| them_text.as_deref().map(|th| word_overlap(th, t) < 0.6).unwrap_or(true));
+            let mut out = Vec::new();
+            if let Some(t) = them_text {
+                out.push(("them".to_string(), t));
+            }
+            if let Some(t) = me_text {
+                out.push(("me".to_string(), t));
+            }
+            Ok(out)
+        }
+        // No Whisper route, or it failed (rate limit, outage): don't lose the
+        // audio — transcribe this chunk through Gemini instead.
+        (them_res, me_res) => {
+            for r in [&them_res, &me_res] {
+                if let Err(e) = r {
+                    eprintln!("[meeting] whisper failed, falling back to Gemini: {}", e);
+                }
+            }
+            transcribe_gemini(backend, them.as_deref(), me.as_deref()).await
+        }
+    }
+}
+
+fn parse_transcription(raw: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let tagged = [("THEM:", "them"), ("ME:", "me")]
+            .iter()
+            .find_map(|(tag, who)| line.strip_prefix(tag).map(|rest| (who.to_string(), rest.trim().to_string())));
+        match tagged {
+            Some(entry) => out.push(entry),
+            // Long utterances sometimes wrap onto extra lines.
+            None => {
+                if let Some(last) = out.last_mut() {
+                    last.1.push(' ');
+                    last.1.push_str(line);
+                }
+            }
+        }
+    }
+    out.into_iter()
+        .map(|(who, text)| (who, text.trim().to_string()))
+        .filter(|(_, text)| {
+            let t = text.to_lowercase();
+            !t.is_empty()
+                && !matches!(
+                    t.trim_matches(|c: char| !c.is_alphanumeric() && c != ' '),
+                    "silence" | "no speech" | "inaudible" | "empty" | "none" | "n/a"
+                )
+        })
+        .collect()
+}
+
+fn push_entry(app: &AppHandle, speaker: &str, text: String) -> TranscriptEntry {
+    let entry = TranscriptEntry {
+        id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        speaker: speaker.to_string(),
+        text,
+        at_ms: now_ms(),
+    };
+    TRANSCRIPT.lock().unwrap().push(entry.clone());
+    let _ = app.emit("meeting-transcript", &entry);
+    entry
+}
+
+fn live_buffers() -> Option<(Option<SharedBuf>, Option<SharedBuf>)> {
+    LIVE.lock().unwrap().as_ref().map(|s| (s.system.clone(), s.mic.clone()))
+}
+
+/// Drain whatever audio is buffered, transcribe it, append it. Used by the
+/// chunker on every cut and by assist actions, so "What should I say?"
+/// always sees the question that was asked a second ago.
+async fn flush(app: &AppHandle, backend: &BackendClient) -> Result<(), String> {
+    let _guard = flush_lock().lock().await;
+    let Some((system, mic)) = live_buffers() else {
+        return Ok(());
+    };
+    let them = drain_clip(&system);
+    let me = drain_clip(&mic);
+    if them.is_none() && me.is_none() {
+        return Ok(());
+    }
+    // Lets the UI show a "transcribing…" placeholder line while Whisper works.
+    let _ = app.emit("meeting-transcribing", true);
+    let result = transcribe(backend, them, me).await;
+    let _ = app.emit("meeting-transcribing", false);
+    for (who, text) in result? {
+        push_entry(app, &who, text);
+    }
+    Ok(())
+}
+
+fn emit_status(app: &AppHandle, warning: Option<String>) {
+    let _ = app.emit("meeting-status", current_status(warning));
+}
+
+fn current_status(warning: Option<String>) -> MeetingStatus {
+    let live = LIVE.lock().unwrap();
+    match live.as_ref() {
+        Some(s) => MeetingStatus {
+            live: true,
+            mode: s.mode.clone(),
+            mic: s.mic.is_some(),
+            system: s.system.is_some(),
+            started_at_ms: Some(s.started_at_ms),
+            warning,
+        },
+        None => MeetingStatus {
+            live: false,
+            mode: LAST_MODE.lock().unwrap().clone(),
+            mic: false,
+            system: false,
+            started_at_ms: None,
+            warning,
+        },
+    }
+}
+
+/// Background chunker: waits for a natural pause (or the hard cap), then
+/// flushes. Exits — after one last flush — once the session is stopped.
+async fn chunker(app: AppHandle, backend: BackendClient, stop: Arc<AtomicBool>, finished: Arc<AtomicBool>) {
+    let mut chunk_start = Instant::now();
+    let session_start = Instant::now();
+    let mut warned_silent_mic = false;
+    let mut consecutive_failures = 0u32;
+    loop {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let stopping = stop.load(Ordering::Relaxed);
+        if let Some((system, mic)) = live_buffers() {
+            update_noise(&mic);
+            update_noise(&system);
+            let _ = app.emit("meeting-level", json!({ "mic": level(&mic), "system": level(&system) }));
+            if !warned_silent_mic && mic.is_some() && session_start.elapsed() > MIC_SILENCE_WARN_AFTER && peak_rms(&mic) < MIN_VOICE_RMS {
+                warned_silent_mic = true;
+                let name = MIC_NAME.lock().unwrap().clone();
+                emit_status(
+                    &app,
+                    Some(format!(
+                        "Your microphone{} is almost silent — it may be muted or the wrong input. Check Windows Settings → System → Sound → Input, then restart the session.",
+                        if name.is_empty() { String::new() } else { format!(" (\"{}\")", name) }
+                    )),
+                );
+            }
+        }
+        let elapsed = chunk_start.elapsed();
+        let min_chunk = if now_ms() < THROTTLED_UNTIL_MS.load(Ordering::Relaxed) { MIN_CHUNK_THROTTLED } else { MIN_CHUNK };
+        if !stopping && elapsed < min_chunk {
+            continue;
+        }
+        if !stopping && elapsed < MAX_CHUNK {
+            let quiet = match live_buffers() {
+                Some((system, mic)) => {
+                    system.as_ref().map(tail_is_quiet).unwrap_or(true) && mic.as_ref().map(tail_is_quiet).unwrap_or(true)
+                }
+                None => true,
+            };
+            if !quiet {
+                continue;
+            }
+        }
+        chunk_start = Instant::now();
+        match flush(&app, &backend).await {
+            Ok(()) => consecutive_failures = 0,
+            Err(e) => {
+                consecutive_failures += 1;
+                eprintln!("[meeting] transcription failed: {}", e);
+                // One blip isn't worth interrupting anyone; a streak is.
+                if consecutive_failures >= 2 {
+                    emit_status(&app, Some(format!("Transcription is failing: {}", e)));
+                }
+            }
+        }
+        if stopping {
+            break;
+        }
+    }
+    finished.store(true, Ordering::Relaxed);
+}
+
+// ── Assistance ───────────────────────────────────────────────────
+
+fn mode_label(mode: &str) -> &'static str {
+    match mode {
+        "interview" => "a live job interview (the user is the candidate)",
+        "practice" => "an interview PRACTICE session (you are the coach and interviewer)",
+        _ => "a live work meeting",
+    }
+}
+
+fn system_prompt(mode: &str, profile: &MeetingProfile) -> String {
+    let mut s = format!(
+        "You are Thothai's meeting and interview copilot. The user is in {}. You see a rolling transcript \
+(THEM = other participants, ME = the user, COACH = practice questions you asked, NOTE = text the user typed) \
+plus the user's own background notes.\n\n\
+Rules:\n\
+- Be fast to read: the user is mid-conversation. Lead with the most useful line, keep the rest to a few short bullets. Markdown is fine.\n\
+- Ground everything in the user's real background below. NEVER invent experience, employers, projects, metrics, credentials or results \
+they haven't given you. If their notes don't cover something, say so in one line and suggest an honest way to answer \
+(related experience, how they would approach it, or a clarifying question).\n\
+- Write suggested replies in the user's first-person voice, natural and spoken — not an essay.\n\
+- Transcripts come from speech recognition and may contain errors or mis-attributed lines; infer intent sensibly.\n",
+        mode_label(mode)
+    );
+    if mode == "interview" || mode == "practice" {
+        s.push_str("- For behavioral questions use a compact STAR shape (Situation, Task, Action, Result) built only from the user's real experience.\n");
+    }
+    let style = profile.style.trim();
+    if !style.is_empty() {
+        s.push_str(&format!("- The user's preferred answer style: {}\n", style));
+    }
+    let sections = [
+        ("ABOUT THE USER", &profile.about),
+        ("THEIR PROJECTS & RESPONSIBILITIES", &profile.projects),
+        ("THIS SESSION (agenda / attendees / job description / goals)", &profile.session_context),
+    ];
+    for (title, body) in sections {
+        let body = body.trim();
+        if !body.is_empty() {
+            s.push_str(&format!("\n[{}]\n{}\n", title, truncate_chars(body, 8000)));
+        }
+    }
+    s
+}
+
+fn instruction_for(action: &str, question: Option<&str>) -> Result<String, String> {
+    Ok(match action {
+        "suggest" => "Look at the most recent thing said to me (usually the last THEM lines — a question, objection or request). \
+Give me what to say next: first a bold **Say:** line (1-3 sentences I can say verbatim), then up to 3 bullets of supporting points or specifics \
+from my background. If nothing is currently being asked of me, say so and offer one useful contribution instead."
+            .to_string(),
+        "summary" => "Summarize the conversation so far in under 120 words: the topic, key points made, and anything still unresolved. \
+End with one line on where the discussion is heading."
+            .to_string(),
+        "followups" => "Suggest 3-5 sharp questions or follow-ups I could raise right now, each one line, ordered by usefulness. \
+Prefer ones that use my context or uncover decisions, risks, owners or deadlines."
+            .to_string(),
+        "explain" => "Explain any jargon, acronyms, names or concepts from the recent discussion that I might not know — \
+one line each, most important first. If everything is plain, say so."
+            .to_string(),
+        "notes" => "Write meeting notes from the full transcript with these sections: **Summary** (3-5 sentences), \
+**Key points**, **Decisions**, **Action items** (owner — task — due, where known; write 'unassigned' otherwise), \
+**Open questions**. Omit a section if it would be empty. Only include what was actually said."
+            .to_string(),
+        "practice_question" => "Ask me the next interview question. Base it on the job/session context and my background, \
+vary the type across the session (behavioral, technical/role-specific, situational, motivation), and don't repeat earlier COACH questions. \
+Reply with ONLY the question itself, as an interviewer would say it."
+            .to_string(),
+        "practice_feedback" => "Evaluate my answer (the ME/NOTE lines after the last COACH question). Give: **Score** x/10, \
+**What worked** (1-2 bullets), **Improve** (2-3 specific bullets — structure, specificity, missing results/metrics, length, filler), \
+then **Stronger version**: a tighter answer that uses ONLY facts I actually said or that appear in my background. \
+If I haven't answered yet, say so."
+            .to_string(),
+        "ask" => {
+            let q = question.map(str::trim).filter(|q| !q.is_empty()).ok_or("Type a question first.")?;
+            format!("My question: {}", q)
+        }
+        other => return Err(format!("Unknown assist action: {}", other)),
+    })
+}
+
+fn truncate_chars(s: &str, n: usize) -> String {
+    if s.chars().count() > n {
+        s.chars().take(n).collect::<String>() + "…"
+    } else {
+        s.to_string()
+    }
+}
+
+/// Transcript as text, keeping the most recent `budget` characters.
+fn transcript_text(budget: usize) -> String {
+    let entries = TRANSCRIPT.lock().unwrap();
+    let mut lines: Vec<String> = Vec::new();
+    let mut used = 0usize;
+    for e in entries.iter().rev() {
+        let line = format!("{}: {}", e.speaker.to_uppercase(), e.text);
+        used += line.len() + 1;
+        if used > budget && !lines.is_empty() {
+            lines.push("[… earlier transcript omitted]".to_string());
+            break;
+        }
+        lines.push(line);
+    }
+    lines.reverse();
+    lines.join("\n")
+}
+
+// ── Commands ─────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn meeting_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mode: String,
+    capture_mic: bool,
+    capture_system: bool,
+) -> Result<MeetingStatus, String> {
+    if LIVE.lock().unwrap().is_some() {
+        return Ok(current_status(None));
+    }
+    let mode = match mode.as_str() {
+        "meeting" | "interview" | "practice" => mode,
+        other => return Err(format!("Unknown mode: {}", other)),
+    };
+
+    // A fresh session starts from a clean slate — nothing from the previous
+    // one leaks into the new prompts.
+    TRANSCRIPT.lock().unwrap().clear();
+    *LAST_MODE.lock().unwrap() = mode.clone();
+    // Re-probe the backend each session — it may have been redeployed.
+    BACKEND_WHISPER_MISSING.store(false, Ordering::Relaxed);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let mic_buf = capture_mic.then(|| SharedBuf::default());
+    let sys_buf = capture_system.then(|| SharedBuf::default());
+
+    let mut warning = None;
+    let (mic_ok, sys_ok) = if mic_buf.is_some() || sys_buf.is_some() {
+        let (stop_t, mic_t, sys_t) = (stop.clone(), mic_buf.clone(), sys_buf.clone());
+        let (mic_ok, sys_ok, problems) =
+            tokio::task::spawn_blocking(move || spawn_capture_thread(stop_t, mic_t, sys_t))
+                .await
+                .map_err(|e| format!("Task failed: {}", e))??;
+        if !problems.is_empty() {
+            if !mic_ok && !sys_ok {
+                stop.store(true, Ordering::Relaxed);
+                return Err(problems.join(" · "));
+            }
+            warning = Some(problems.join(" · "));
+        }
+        (mic_ok, sys_ok)
+    } else {
+        // Typed-only session (e.g. practicing without a mic) is allowed.
+        (false, false)
+    };
+
+    let has_audio = mic_ok || sys_ok;
+    let finished = Arc::new(AtomicBool::new(!has_audio));
+    *LIVE.lock().unwrap() = Some(LiveSession {
+        mode,
+        stop: stop.clone(),
+        finished: finished.clone(),
+        mic: if mic_ok { mic_buf } else { None },
+        system: if sys_ok { sys_buf } else { None },
+        started_at_ms: now_ms(),
+    });
+
+    if has_audio {
+        let backend = state.backend.clone();
+        tauri::async_runtime::spawn(chunker(app.clone(), backend, stop, finished));
+    }
+
+    let status = current_status(warning);
+    let _ = app.emit("meeting-status", &status);
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn meeting_stop(app: AppHandle) -> Result<MeetingStatus, String> {
+    let handles = LIVE.lock().unwrap().as_ref().map(|s| (s.stop.clone(), s.finished.clone()));
+    if let Some((stop, finished)) = handles {
+        // The capture thread closes its streams and the chunker does one last
+        // flush of what's buffered; wait for it, bounded so a slow backend
+        // call can never hang the UI.
+        stop.store(true, Ordering::Relaxed);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !finished.load(Ordering::Relaxed) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        *LIVE.lock().unwrap() = None;
+    }
+    let status = current_status(None);
+    let _ = app.emit("meeting-status", &status);
+    Ok(status)
+}
+
+#[tauri::command]
+pub fn meeting_status() -> MeetingStatus {
+    current_status(None)
+}
+
+#[tauri::command]
+pub fn meeting_transcript() -> Vec<TranscriptEntry> {
+    TRANSCRIPT.lock().unwrap().clone()
+}
+
+/// Add a typed line — a question the user heard but audio missed, a typed
+/// practice answer, or a private note.
+#[tauri::command]
+pub fn meeting_add_entry(app: AppHandle, speaker: String, text: String) -> Result<TranscriptEntry, String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Nothing to add.".to_string());
+    }
+    let speaker = match speaker.as_str() {
+        "them" | "me" | "note" => speaker,
+        _ => "note".to_string(),
+    };
+    Ok(push_entry(&app, &speaker, text))
+}
+
+#[tauri::command]
+pub fn meeting_clear(app: AppHandle) {
+    TRANSCRIPT.lock().unwrap().clear();
+    emit_status(&app, None);
+}
+
+#[tauri::command]
+pub async fn meeting_assist(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    action: String,
+    question: Option<String>,
+    include_screen: Option<bool>,
+) -> Result<String, String> {
+    let backend = state.backend.clone();
+    let instruction = instruction_for(&action, question.as_deref())?;
+
+    // Pull in what was *just* said before answering — this is the difference
+    // between answering the current question and the previous one.
+    if action != "practice_question" {
+        if let Err(e) = flush(&app, &backend).await {
+            eprintln!("[meeting] pre-assist flush failed: {}", e);
+        }
+    }
+
+    let mode = {
+        let live = LIVE.lock().unwrap();
+        live.as_ref().map(|s| s.mode.clone()).unwrap_or_else(|| LAST_MODE.lock().unwrap().clone())
+    };
+    let mode = if mode.is_empty() { "meeting".to_string() } else { mode };
+    let profile = load_profile();
+    let budget = if action == "notes" { FULL_TRANSCRIPT_CHARS } else { LIVE_TRANSCRIPT_CHARS };
+    let transcript = transcript_text(budget);
+
+    let mut parts = vec![json!({
+        "text": format!(
+            "[TRANSCRIPT]\n{}\n\n[REQUEST]\n{}",
+            if transcript.is_empty() { "(nothing captured yet)".to_string() } else { transcript },
+            instruction
+        )
+    })];
+
+    if include_screen.unwrap_or(false) {
+        let shot = tokio::task::spawn_blocking(crate::capture::capture_agent_full)
+            .await
+            .map_err(|e| format!("Task failed: {}", e))?;
+        if let Ok(shot) = shot {
+            if let Some(b64) = shot.data_url.strip_prefix("data:image/jpeg;base64,") {
+                parts.push(json!({ "text": "[SCREEN — what is on the user's screen right now, e.g. shared slides, a document or a coding question]" }));
+                parts.push(json!({ "inlineData": { "mimeType": "image/jpeg", "data": b64 } }));
+            }
+        }
+    }
+
+    let contents = json!([{ "role": "user", "parts": parts }]);
+    let resp = backend.agent_step(&system_prompt(&mode, &profile), contents, json!([])).await?;
+    let text = response_text(&resp);
+    if text.is_empty() {
+        return Err("The assistant returned an empty answer — try again.".to_string());
+    }
+    if action == "practice_question" {
+        push_entry(&app, "coach", text.clone());
+    }
+    Ok(text)
+}
+
+#[tauri::command]
+pub fn meeting_get_profile() -> MeetingProfile {
+    load_profile()
+}
+
+#[tauri::command]
+pub fn meeting_set_profile(profile: MeetingProfile) -> Result<(), String> {
+    save_profile(&profile)
+}
+
+/// Explicit, user-initiated save of the session into their Threads history.
+/// The full transcript is only included when the user opts in.
+#[tauri::command]
+pub async fn meeting_save_notes(
+    state: State<'_, AppState>,
+    notes: String,
+    include_transcript: bool,
+) -> Result<String, String> {
+    let notes = notes.trim();
+    if notes.is_empty() {
+        return Err("Generate notes first.".to_string());
+    }
+    let mode = LAST_MODE.lock().unwrap().clone();
+    let title = match mode.as_str() {
+        "interview" => "Interview notes",
+        "practice" => "Interview practice",
+        _ => "Meeting notes",
+    };
+    let mut task = format!("{} — {}", title, chrono::Local::now().format("%Y-%m-%d %H:%M"));
+    if include_transcript {
+        task.push_str("\n\nTranscript:\n");
+        task.push_str(&transcript_text(7_000));
+    }
+    state.backend.log_agent_run(None, &task, notes).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_tagged_lines_and_drops_empty() {
+        let out = parse_transcription("THEM: How did you scale it?\nME:\n");
+        assert_eq!(out, vec![("them".to_string(), "How did you scale it?".to_string())]);
+    }
+
+    #[test]
+    fn joins_wrapped_lines_and_filters_silence_markers() {
+        let out = parse_transcription("THEM: first part\nsecond part\nME: (silence)");
+        assert_eq!(out, vec![("them".to_string(), "first part second part".to_string())]);
+    }
+
+    #[test]
+    fn silent_audio_is_not_sent() {
+        let buf: Option<SharedBuf> = Some(Arc::new(Mutex::new(AudioBuf { samples: vec![0.0; 48_000], rate: 48_000, ..Default::default() })));
+        assert!(drain_clip(&buf).is_none());
+    }
+
+    #[test]
+    fn voiced_audio_becomes_16k_wav() {
+        let samples: Vec<f32> = (0..48_000).map(|i| (i as f32 * 0.05).sin() * 0.3).collect();
+        let buf: Option<SharedBuf> = Some(Arc::new(Mutex::new(AudioBuf { samples, rate: 48_000, ..Default::default() })));
+        let wav = drain_clip(&buf).expect("voiced clip");
+        assert_eq!(&wav[0..4], b"RIFF");
+        // 1 s at 16 kHz, 16-bit mono.
+        assert_eq!(wav.len(), 44 + 16_000 * 2);
+    }
+
+    /// A quiet laptop mic (speech RMS ~0.007, under the old fixed 0.012
+    /// cutoff) must still be transcribed once the noise floor is known.
+    #[test]
+    fn quiet_mic_speech_is_kept_once_noise_floor_is_known() {
+        let samples: Vec<f32> = (0..48_000).map(|i| 0.01 * (i as f32 * 0.05).sin()).collect();
+        let buf: Option<SharedBuf> =
+            Some(Arc::new(Mutex::new(AudioBuf { samples, rate: 48_000, noise_floor: 0.0003, peak_rms: 0.0 })));
+        let wav = drain_clip(&buf).expect("quiet speech should be kept");
+        // Auto-gain lifted it: the loudest sample is far above the raw 0.01 (≈327).
+        let peak = wav[44..].chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]).unsigned_abs()).max().unwrap();
+        assert!(peak > 3000, "expected boosted audio, got peak {}", peak);
+    }
+
+    #[test]
+    fn filters_whisper_silence_hallucinations() {
+        assert!(is_whisper_hallucination(" Thank you."));
+        assert!(is_whisper_hallucination("Thanks for watching!"));
+        assert!(!is_whisper_hallucination("Thank you for having me, I am excited about this role."));
+    }
+
+    #[test]
+    fn detects_speaker_echo_on_mic() {
+        let them = "Can you walk me through how you scaled the payments service?";
+        assert!(word_overlap(them, "walk me through how you scaled the payments service") > 0.6);
+        assert!(word_overlap(them, "Sure, we moved the ledger to Postgres partitions.") < 0.6);
+    }
+
+    /// Calls Groq for real with the key from .env.local / the environment.
+    /// `MEETING_TEST_WAV=clip.wav cargo test --lib meeting -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn transcribes_speech_with_groq_whisper() {
+        let _ = dotenvy::from_path("../.env.local");
+        let key = local_groq_key().expect("GROQ_API_KEY not set");
+        let path = std::env::var("MEETING_TEST_WAV").expect("set MEETING_TEST_WAV to a speech .wav");
+        let wav = std::fs::read(path).unwrap();
+        let t = Instant::now();
+        let text = groq_transcribe(&key, wav, "").await.expect("whisper");
+        println!("{} in {:?}: {}", whisper_model(), t.elapsed(), text);
+        assert!(text.to_lowercase().contains("payments"));
+    }
+
+    /// Opens the real microphone + loopback devices for a moment. Hardware
+    /// dependent, so opt-in: `cargo test --lib meeting -- --ignored`.
+    #[test]
+    #[ignore]
+    fn opens_real_audio_devices() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (mic, sys) = (SharedBuf::default(), SharedBuf::default());
+        let (mic_ok, sys_ok, problems) =
+            spawn_capture_thread(stop.clone(), Some(mic.clone()), Some(sys.clone())).expect("capture thread");
+        std::thread::sleep(Duration::from_millis(3000));
+        stop.store(true, Ordering::Relaxed);
+        let (mic_len, mic_rate, mic_rms) = { let b = mic.lock().unwrap(); (b.samples.len(), b.rate, rms(&b.samples)) };
+        let (sys_len, sys_rate, sys_rms) = { let b = sys.lock().unwrap(); (b.samples.len(), b.rate, rms(&b.samples)) };
+        println!("mic_rms={:.5} system_rms={:.5} (voice threshold {})", mic_rms, sys_rms, VOICE_RMS);
+        println!(
+            "mic_ok={} ({} samples @ {} Hz), system_ok={} ({} samples @ {} Hz), problems={:?}",
+            mic_ok, mic_len, mic_rate, sys_ok, sys_len, sys_rate, problems
+        );
+        assert!(mic_ok || sys_ok, "no audio source opened: {:?}", problems);
+    }
+}

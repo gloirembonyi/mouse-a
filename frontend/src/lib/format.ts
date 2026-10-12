@@ -46,3 +46,36 @@ export function friendlyError(err: unknown): string {
   if (/429|rate limit/i.test(msg)) return "Too many requests right now — wait a few seconds and try again.";
   return msg;
 }
+
+// Thread titles come from the first message, and hover-mode threads all start
+// with the same prompt boilerplate ("The user is hovering over this …") —
+// strip it so the sidebar shows what the thread was actually about.
+export function threadTitle(raw?: string): string {
+  const t = (raw ?? "").trim();
+  if (!t) return "Untitled";
+  // The boilerplate is followed by "…on their screen and asked: <question>"
+  // when the question made it into the title; otherwise there's nothing
+  // meaningful left to show.
+  if (/^the user is hovering over/i.test(t)) {
+    const asked = /asked[:\s]+["“]?([^"”]+)/i.exec(t)?.[1]?.trim();
+    return asked ? `Hover · ${asked}` : "Hover question";
+  }
+  if (/^thothai chat$/i.test(t)) return "New chat";
+  return t;
+}
+
+export type DateBucket = "Today" | "Yesterday" | "Previous 7 days" | "Previous 30 days" | "Older";
+
+export function dateBucket(isoString: string): DateBucket {
+  const then = new Date(isoString);
+  if (Number.isNaN(then.getTime())) return "Older";
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const day = 86400000;
+  const diff = startOfToday.getTime() - then.getTime();
+  if (diff <= 0) return "Today";
+  if (diff <= day) return "Yesterday";
+  if (diff <= 7 * day) return "Previous 7 days";
+  if (diff <= 30 * day) return "Previous 30 days";
+  return "Older";
+}

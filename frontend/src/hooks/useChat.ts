@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { agentRun, newId, onAgentProgress, sendChat } from "../lib/tauri";
+import { agentCancel, agentRun, newId, onAgentProgress, sendChat } from "../lib/tauri";
 import { friendlyError } from "../lib/format";
 import { resolveAttachments } from "../lib/attachments";
 import type { Attachment, UiMessage } from "../lib/chatTypes";
@@ -7,14 +7,25 @@ import type { AgentStep } from "../components/chat/AgentActivity";
 
 interface UseChatOptions {
   onActivity?: () => void; // called whenever a run finishes (used to refresh the sidebar thread list)
+  /** Folder the agent should work in (the active project), if any. */
+  projectPath?: string | null;
 }
 
-export function useChat({ onActivity }: UseChatOptions = {}) {
+const AGENT_MODE_KEY = "mouse-ai-agent-mode";
+
+export function useChat({ onActivity, projectPath = null }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [agentMode, setAgentMode] = useState(true);
+  const [agentMode, setAgentModeState] = useState(() => localStorage.getItem(AGENT_MODE_KEY) !== "off");
   const activeAgentMsgId = useRef<string | null>(null);
   const runStartedAt = useRef<number>(0);
+  const projectRef = useRef(projectPath);
+  projectRef.current = projectPath;
+
+  const setAgentMode = useCallback((v: boolean) => {
+    localStorage.setItem(AGENT_MODE_KEY, v ? "on" : "off");
+    setAgentModeState(v);
+  }, []);
 
   useEffect(() => {
     const unlisten = onAgentProgress((p) => {
@@ -43,6 +54,13 @@ export function useChat({ onActivity }: UseChatOptions = {}) {
   }, []);
 
   const loadMessages = useCallback((msgs: UiMessage[]) => setMessages(msgs), []);
+  const appendMessage = useCallback((msg: UiMessage) => setMessages((prev) => [...prev, msg]), []);
+  const removeMessage = useCallback((id: string) => setMessages((prev) => prev.filter((m) => m.id !== id)), []);
+
+  /** Stops the running agent task (takes effect at its next step). */
+  const stop = useCallback(() => {
+    agentCancel("main").catch(() => {});
+  }, []);
 
   const runAgent = useCallback(
     async (composedText: string, imageDataUrl: string | null) => {
@@ -74,31 +92,32 @@ export function useChat({ onActivity }: UseChatOptions = {}) {
     [onActivity],
   );
 
-  const runPlainChat = useCallback(async (composedText: string, imageDataUrl: string | null) => {
-    const thinkingId = newId();
-    setMessages((prev) => [...prev, { id: thinkingId, kind: "thinking" }]);
-    setIsLoading(true);
-    const shouldSearch =
-      composedText.toLowerCase().startsWith("search") ||
-      /latest|current|today|news/i.test(composedText);
+  const runPlainChat = useCallback(
+    async (composedText: string, imageDataUrl: string | null) => {
+      const thinkingId = newId();
+      setMessages((prev) => [...prev, { id: thinkingId, kind: "thinking" }]);
+      setIsLoading(true);
+      const shouldSearch =
+        composedText.toLowerCase().startsWith("search") || /latest|current|today|news/i.test(composedText);
 
-    try {
-      const result = await sendChat(composedText, shouldSearch, imageDataUrl);
-      setMessages((prev) =>
-        prev
-          .filter((m) => m.id !== thinkingId)
-          .concat({ id: newId(), kind: "assistant", content: result.text }),
-      );
-    } catch (err) {
-      setMessages((prev) =>
-        prev
-          .filter((m) => m.id !== thinkingId)
-          .concat({ id: newId(), kind: "assistant", content: `❌ Error: ${friendlyError(err)}` }),
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+      try {
+        const result = await sendChat(composedText, shouldSearch, imageDataUrl);
+        setMessages((prev) =>
+          prev.filter((m) => m.id !== thinkingId).concat({ id: newId(), kind: "assistant", content: result.text }),
+        );
+      } catch (err) {
+        setMessages((prev) =>
+          prev
+            .filter((m) => m.id !== thinkingId)
+            .concat({ id: newId(), kind: "assistant", content: `⚠️ ${friendlyError(err)}` }),
+        );
+      } finally {
+        setIsLoading(false);
+        onActivity?.();
+      }
+    },
+    [onActivity],
+  );
 
   const send = useCallback(
     async (text: string, attachments: Attachment[] = []) => {
@@ -113,7 +132,13 @@ export function useChat({ onActivity }: UseChatOptions = {}) {
       const composedText = contextText ? `${contextText}\n\n${trimmed}` : trimmed;
 
       if (agentMode) {
-        await runAgent(composedText, imageDataUrl);
+        // The agent's relative paths resolve into a scratch dir (agent.rs), so
+        // the project folder has to be spelled out for it to work there.
+        const project = projectRef.current;
+        const withProject = project
+          ? `[Project folder: ${project} — work inside this folder and use absolute paths under it for files and shell commands.]\n\n${composedText}`
+          : composedText;
+        await runAgent(withProject, imageDataUrl);
       } else {
         await runPlainChat(composedText, imageDataUrl);
       }
@@ -121,5 +146,17 @@ export function useChat({ onActivity }: UseChatOptions = {}) {
     [isLoading, agentMode, runAgent, runPlainChat],
   );
 
-  return { messages, isLoading, agentMode, setAgentMode, send, clear, addSystemMessage, loadMessages };
+  return {
+    messages,
+    isLoading,
+    agentMode,
+    setAgentMode,
+    send,
+    stop,
+    clear,
+    addSystemMessage,
+    loadMessages,
+    appendMessage,
+    removeMessage,
+  };
 }

@@ -974,3 +974,287 @@ html, body {
 
 /* Pill hover: nudge up for a bit of life. */
 #pill:hover { transform: translateY(-1px); }
+
+/* ══ Ask AI pill v2 ═════════════════════════════════════════════
+   Brand tile + a slow border beam (same effect as the main window's
+   composer, see src/index.css .border-beam) so the pill reads as
+   "AI, ready" without being loud. Kept within the same footprint as v1:
+   the overlay window is sized for it in hover.rs. */
+@property --pill-beam {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+#pill {
+  position: relative;
+  gap: 8px;
+  padding: 6px 14px 6px 6px;
+  border-color: transparent;
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    0 8px 28px rgba(0, 0, 0, 0.35),
+    0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 140ms ease, box-shadow 160ms ease;
+}
+
+#pill::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background:
+    conic-gradient(
+      from var(--pill-beam),
+      var(--border) 0deg,
+      var(--border) 230deg,
+      rgba(118, 159, 205, 0.9) 290deg,
+      rgba(178, 140, 240, 0.9) 320deg,
+      rgba(240, 140, 196, 0.85) 340deg,
+      var(--border) 360deg
+    );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: pill-beam 3.6s linear infinite;
+  pointer-events: none;
+}
+@keyframes pill-beam {
+  to { --pill-beam: 360deg; }
+}
+
+#pill:hover {
+  transform: translateY(-1px);
+  border-color: transparent;
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    0 10px 32px rgba(0, 0, 0, 0.42),
+    0 0 18px var(--accent-glow);
+}
+#pill:active { transform: scale(0.97); }
+
+#pill .pill-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  color: #fff;
+  background: linear-gradient(180deg, #769fcd, #436391);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 2px 8px -2px rgba(67, 99, 145, 0.7);
+  filter: none;
+}
+#pill .pill-icon svg { width: 13px; height: 13px; }
+
+#pill .pill-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+#pill-context {
+  max-width: 200px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+#pill-context:empty { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  #pill::before { animation: none; }
+}
+
+
+/* ══ Live agent run v2 ══════════════════════════════════════════
+   The run reads at a glance: the header shows the CURRENT action with a
+   light sweep, plus elapsed time and step count; the newest step is
+   highlighted; the step list is open while running. */
+.agent-summary {
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(118, 159, 205, 0.07), transparent 70%);
+}
+.agent-summary-header { align-items: center; padding: 10px 12px; }
+.agent-summary-icon { width: 20px; height: 20px; }
+.agent-summary-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+.agent-summary-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+}
+.agent-summary-meta {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.agent-summary-duration { flex: none; }
+.is-live {
+  background: linear-gradient(90deg, var(--text-muted) 0%, var(--text-muted) 35%, var(--text-primary) 50%, var(--text-muted) 65%, var(--text-muted) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: live-sweep 2.2s linear infinite;
+}
+@keyframes live-sweep {
+  from { background-position: 125% 0; }
+  to { background-position: -125% 0; }
+}
+.agent-summary-body { max-height: 300px; }
+.agent-step { animation: fade-rise 200ms ease; }
+.agent-step.is-current .agent-step-body { color: var(--text-primary); }
+.agent-step.is-current .agent-step-icon {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* The "don't touch" banner: a compact pill instead of a full-width block. */
+#working-indicator {
+  align-self: center;
+  margin: 8px auto 0;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+#working-indicator .working-dot { width: 7px; height: 7px; }
+@media (prefers-reduced-motion: reduce) {
+  .is-live { animation: none; color: var(--text-secondary); background: none; }
+}
+
+
+/* ══ Results v2 ═════════════════════════════════════════════════
+   1. Nothing in the panel may shrink below its content: the question chip,
+      the run summary and the history list were being squashed into
+      unreadable slivers once an answer got long. Only the scroll areas
+      (#answer / #agent-log) give up space, and they scroll.
+   2. The question stays pinned at the top of the results while you scroll.
+   3. Answer typography: headings, rules, lists, tables, code with copy. */
+#panel > * { flex-shrink: 0; }
+#panel > #answer:not([hidden]),
+#panel > #agent-log:not([hidden]) {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+#agent-log > *,
+#answer > * { flex-shrink: 0; }
+#history-panel { max-height: 45%; overflow-y: auto; }
+
+.asked-question {
+  position: sticky;
+  top: -14px;
+  z-index: 2;
+  margin: -2px 0 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-glass) 70%, #769fcd 30%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 6px 16px -10px rgba(0, 0, 0, 0.5);
+  -webkit-line-clamp: 2;
+}
+#agent-log .asked-question { top: -12px; }
+
+.answer-body { font-size: 13px; line-height: 1.65; color: var(--text-primary); }
+.answer-body > :first-child { margin-top: 0; }
+.answer-body p { margin: 0 0 9px; }
+.answer-body h2, .answer-body h3, .answer-body h4, .answer-body h5 {
+  margin: 14px 0 6px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+.answer-body h2 { font-size: 15.5px; }
+.answer-body h3 { font-size: 14.5px; }
+.answer-body h4, .answer-body h5 { font-size: 13.5px; }
+.answer-body hr { border: none; height: 1px; margin: 14px 0; background: var(--border); }
+.answer-body ul, .answer-body ol { margin: 4px 0 10px; padding-left: 18px; }
+.answer-body ol { list-style: decimal; }
+.answer-body ol li { padding-left: 2px; }
+.answer-body li { margin: 4px 0; }
+.answer-body li > ul { margin: 4px 0 2px; }
+.answer-body blockquote {
+  margin: 8px 0;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--accent);
+  color: var(--text-secondary);
+}
+.answer-body a { color: var(--accent-light); text-decoration: underline; text-underline-offset: 2px; }
+.answer-body code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--bg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.md-code {
+  margin: 8px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.25);
+}
+body.surface-light .md-code { background: rgba(255, 255, 255, 0.6); }
+.md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-transform: lowercase;
+}
+.md-copy {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.md-copy:hover { color: var(--text-primary); background: var(--accent-soft); }
+.md-code pre { margin: 0; padding: 10px 12px; overflow-x: auto; }
+.md-code pre code { padding: 0; background: none; font-size: 11.5px; line-height: 1.55; white-space: pre; }
+.md-table { margin: 8px 0 12px; overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+.md-table table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.md-table th, .md-table td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+.md-table th { font-weight: 600; background: var(--accent-soft); }
+.md-table tr:last-child td { border-bottom: none; }
+
+.answer-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.answer-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: 500 11.5px var(--font);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.answer-actions button:hover { background: var(--accent-soft); color: var(--text-primary); }
+.answer-actions svg { width: 13px; height: 13px; }
+
+/* Ghost logo in the pill/panel: white ghost (dark eyes are in the SVG). */
+#pill .pill-icon svg { width: 15px; height: 15px; color: #fff; }
+.panel-icon svg { color: #f4f8fb; filter: drop-shadow(0 1px 2px rgba(18, 34, 58, 0.5)); }
+body.surface-light .panel-icon svg { color: #ffffff; filter: drop-shadow(0 0 1px #12223a) drop-shadow(0 1px 2px rgba(18, 34, 58, 0.35)); }

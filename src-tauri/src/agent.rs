@@ -55,6 +55,25 @@ fn agent_scratch_dir() -> std::path::PathBuf {
 /// Wipes the scratch dir back to empty — called once at the start of every
 /// `run_task` so a previous run's throwaway files never linger, even if the
 /// model never called delete_file on them itself.
+static ACTIVE_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+struct RunGuard;
+
+impl RunGuard {
+    fn enter() -> Self {
+        if ACTIVE_RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            reset_scratch_dir();
+        }
+        RunGuard
+    }
+}
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        ACTIVE_RUNS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 fn reset_scratch_dir() {
     let dir = agent_scratch_dir();
     let _ = std::fs::remove_dir_all(&dir);
@@ -255,8 +274,12 @@ click Submit), and verify the submission from ITS screenshot.\n\
 center of the page content — the attached screenshot shows what's now visible.\n\
   7. If a page didn't load, looks wrong, or you're unsure you're on the right site, say so and \
 look again rather than clicking blindly — precision matters more than speed.\n\
+- Files & projects: use search_in_files to find where something lives in a project, and edit_file \
+(exact snippet replace) to change existing files — only use write_file for new files or full rewrites. \
+download_file saves a URL straight to disk; get_clipboard/set_clipboard read or fill the clipboard; \
+notify pings the user when a long task finishes.\n\
 - Coding/editor tasks (e.g. in Cursor or VS Code): prefer the terminal (run_command) and read_file/\
-write_file/edit-style file writes over clicking around the editor UI — it's far more reliable. Use \
+edit_file/write_file over clicking around the editor UI — it's far more reliable. Use \
 run_command's cwd to run inside a specific project folder instead of cd-ing in the command string, and \
 pass timeout_seconds (up to 300) for anything slower than the ~45s default — an install/build/test run \
 that just needs more time is not the same as background=true, which is for long-running/indefinite \
@@ -460,6 +483,64 @@ fn tool_declarations() -> Value {
             "name": "wait",
             "description": "Pause briefly to let an app or web page finish loading. The result includes a fresh screenshot taken after the wait, so you can see the new state without a separate capture_screen call.",
             "parameters": { "type": "object", "properties": { "seconds": { "type": "number" } }, "required": ["seconds"] }
+        },
+        {
+            "name": "edit_file",
+            "description": "Change part of an existing text file by replacing an exact snippet — much faster and safer than rewriting the whole file with write_file. old_text must match the file exactly (including indentation) and be unique unless replace_all is true. Read the file first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "old_text": { "type": "string", "description": "Exact text currently in the file." },
+                    "new_text": { "type": "string", "description": "Replacement text." },
+                    "replace_all": { "type": "boolean", "description": "Replace every occurrence instead of requiring a unique match." }
+                },
+                "required": ["path", "old_text", "new_text"]
+            }
+        },
+        {
+            "name": "search_in_files",
+            "description": "Search the CONTENTS of text files under a folder (like grep): returns matching lines as path:line: text. Skips node_modules, .git, target, dist and large/binary files. Use it to find where something is defined or used in a project.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "folder": { "type": "string", "description": "Absolute folder to search." },
+                    "query": { "type": "string", "description": "Text to find (case-insensitive)." },
+                    "extension": { "type": "string", "description": "Optional file extension filter, e.g. 'ts' or 'py'." }
+                },
+                "required": ["folder", "query"]
+            }
+        },
+        {
+            "name": "get_clipboard",
+            "description": "Read the text currently on the user's clipboard.",
+            "parameters": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "set_clipboard",
+            "description": "Put text on the user's clipboard so they can paste it anywhere.",
+            "parameters": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }
+        },
+        {
+            "name": "download_file",
+            "description": "Download a URL straight to a file on disk (images, PDFs, datasets…). Faster and more reliable than doing it through a browser.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string" },
+                    "path": { "type": "string", "description": "Absolute destination file path." }
+                },
+                "required": ["url", "path"]
+            }
+        },
+        {
+            "name": "notify",
+            "description": "Show the user a Windows notification — use it when a long task finishes or needs their attention while they may be in another app.",
+            "parameters": {
+                "type": "object",
+                "properties": { "title": { "type": "string" }, "message": { "type": "string" } },
+                "required": ["title", "message"]
+            }
         },
         {
             "name": "request_confirmation",
@@ -768,7 +849,9 @@ pub async fn run_task(
     conversation_id: Option<String>,
     user_image_data_url: Option<String>,
 ) -> Result<String, String> {
-    reset_scratch_dir();
+    // Runs can overlap (a browser-requested task alongside a chat task), and
+    // they share the scratch dir — only the first concurrent run wipes it.
+    let _run_guard = RunGuard::enter();
     // A stale Stop from a previous run must not instantly kill this one, and a
     // window remembered from a previous run is not this task's target.
     let _ = cancels().lock().unwrap().remove(source);
@@ -1173,6 +1256,12 @@ fn tool_label(name: &str, args: &Value) -> String {
     match name {
         "run_command" => format!("$ {}", args.get("command").and_then(|c| c.as_str()).unwrap_or("")),
         "read_file" => format!("Reading {}", args.get("path").and_then(|c| c.as_str()).unwrap_or("")),
+        "edit_file" => format!("Editing {}", args.get("path").and_then(|c| c.as_str()).unwrap_or("")),
+        "search_in_files" => format!("Searching for \"{}\"", truncate(args.get("query").and_then(|c| c.as_str()).unwrap_or(""), 60)),
+        "get_clipboard" => "Reading the clipboard".to_string(),
+        "set_clipboard" => "Copying to the clipboard".to_string(),
+        "download_file" => format!("Downloading to {}", args.get("path").and_then(|c| c.as_str()).unwrap_or("")),
+        "notify" => "Notifying you".to_string(),
         "write_file" => format!("Writing {}", args.get("path").and_then(|c| c.as_str()).unwrap_or("")),
         "delete_file" => format!("Deleting {}", args.get("path").and_then(|c| c.as_str()).unwrap_or("")),
         "list_directory" => format!("Listing {}", args.get("path").and_then(|c| c.as_str()).unwrap_or("")),
@@ -1222,6 +1311,12 @@ async fn execute_tool(
         "run_command" => run_command_tool(args).await,
         "read_file" => read_file_tool(args),
         "write_file" => write_file_tool(args),
+        "edit_file" => edit_file_tool(args),
+        "search_in_files" => search_in_files_tool(args).await,
+        "get_clipboard" => clipboard_tool(None).await,
+        "set_clipboard" => clipboard_tool(Some(args.get("text").and_then(|t| t.as_str()).unwrap_or(""))).await,
+        "download_file" => download_file_tool(args).await,
+        "notify" => notify_tool(app, args),
         "delete_file" => delete_file_tool(args),
         "list_directory" => list_directory_tool(args),
         "find_files" => find_files_tool(args).await,
@@ -2077,7 +2172,7 @@ async fn scroll_tool(
 /// 5-minute timeout, treated as a deny so the task doesn't hang forever).
 /// Shared by the model-invoked `request_confirmation` tool and the automatic
 /// per-app gate in `guard_target_app`.
-async fn confirm(app: &AppHandle, source: &str, message: &str) -> bool {
+pub(crate) async fn confirm(app: &AppHandle, source: &str, message: &str) -> bool {
     let request_id = uuid::Uuid::new_v4().to_string();
     let (tx, rx) = oneshot::channel();
     confirmations().lock().unwrap().insert(request_id.clone(), tx);
@@ -2127,6 +2222,11 @@ async fn delegate_to_browser_tool(source: &str, args: &Value) -> ToolOutcome {
     let instruction = args.get("instruction").and_then(|v| v.as_str()).unwrap_or("").trim();
     if instruction.is_empty() {
         return ToolOutcome::err("delegate_to_browser needs an 'instruction' describing the web task.");
+    }
+    // A task the browser handed us must not bounce back to the browser —
+    // that's how two cooperating agents end up in an endless loop.
+    if source.starts_with("browser:") {
+        return ToolOutcome::err("This task came from the browser agent — do the desktop part and return the result instead of delegating back to the browser.");
     }
     let background = args.get("background").and_then(|v| v.as_bool()).unwrap_or(false);
     let mut options = json!({});
@@ -2356,5 +2456,222 @@ fn classify_process(process_name: &str) -> &'static str {
         "terminal"
     } else {
         "other"
+    }
+}
+
+
+// ── Productivity tools: precise edits, content search, clipboard, downloads ──
+
+fn edit_file_tool(args: &Value) -> ToolOutcome {
+    let raw = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
+    let old_text = args.get("old_text").and_then(|p| p.as_str()).unwrap_or("");
+    let new_text = args.get("new_text").and_then(|p| p.as_str()).unwrap_or("");
+    let replace_all = args.get("replace_all").and_then(|p| p.as_bool()).unwrap_or(false);
+    if raw.is_empty() || old_text.is_empty() {
+        return ToolOutcome::err("edit_file needs 'path' and a non-empty 'old_text'");
+    }
+    let path = resolve_agent_path(raw);
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => return ToolOutcome::err(format!("could not read {}: {}", path.display(), e)),
+    };
+    // Files saved on Windows often use CRLF while the model writes LF.
+    let (old_norm, new_norm) = if content.contains("\r\n") && !old_text.contains("\r\n") {
+        (old_text.replace('\n', "\r\n"), new_text.replace('\n', "\r\n"))
+    } else {
+        (old_text.to_string(), new_text.to_string())
+    };
+    let count = content.matches(&old_norm).count();
+    if count == 0 {
+        return ToolOutcome::err(format!(
+            "old_text was not found in {} — read_file it again and copy the snippet exactly (whitespace matters).",
+            path.display()
+        ));
+    }
+    if count > 1 && !replace_all {
+        return ToolOutcome::err(format!(
+            "old_text appears {} times in {} — include more surrounding lines to make it unique, or set replace_all.",
+            count,
+            path.display()
+        ));
+    }
+    let updated = if replace_all { content.replace(&old_norm, &new_norm) } else { content.replacen(&old_norm, &new_norm, 1) };
+    match std::fs::write(&path, &updated) {
+        Ok(()) => {
+            let n = if replace_all { count } else { 1 };
+            let msg = format!("Edited {} ({} replacement{}).", path.display(), n, if n == 1 { "" } else { "s" });
+            let mut log = msg.clone();
+            if let Some((added, removed)) = line_diff_stats(&content, &updated) {
+                log.push_str(&format!("\u{1}DIFF {} {}", added, removed));
+            }
+            ToolOutcome { response: json!({ "result": msg }), image_data_url: None, log }
+        }
+        Err(e) => ToolOutcome::err(format!("could not write {}: {}", path.display(), e)),
+    }
+}
+
+async fn search_in_files_tool(args: &Value) -> ToolOutcome {
+    let folder = args.get("folder").and_then(|p| p.as_str()).unwrap_or("").trim().to_string();
+    let query = args.get("query").and_then(|p| p.as_str()).unwrap_or("").trim().to_lowercase();
+    let ext = args
+        .get("extension")
+        .and_then(|p| p.as_str())
+        .map(|e| e.trim().trim_start_matches("*.").trim_start_matches('.').to_lowercase())
+        .filter(|e| !e.is_empty());
+    if folder.is_empty() || query.is_empty() {
+        return ToolOutcome::err("search_in_files needs 'folder' and 'query'");
+    }
+    let root = resolve_agent_path(&folder);
+    let result = tokio::task::spawn_blocking(move || {
+        const SKIP: [&str; 8] = ["node_modules", ".git", "target", "dist", "build", ".next", "__pycache__", ".venv"];
+        const MAX_HITS: usize = 80;
+        const MAX_FILES: usize = 20_000;
+        let mut hits = Vec::new();
+        let mut visited = 0usize;
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for entry in rd.flatten() {
+                let path = entry.path();
+                let Ok(ft) = entry.file_type() else { continue };
+                let name = entry.file_name().to_string_lossy().to_string();
+                if ft.is_dir() {
+                    if !SKIP.contains(&name.as_str()) {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                visited += 1;
+                if visited > MAX_FILES || hits.len() >= MAX_HITS {
+                    return (hits, true);
+                }
+                if let Some(want) = &ext {
+                    if path.extension().map(|e| e.to_string_lossy().to_lowercase()).as_deref() != Some(want.as_str()) {
+                        continue;
+                    }
+                }
+                if entry.metadata().map(|m| m.len() > 1_500_000).unwrap_or(true) {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else { continue }; // binary / non-UTF-8
+                for (i, line) in text.lines().enumerate() {
+                    if line.to_lowercase().contains(&query) {
+                        let shown: String = line.trim().chars().take(200).collect();
+                        hits.push(format!("{}:{}: {}", path.display(), i + 1, shown));
+                        if hits.len() >= MAX_HITS {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        (hits, false)
+    })
+    .await;
+    match result {
+        Ok((hits, capped)) if hits.is_empty() => ToolOutcome::text(if capped {
+            "No matches in the files scanned — narrow the folder or add an extension filter."
+        } else {
+            "No matches."
+        }),
+        Ok((hits, capped)) => {
+            let mut out = hits.join("\n");
+            if capped {
+                out.push_str("\n…(stopped early — narrow the search for more)");
+            }
+            ToolOutcome {
+                log: format!("{} match{}", hits.len(), if hits.len() == 1 { "" } else { "es" }),
+                response: json!({ "result": out }),
+                image_data_url: None,
+            }
+        }
+        Err(e) => ToolOutcome::err(format!("search failed: {}", e)),
+    }
+}
+
+/// None = read the clipboard; Some(text) = write it. Goes through PowerShell's
+/// Get-/Set-Clipboard (no extra native dependency), with the window hidden.
+async fn clipboard_tool(write: Option<&str>) -> ToolOutcome {
+    use tokio::io::AsyncWriteExt;
+    let script = match write {
+        None => "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw",
+        Some(_) => "[Console]::InputEncoding=[Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+    };
+    let mut cmd = tokio::process::Command::new("powershell.exe");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return ToolOutcome::err(format!("clipboard unavailable: {}", e)),
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Some(text) = write {
+            let _ = stdin.write_all(text.as_bytes()).await;
+        }
+        drop(stdin);
+    }
+    match tokio::time::timeout(Duration::from_secs(10), child.wait_with_output()).await {
+        Ok(Ok(out)) if out.status.success() => match write {
+            None => {
+                let text = String::from_utf8_lossy(&out.stdout).to_string();
+                if text.trim().is_empty() {
+                    ToolOutcome::text("The clipboard is empty (or holds an image/files, not text).")
+                } else {
+                    ToolOutcome::text(truncate(&text, MAX_FILE_READ))
+                }
+            }
+            Some(text) => ToolOutcome::text(format!("Copied {} characters to the clipboard.", text.chars().count())),
+        },
+        Ok(Ok(out)) => ToolOutcome::err(format!("clipboard error: {}", String::from_utf8_lossy(&out.stderr).trim())),
+        Ok(Err(e)) => ToolOutcome::err(format!("clipboard error: {}", e)),
+        Err(_) => ToolOutcome::err("clipboard timed out"),
+    }
+}
+
+async fn download_file_tool(args: &Value) -> ToolOutcome {
+    const MAX_BYTES: usize = 300 * 1024 * 1024;
+    let url = args.get("url").and_then(|p| p.as_str()).unwrap_or("").trim();
+    let raw = args.get("path").and_then(|p| p.as_str()).unwrap_or("").trim();
+    if !(url.starts_with("http://") || url.starts_with("https://")) || raw.is_empty() {
+        return ToolOutcome::err("download_file needs an http(s) 'url' and a destination 'path'");
+    }
+    let path = resolve_agent_path(raw);
+    let client = match reqwest::Client::builder().timeout(Duration::from_secs(300)).build() {
+        Ok(c) => c,
+        Err(e) => return ToolOutcome::err(e.to_string()),
+    };
+    let resp = match client.get(url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => return ToolOutcome::err(format!("download failed: HTTP {}", r.status())),
+        Err(e) => return ToolOutcome::err(format!("download failed: {}", e)),
+    };
+    if resp.content_length().map(|n| n as usize > MAX_BYTES).unwrap_or(false) {
+        return ToolOutcome::err("file is larger than 300 MB — use run_command (e.g. curl) if you really need it");
+    }
+    let bytes = match resp.bytes().await {
+        Ok(b) if b.len() <= MAX_BYTES => b,
+        Ok(_) => return ToolOutcome::err("file is larger than 300 MB"),
+        Err(e) => return ToolOutcome::err(format!("download failed: {}", e)),
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::write(&path, &bytes) {
+        Ok(()) => ToolOutcome::text(format!("Saved {} ({} KB).", path.display(), bytes.len() / 1024)),
+        Err(e) => ToolOutcome::err(format!("could not write {}: {}", path.display(), e)),
+    }
+}
+
+fn notify_tool(app: &AppHandle, args: &Value) -> ToolOutcome {
+    use tauri_plugin_notification::NotificationExt;
+    let title = args.get("title").and_then(|p| p.as_str()).unwrap_or("Mouse AI");
+    let message = args.get("message").and_then(|p| p.as_str()).unwrap_or("");
+    match app.notification().builder().title(title).body(message).show() {
+        Ok(()) => ToolOutcome::text("Notification shown."),
+        Err(e) => ToolOutcome::err(format!("could not show a notification: {}", e)),
     }
 }

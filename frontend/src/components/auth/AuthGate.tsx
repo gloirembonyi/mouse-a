@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { ThinkingOrb } from "thinking-orbs";
 import { signInWithToken, startGoogleSignIn, withTimeout } from "../../lib/tauri";
+import { BrandMark } from "../ui/primitives";
 import type { User } from "../../lib/types";
 
 interface AuthGateProps {
@@ -57,13 +59,9 @@ export function AuthGate({ status, error, onRetry, onSignedIn }: AuthGateProps) 
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-10 text-center">
-      <div className="flex h-[76px] w-[76px] items-center justify-center rounded-full border border-border-default text-[34px] shadow-[0_0_30px_var(--color-accent-glow)]" style={{ background: "radial-gradient(circle at 35% 30%, var(--color-accent-soft), rgba(118,159,205,0.02) 70%)" }}>
-        🖱️
-      </div>
-      <h2 className="bg-gradient-to-br from-text-primary to-accent bg-clip-text text-xl font-bold text-transparent">
-        Welcome to Mouse AI
-      </h2>
-      <p className="max-w-[280px] text-xs text-text-secondary">
+      <BrandMark size={52} className="mb-1" />
+      <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Welcome to Mouse AI</h2>
+      <p className="max-w-[300px] text-[13px] text-text-muted">
         Your desktop AI assistant powered by Thothai. Hover, capture, and ask anything.
       </p>
 
@@ -73,12 +71,17 @@ export function AuthGate({ status, error, onRetry, onSignedIn }: AuthGateProps) 
         <Hint keys="Ctrl+Shift+S" label="Screenshot Analyze" />
       </div>
 
-      {status === "connecting" && <div className="text-[11px] text-text-muted">Connecting…</div>}
+      {status === "connecting" && (
+        <div className="flex items-center gap-2 text-[12.5px]">
+          <ThinkingOrb state="connecting" size={20} theme="auto" aria-label="Connecting" />
+          <span className="shimmer-text font-medium">Connecting to Thothai…</span>
+        </div>
+      )}
       {error && <div className="w-full rounded-md bg-danger-soft px-3 py-2 text-xs text-danger">{error}</div>}
       {status === "error" && (
         <button
           onClick={onRetry}
-          className="w-full max-w-[260px] rounded-lg bg-gradient-to-br from-accent to-accent-light py-3 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(118,159,205,0.3)] transition hover:-translate-y-px"
+          className="w-full max-w-[260px] rounded-full btn-brand py-2.5 text-[13px] font-medium"
         >
           Retry
         </button>

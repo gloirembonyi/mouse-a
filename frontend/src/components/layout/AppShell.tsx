@@ -1,48 +1,40 @@
-import { useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resizable-panels";
-import { Sidebar } from "./Sidebar";
-import { RightDock } from "./RightDock";
-import type { Conversation } from "../../lib/types";
+
+// The dock (file tree, CodeMirror editor, xterm + a PowerShell PTY) is loaded
+// and mounted the first time it's opened, not at startup — most sessions never
+// open it, and it used to spawn a shell on every launch.
+const RightDock = lazy(() => import("./RightDock").then((m) => ({ default: m.RightDock })));
 
 interface AppShellProps {
+  sidebar: React.ReactNode;
   sidebarOpen: boolean;
   onCloseSidebar: () => void;
   rightDockOpen: boolean;
   onCloseRightDock: () => void;
-  onToggleRightDock: () => void;
   workspaceRoot: string | null;
-  onChangeWorkspaceRoot: (path: string) => void;
-  threads: Conversation[];
-  activeThreadId: string | null;
-  onNewChat: () => void;
-  onOpenThread: (id: string) => void;
-  onDeleteThread: (id: string) => void;
-  onOpenSettings: () => void;
-  onToggleHoverMode: () => void;
-  aiActive: boolean;
+  projectName: string | null;
+  onAddProject: () => void;
+  onAskAboutFile: (path: string, name: string) => void;
   children: React.ReactNode;
 }
 
 export function AppShell({
+  sidebar,
   sidebarOpen,
   onCloseSidebar,
   rightDockOpen,
   onCloseRightDock,
-  onToggleRightDock,
   workspaceRoot,
-  onChangeWorkspaceRoot,
-  threads,
-  activeThreadId,
-  onNewChat,
-  onOpenThread,
-  onDeleteThread,
-  onOpenSettings,
-  onToggleHoverMode,
-  aiActive,
+  projectName,
+  onAddProject,
+  onAskAboutFile,
   children,
 }: AppShellProps) {
   const sidebarRef = useRef<PanelImperativeHandle>(null);
   const rightDockRef = useRef<PanelImperativeHandle>(null);
+  const [dockMounted, setDockMounted] = useState(rightDockOpen);
+  if (rightDockOpen && !dockMounted) setDockMounted(true);
 
   // Controlled by the parent's boolean state (toggled from the title bar /
   // sidebar nav), rather than driving state purely off the panel's own
@@ -63,7 +55,7 @@ export function AppShell({
     // default size, so its "most recent size" — what expand() restores to —
     // would also be 0% the first time it's opened. Explicitly resizing to a
     // known-good percentage sidesteps that instead of relying on expand().
-    if (rightDockOpen && panel.isCollapsed()) panel.resize("38%");
+    if (rightDockOpen && panel.isCollapsed()) panel.resize("42%");
     if (!rightDockOpen && !panel.isCollapsed()) panel.collapse();
   }, [rightDockOpen]);
 
@@ -72,9 +64,9 @@ export function AppShell({
       <Panel
         panelRef={sidebarRef}
         id="sidebar"
-        defaultSize="22%"
-        minSize="16%"
-        maxSize="34%"
+        defaultSize="20%"
+        minSize="14%"
+        maxSize="32%"
         collapsible
         collapsedSize="0%"
         onResize={(size) => {
@@ -82,22 +74,11 @@ export function AppShell({
         }}
         className="min-w-0"
       >
-        <Sidebar
-          threads={threads}
-          activeId={activeThreadId}
-          onNewChat={onNewChat}
-          onOpenThread={onOpenThread}
-          onDeleteThread={onDeleteThread}
-          onOpenSettings={onOpenSettings}
-          onToggleHoverMode={onToggleHoverMode}
-          onToggleIdeDock={onToggleRightDock}
-          ideDockOpen={rightDockOpen}
-          aiActive={aiActive}
-        />
+        {sidebar}
       </Panel>
       <Separator className="resize-handle resize-handle-v" />
 
-      <Panel id="main-content" minSize="30%" className="min-w-0">
+      <Panel id="main-content" minSize="30%" className="min-w-0 bg-bg-primary">
         {children}
       </Panel>
 
@@ -106,8 +87,8 @@ export function AppShell({
         panelRef={rightDockRef}
         id="right-dock"
         defaultSize="0%"
-        minSize="20%"
-        maxSize="55%"
+        minSize="22%"
+        maxSize="65%"
         collapsible
         collapsedSize="0%"
         onResize={(size) => {
@@ -115,7 +96,17 @@ export function AppShell({
         }}
         className="min-w-0"
       >
-        <RightDock root={workspaceRoot} onChangeRoot={onChangeWorkspaceRoot} onClose={onCloseRightDock} />
+        {dockMounted && (
+          <Suspense fallback={<div className="h-full bg-bg-secondary" />}>
+            <RightDock
+              root={workspaceRoot}
+              projectName={projectName}
+              onAddProject={onAddProject}
+              onClose={onCloseRightDock}
+              onAskAboutFile={onAskAboutFile}
+            />
+          </Suspense>
+        )}
       </Panel>
     </Group>
   );

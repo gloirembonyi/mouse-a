@@ -1,8 +1,9 @@
 import { useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { oneDark } from "@codemirror/theme-one-dark";
 import { Check, Copy } from "lucide-react";
 import { languageFor } from "../../lib/languages";
+import { editorTheme } from "../../lib/editorTheme";
+import { useTheme } from "../../lib/theme";
 
 interface CodeBlockProps {
   code: string;
@@ -14,7 +15,8 @@ interface CodeBlockProps {
 // code blocks — one highlighting engine for the whole app.
 export function CodeBlock({ code, language }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
-  const extensions = languageFor(language);
+  const { theme } = useTheme();
+  const extensions = [...languageFor(language), editorTheme(theme)];
 
   const copy = async () => {
     await navigator.clipboard.writeText(code);
@@ -23,8 +25,8 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
   };
 
   return (
-    <div className="group relative my-2 overflow-hidden rounded-lg border border-border-default bg-bg-primary">
-      <div className="flex items-center justify-between border-b border-border-default px-3 py-1.5">
+    <div className="group relative my-2.5 overflow-hidden rounded-xl border border-border-default bg-bg-secondary">
+      <div className="flex items-center justify-between border-b border-border-soft px-3 py-1.5">
         <span className="font-mono text-[10px] uppercase tracking-wide text-text-muted">
           {language || "text"}
         </span>
@@ -38,7 +40,7 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
       </div>
       <CodeMirror
         value={code}
-        theme={oneDark}
+        theme="none"
         editable={false}
         basicSetup={{ lineNumbers: code.split("\n").length > 3, foldGutter: false, highlightActiveLine: false }}
         extensions={extensions}

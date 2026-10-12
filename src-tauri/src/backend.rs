@@ -124,6 +124,10 @@ struct StoredConfig {
     /// stored opaquely here and interpreted by the agent's MCP client.
     #[serde(default)]
     mcp_servers: Option<serde_json::Value>,
+    /// Browser-extension origins (chrome-extension://<id>) allowed to use the
+    /// local bridge. Filled on first successful pairing; see bridge.rs.
+    #[serde(default)]
+    bridge_trusted_origins: Option<Vec<String>>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -211,9 +215,16 @@ impl BackendClient {
             user: self.current_user.read().await.clone(),
             device_id: Some(self.device_id.read().await.clone()),
             mcp_servers: Some(self.mcp_servers.read().await.clone()),
+            // Not held in memory here (bridge.rs owns it) - carry the stored
+            // value forward so a sign-in or settings save can't erase pairing.
+            bridge_trusted_origins: None,
         };
         // Blocking file IO is tiny here; fine off the hot path.
-        tokio::task::spawn_blocking(move || save_config(&cfg))
+        tokio::task::spawn_blocking(move || {
+            let mut cfg = cfg;
+            cfg.bridge_trusted_origins = load_config().bridge_trusted_origins;
+            save_config(&cfg)
+        })
             .await
             .ok();
     }
@@ -492,6 +503,36 @@ impl BackendClient {
         resp.json()
             .await
             .map_err(|e| format!("Failed to parse agent step response: {}", e))
+    }
+
+    /// Whisper speech-to-text for the meeting copilot (Groq, server-side key).
+    /// `Ok(None)` means this backend can't transcribe — an older deploy without
+    /// the endpoint (404) or no GROQ_API_KEY configured (503) — so the caller
+    /// should fall back rather than retry.
+    pub async fn transcribe_audio(&self, wav_b64: &str, prompt: &str) -> Result<Option<String>, String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let url = format!("{}/api/meeting/transcribe", self.base_url.read().await);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({ "audio": wav_b64, "mimeType": "audio/wav", "prompt": prompt }))
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        let status = resp.status().as_u16();
+        if status == 404 || status == 503 {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Transcription failed ({}): {}", status, truncate(&text, 200)));
+        }
+        let data: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse transcription: {}", e))?;
+        Ok(Some(data.get("text").and_then(|t| t.as_str()).unwrap_or("").trim().to_string()))
     }
 
     /// Server-side web search for the agent's web_search tool.

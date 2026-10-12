@@ -82,7 +82,10 @@ pub fn spawn_hover_watcher(app: AppHandle) {
                         // drift the pill along with the cursor instead of
                         // leaving it stuck at the original dwell point.
                         overlay_anchor = (x, y);
-                        show_overlay_near(&app, x, y);
+                        // Drift only: reposition, don't re-sample the theme.
+                        // Sampling screenshots the region, and this branch runs
+                        // every poll while the mouse moves.
+                        position_overlay(&app, x, y, false);
                     }
                 }
                 continue;
@@ -136,8 +139,13 @@ pub fn spawn_hover_watcher(app: AppHandle) {
 }
 
 /// Position the overlay window next to a screen point (clamped to the
-/// monitor that point is on) and show it without stealing focus.
+/// monitor that point is on), show it without stealing focus, and pick its
+/// light/dark surface from what's behind it.
 pub fn show_overlay_near(app: &AppHandle, x: i32, y: i32) {
+    position_overlay(app, x, y, true);
+}
+
+fn position_overlay(app: &AppHandle, x: i32, y: i32, sample_theme: bool) {
     let Some(overlay) = app.get_webview_window("overlay") else {
         return;
     };
@@ -172,10 +180,20 @@ pub fn show_overlay_near(app: &AppHandle, x: i32, y: i32) {
     // whichever stays readable against whatever's actually behind it (a dark
     // code editor vs. a bright document, a light desktop wallpaper, etc.),
     // mirroring the browser extension's adaptive-theme.js.
+    //
+    // The sample is a real screen capture, so it runs on the blocking pool -
+    // doing it inline stalled the async runtime (and with it the browser
+    // bridge) for the length of a capture on every call.
     const LIGHT_THEME_THRESHOLD: f32 = 0.58;
-    if let Some(lum) = crate::capture::average_luminance_at(px, py, w as u32, h as u32) {
-        let _ = app.emit_to("overlay", "surface-theme", lum >= LIGHT_THEME_THRESHOLD);
+    if !sample_theme {
+        return;
     }
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(lum) = crate::capture::average_luminance_at(px, py, w as u32, h as u32) {
+            let _ = app.emit_to("overlay", "surface-theme", lum >= LIGHT_THEME_THRESHOLD);
+        }
+    });
 }
 
 /// Show the overlay near wherever the cursor currently is.

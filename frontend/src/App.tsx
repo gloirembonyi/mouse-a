@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
-import { PanelLeftOpen } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { TitleBar } from "./components/layout/TitleBar";
 import { AppShell } from "./components/layout/AppShell";
+import { Sidebar } from "./components/layout/Sidebar";
 import { AuthGate } from "./components/auth/AuthGate";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { ChatView } from "./components/chat/ChatView";
@@ -9,29 +9,44 @@ import { useAuth } from "./hooks/useAuth";
 import { useConversations } from "./hooks/useConversations";
 import { useChat } from "./hooks/useChat";
 import { useWorkspace } from "./hooks/useWorkspace";
+import { useMeeting } from "./hooks/useMeeting";
+import { useAgents } from "./hooks/useAgents";
 import {
   getAiActive,
   getConversationMessages,
   newConversation,
+  appWindow,
   newId,
   onAiState,
+  onMeetingHotkey,
   setConversationId,
   toggleAiActive,
 } from "./lib/tauri";
-import type { UiMessage } from "./lib/chatTypes";
+import { threadTitle } from "./lib/format";
+import type { Attachment, UiMessage } from "./lib/chatTypes";
 
-type View = "chat" | "settings";
+const AgentsView = lazy(() => import("./components/agents/AgentsView").then((m) => ({ default: m.AgentsView })));
+const MeetingView = lazy(() => import("./components/meeting/MeetingView").then((m) => ({ default: m.MeetingView })));
+
+type View = "chat" | "settings" | "meeting" | "agents";
+
+// The agent prompt is prefixed with the project folder (see useChat); keep
+// that plumbing out of the transcript when a thread is reopened.
+const stripProjectPrefix = (text: string) => text.replace(/^\[Project folder: [^\]]*\]\s*/, "");
 
 export default function App() {
   const auth = useAuth();
   const conversations = useConversations();
-  const chat = useChat({ onActivity: conversations.refresh });
   const workspace = useWorkspace();
+  const chat = useChat({ onActivity: conversations.refresh, projectPath: workspace.activeProject?.path ?? null });
+  const meeting = useMeeting();
+  const agents = useAgents();
 
   const [view, setView] = useState<View>("chat");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [rightDockOpen, setRightDockOpen] = useState(false);
   const [aiActive, setAiActive] = useState(false);
+  const [injected, setInjected] = useState<Attachment[]>([]);
 
   useEffect(() => {
     if (auth.status !== "signed-in") return;
@@ -43,6 +58,52 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.status]);
+
+  // Ctrl+Shift+Enter (global): during a live session, ask for a suggested
+  // reply right away; otherwise just open the copilot.
+  const meetingLiveRef = useRef(false);
+  meetingLiveRef.current = meeting.status.live;
+  const assistRef = useRef(meeting.assist);
+  assistRef.current = meeting.assist;
+  useEffect(() => {
+    if (auth.status !== "signed-in") return;
+    const unlisten = onMeetingHotkey(() => {
+      setView("meeting");
+      if (meetingLiveRef.current) void assistRef.current("suggest");
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [auth.status]);
+
+  // A browser-requested task is waiting for the user's Allow/Deny: bring the
+  // window forward on the Agents view, or the request would silently time out.
+  const prevWaiting = useRef(0);
+  useEffect(() => {
+    if (agents.waitingCount > prevWaiting.current) {
+      setView("agents");
+      appWindow.show().catch(() => {});
+      appWindow.setFocus().catch(() => {});
+    }
+    prevWaiting.current = agents.waitingCount;
+  }, [agents.waitingCount]);
+
+  // Ctrl+B toggles the sidebar, Ctrl+J the editor/terminal dock.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === "b") {
+        e.preventDefault();
+        setSidebarOpen((v) => !v);
+      } else if (k === "j") {
+        e.preventDefault();
+        setRightDockOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const handleNewChat = useCallback(async () => {
     try {
@@ -63,7 +124,7 @@ export default function App() {
         const uiMsgs: UiMessage[] = msgs.map((m) => ({
           id: newId(),
           kind: m.role === "assistant" ? "assistant" : "user",
-          content: m.content,
+          content: m.role === "assistant" ? m.content : stripProjectPrefix(m.content),
         }));
         chat.loadMessages(uiMsgs);
         conversations.setActiveId(id);
@@ -92,54 +153,119 @@ export default function App() {
     toggleAiActive().catch(() => {});
   }, []);
 
+  const handleAddProject = useCallback(() => {
+    workspace.addFolder().catch(() => {});
+  }, [workspace]);
+
+  const handleAskAboutFile = useCallback((path: string, name: string) => {
+    setInjected([{ id: newId(), kind: "file", path, name }]);
+    setView("chat");
+  }, []);
+
+  const consumeInjected = useCallback(() => setInjected([]), []);
+
+  const frame =
+    "flex h-screen flex-col overflow-hidden rounded-[12px] border border-border-default bg-bg-primary text-text-primary";
+
   if (auth.status !== "signed-in") {
     return (
-      <div className="flex h-screen flex-col overflow-hidden rounded-[14px] border border-border-default bg-bg-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+      <div className={frame}>
         <TitleBar aiActive={false} onToggleAi={() => {}} />
         <AuthGate status={auth.status} error={auth.error} onRetry={auth.retry} onSignedIn={auth.onSignedIn} />
       </div>
     );
   }
 
+  const activeThread = conversations.threads.find((t) => t.id === conversations.activeId);
+  const title =
+    view === "meeting"
+      ? "Meeting copilot"
+      : view === "agents"
+        ? "Agents"
+        : view === "settings"
+        ? "Settings"
+        : activeThread
+          ? threadTitle(activeThread.title)
+          : chat.messages.length > 0
+            ? "New chat"
+            : undefined;
+
   return (
-    <div className="flex h-screen flex-col overflow-hidden rounded-[14px] border border-border-default bg-bg-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
-      <TitleBar aiActive={aiActive} onToggleAi={handleToggleHoverMode} />
+    <div className={frame}>
+      <TitleBar
+        aiActive={aiActive}
+        onToggleAi={handleToggleHoverMode}
+        title={title}
+        sidebarOpen={sidebarOpen}
+        onOpenSidebar={() => setSidebarOpen(true)}
+        dockOpen={rightDockOpen}
+        onToggleDock={() => setRightDockOpen((v) => !v)}
+      />
       <div className="relative flex min-h-0 flex-1">
-        {!sidebarOpen && (
-          <button
-            onClick={() => setSidebarOpen(true)}
-            title="Open sidebar"
-            className="absolute left-2 top-2 z-10 rounded-md border border-border-default bg-bg-secondary p-1.5 text-text-secondary shadow-md transition hover:text-text-primary"
-          >
-            <PanelLeftOpen size={15} />
-          </button>
-        )}
         <AppShell
           sidebarOpen={sidebarOpen}
           onCloseSidebar={() => setSidebarOpen(false)}
           rightDockOpen={rightDockOpen}
           onCloseRightDock={() => setRightDockOpen(false)}
-          onToggleRightDock={() => setRightDockOpen((v) => !v)}
           workspaceRoot={workspace.root}
-          onChangeWorkspaceRoot={workspace.setRoot}
-          threads={conversations.threads}
-          activeThreadId={conversations.activeId}
-          onNewChat={handleNewChat}
-          onOpenThread={handleOpenThread}
-          onDeleteThread={handleDeleteThread}
-          onOpenSettings={() => setView("settings")}
-          onToggleHoverMode={handleToggleHoverMode}
-          aiActive={aiActive}
+          projectName={workspace.activeProject?.name ?? null}
+          onAddProject={handleAddProject}
+          onAskAboutFile={handleAskAboutFile}
+          sidebar={
+            <Sidebar
+              user={auth.user}
+              threads={conversations.threads}
+              activeId={view === "chat" ? conversations.activeId : null}
+              onNewChat={handleNewChat}
+              onOpenThread={handleOpenThread}
+              onDeleteThread={handleDeleteThread}
+              onOpenSettings={() => setView(view === "settings" ? "chat" : "settings")}
+              settingsActive={view === "settings"}
+              onOpenMeeting={() => setView(view === "meeting" ? "chat" : "meeting")}
+              meetingActive={view === "meeting"}
+              meetingLive={meeting.status.live}
+              onOpenAgents={() => setView(view === "agents" ? "chat" : "agents")}
+              agentsActive={view === "agents"}
+              agentsBusy={agents.openCount}
+              agentsWaiting={agents.waitingCount}
+              browserLinked={!!agents.info?.connected}
+              onToggleHoverMode={handleToggleHoverMode}
+              aiActive={aiActive}
+              onToggleIdeDock={() => setRightDockOpen((v) => !v)}
+              ideDockOpen={rightDockOpen}
+              projects={workspace.projects}
+              activeProjectPath={workspace.activeProject?.path ?? null}
+              onSelectProject={workspace.selectProject}
+              onAddProject={handleAddProject}
+              onRemoveProject={workspace.removeProject}
+              onCollapse={() => setSidebarOpen(false)}
+            />
+          }
         >
-          {view === "settings" ? (
-            <SettingsPanel user={auth.user} onClose={() => setView("chat")} onSignedOut={auth.retry} />
+          {view === "agents" ? (
+            <Suspense fallback={null}>
+              <AgentsView agents={agents} onClose={() => setView("chat")} />
+            </Suspense>
+          ) : view === "meeting" ? (
+            <Suspense fallback={null}>
+              <MeetingView meeting={meeting} onClose={() => setView("chat")} />
+            </Suspense>
+          ) : view === "settings" ? (
+            <SettingsPanel user={auth.user} agents={agents} onClose={() => setView("chat")} onSignedOut={auth.retry} />
           ) : (
             <ChatView
               chat={chat}
               aiActive={aiActive}
-              onToggleHoverMode={handleToggleHoverMode}
               workspaceRoot={workspace.root}
               conversations={conversations.threads}
+              projects={workspace.projects}
+              activeProject={workspace.activeProject}
+              onSelectProject={workspace.selectProject}
+              onAddProject={handleAddProject}
+              onOpenMeeting={() => setView("meeting")}
+              browserLinked={!!agents.info?.connected}
+              injected={injected}
+              onInjectedConsumed={consumeInjected}
             />
           )}
         </AppShell>

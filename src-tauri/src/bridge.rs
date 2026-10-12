@@ -45,6 +45,9 @@ pub struct Bridge {
 
 struct Inner {
     connected: AtomicBool,
+    /// The live connection presented this app's pairing code (see link.rs) —
+    /// required before the browser may hand the desktop tasks.
+    paired: AtomicBool,
     port: AtomicU16,
     client_tx: Mutex<Option<mpsc::UnboundedSender<Message>>>,
     pending: Mutex<HashMap<String, PendingTask>>,
@@ -66,6 +69,7 @@ pub fn bridge() -> Bridge {
         .get_or_init(|| Bridge {
             inner: Arc::new(Inner {
                 connected: AtomicBool::new(false),
+                paired: AtomicBool::new(false),
                 port: AtomicU16::new(0),
                 client_tx: Mutex::new(None),
                 pending: Mutex::new(HashMap::new()),
@@ -83,6 +87,29 @@ impl Bridge {
 
     pub fn port(&self) -> u16 {
         self.inner.port.load(Ordering::SeqCst)
+    }
+
+    pub fn is_paired(&self) -> bool {
+        self.is_connected() && self.inner.paired.load(Ordering::SeqCst)
+    }
+
+    pub fn unpair(&self) {
+        self.inner.paired.store(false, Ordering::SeqCst);
+    }
+
+    pub fn send_json(&self, value: Value) -> bool {
+        self.send_frame(value)
+    }
+
+    /// Resolve a delegated task as failed (watcher give-up, lost task, cancel).
+    pub fn fail_task(&self, id: &str, error: &str) {
+        let task = self.inner.pending.lock().unwrap().remove(id);
+        if let Some(mut task) = task {
+            if let Some(txr) = task.result_tx.take() {
+                let _ = txr.send(Err(error.to_string()));
+            }
+        }
+        crate::link::task_finished(id, Err(error));
     }
 
     fn send_frame(&self, value: Value) -> bool {
@@ -130,6 +157,7 @@ with the Thothai extension installed and signed in, then try again."
             self.inner.results.lock().unwrap().remove(&id);
             return Err("Failed to send the task to the browser extension (link dropped).".to_string());
         }
+        crate::link::task_started(&id, "to_browser", instruction, "running");
         Ok(id)
     }
 
@@ -140,14 +168,22 @@ with the Thothai extension installed and signed in, then try again."
             return Err(format!("No pending browser task with id \"{}\".", id));
         };
         match tokio::time::timeout(Duration::from_secs(timeout_secs.max(5)), rx).await {
-            Ok(Ok(res)) => res,
+            Ok(Ok(res)) => {
+                match &res {
+                    Ok(r) => crate::link::task_finished(id, Ok(r)),
+                    Err(e) => crate::link::task_finished(id, Err(e)),
+                }
+                res
+            }
             Ok(Err(_)) => {
                 self.inner.pending.lock().unwrap().remove(id);
                 Err("The browser closed the task before returning a result.".to_string())
             }
             Err(_) => {
                 self.inner.pending.lock().unwrap().remove(id);
-                Err(format!("The browser task timed out after {}s.", timeout_secs))
+                let msg = format!("The browser task timed out after {}s.", timeout_secs);
+                crate::link::task_finished(id, Err(&msg));
+                Err(msg)
             }
         }
     }
@@ -191,7 +227,7 @@ fn emit_progress(app: &AppHandle, source: &str, kind: &str, message: String) {
 fn emit_status(app: &AppHandle, connected: bool) {
     let _ = app.emit(
         "bridge-status",
-        json!({ "connected": connected, "port": bridge().port() }),
+        json!({ "connected": connected, "paired": connected && bridge().is_paired(), "port": bridge().port() }),
     );
 }
 
@@ -273,9 +309,10 @@ async fn handle_connection(stream: tokio::net::TcpStream, app: AppHandle) {
         }
     });
 
-    // Mark this connection live.
+    // Mark this connection live (unpaired until its hello proves otherwise).
     {
         let b = bridge();
+        b.inner.paired.store(false, Ordering::SeqCst);
         *b.inner.client_tx.lock().unwrap() = Some(tx.clone());
         b.inner.connected.store(true, Ordering::SeqCst);
     }
@@ -296,13 +333,17 @@ async fn handle_connection(stream: tokio::net::TcpStream, app: AppHandle) {
     {
         let b = bridge();
         b.inner.connected.store(false, Ordering::SeqCst);
+        b.inner.paired.store(false, Ordering::SeqCst);
         *b.inner.client_tx.lock().unwrap() = None;
-        let mut pending = b.inner.pending.lock().unwrap();
-        for (_, task) in pending.drain() {
+        let drained: Vec<(String, PendingTask)> = b.inner.pending.lock().unwrap().drain().collect();
+        for (id, task) in drained {
             if let Some(txr) = task.result_tx {
                 let _ = txr.send(Err("The browser extension disconnected.".to_string()));
             }
+            crate::link::task_finished(&id, Err("The browser extension disconnected."));
         }
+        // Nobody is left to receive the results of tasks the browser asked for.
+        crate::link::cancel_incoming("The browser extension disconnected.");
     }
     emit_status(&app, false);
     writer.abort();
@@ -315,16 +356,27 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
     };
     match v.get("type").and_then(|t| t.as_str()) {
         Some("hello") => {
+            let code = v.get("pairCode").and_then(|x| x.as_str()).unwrap_or("");
+            let paired = !code.trim().is_empty() && crate::link::code_matches(code);
+            bridge().inner.paired.store(paired, Ordering::SeqCst);
             let _ = tx.send(Message::Text(
                 json!({
                     "v": 1,
                     "type": "hello_ack",
                     "desktop": "mouse-ai",
                     "version": env!("CARGO_PKG_VERSION"),
+                    "protocol": 2,
+                    "paired": paired,
+                    "acceptsTasks": crate::link::accepts_tasks(),
                 })
                 .to_string(),
             ));
+            emit_status(app, true);
         }
+        Some("desktop_task") => crate::link::handle_desktop_task(&v, bridge().is_paired()),
+        Some("desktop_cancel") => crate::link::handle_desktop_cancel(&v),
+        Some("status_request") => crate::link::handle_status_request(&v),
+        Some("status") => crate::link::handle_status_reply(&v),
         Some("ping") => {
             let _ = tx.send(Message::Text(json!({ "v": 1, "type": "pong" }).to_string()));
         }
@@ -339,6 +391,7 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
                 .unwrap()
                 .get(id)
                 .map(|t| t.desktop_source.clone());
+            crate::link::task_step(id, kind, &message);
             if let Some(src) = source {
                 // Prefix so the browser's steps are visually distinct from the
                 // desktop's own tool calls in the shared live log.
@@ -358,6 +411,10 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
                     .unwrap_or("The browser task failed.")
                     .to_string())
             };
+            match &payload {
+                Ok(r) => crate::link::task_finished(&id, Ok(r)),
+                Err(e) => crate::link::task_finished(&id, Err(e)),
+            }
             let task = bridge().inner.pending.lock().unwrap().remove(&id);
             if let Some(task) = task {
                 if let Some(txr) = task.result_tx {

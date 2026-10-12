@@ -21,7 +21,7 @@ export function Markdown({ children, className }: MarkdownProps) {
               return <CodeBlock code={String(children).replace(/\n$/, "")} language={match?.[1]} />;
             }
             return (
-              <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-[12px]" {...rest}>
+              <code className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono text-[12px]" {...rest}>
                 {children}
               </code>
             );

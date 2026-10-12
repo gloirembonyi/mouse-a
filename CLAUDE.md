@@ -82,6 +82,8 @@ until a plain-text answer or `MAX_ITERATIONS` (40) is hit. Key details baked int
 | `terminal.rs` | PTY spawn/write/resize backing the IDE dock's embedded terminal |
 | `git_diff.rs` | Git status/diff for the IDE dock's changes pane |
 | `mcp.rs` | MCP client: launches configured servers as stdio subprocesses, speaks JSON-RPC 2.0 (`initialize` → `tools/list` → `tools/call`). Strictly additive/fail-safe — a broken MCP server is skipped, never breaks the core agent loop |
+| `bridge.rs` | Localhost WebSocket (127.0.0.1:47821) to the Thothai browser extension — the transport for agent handoffs |
+| `link.rs` | Two-way agent link on top of the bridge: pairing code (`%APPDATA%/mouse-ai/bridge.json`), browser→desktop `desktop_task` runs (source `browser:<id>`), the shared task board (`bridge-task` events → Agents view) and the watcher that probes/fails stalled handoffs |
 | `oauth.rs` | Google OAuth loopback flow (`http://127.0.0.1:8917/callback`) for Sign in with Google |
 
 Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/config.json`.
@@ -91,8 +93,14 @@ Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/confi
 - `lib/tauri.ts` — the single place that wraps every `invoke()`/`listen()` call to a Rust command.
   When a Rust command's name or shape changes, update it here rather than calling `invoke` directly
   from components.
-- `hooks/` — `useAuth`, `useChat`, `useConversations`, `useWorkspace` hold the main window's stateful
-  logic; `App.tsx` wires them together and switches between the chat and settings views.
+- `hooks/` — `useAuth`, `useChat`, `useConversations`, `useWorkspace`, `useMeeting` hold the main window's
+  stateful logic; `App.tsx` wires them together and switches between the chat, meeting and settings views.
+  `useWorkspace` owns the user's **projects** (folders added via the native picker, `tauri-plugin-dialog`,
+  persisted in localStorage); the active project drives the IDE dock root and is prefixed onto agent tasks.
+- Theming: `index.css` defines dark + light palettes as `--mx-*` variables keyed off `<html data-theme>`, exposed to
+  Tailwind via `@theme inline` — use the token utilities (`bg-bg-primary`, `text-text-muted`, …), not raw colors, so
+  both themes work. `lib/theme.ts` holds the system/light/dark preference; `lib/editorTheme.ts` themes CodeMirror.
+  Shared primitives (`BrandMark`, `Kbd`, `IconButton`, `Switch`, `Menu`) live in `components/ui/`.
 - `components/chat/` — chat UI, including live agent activity rendering (`AgentActivity.tsx`) driven
   by the `agent-progress` event stream from `agent.rs`.
 - `components/editor/`, `components/terminal/`, `components/diff/` — the optional "IDE dock"
@@ -106,5 +114,8 @@ Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/confi
 - `src-tauri/tauri.conf.json` defines the two windows (`main`, `overlay`) and CSP.
 - Env vars (loaded from `.env.local`/`.env` at the repo root or `src-tauri/`, see `load_env_files` in
   `lib.rs`): `MOUSE_AI_BACKEND_URL` (override default backend), `MOUSE_AI_GOOGLE_CLIENT_ID` (override
-  OAuth client), `MOUSE_AI_GEMINI_MODEL` (passed through to the backend, doesn't add a local key).
+  OAuth client), `MOUSE_AI_GEMINI_MODEL` (passed through to the backend, doesn't add a local key),
+  `GROQ_API_KEY` (dev/BYOK only — lets `meeting.rs` call Whisper on Groq directly; production goes
+  through the backend's `/api/meeting/transcribe`, then falls back to Gemini), `MOUSE_AI_WHISPER_MODEL`
+  (default `whisper-large-v3`).
   Real environment variables always win over the `.env` files.

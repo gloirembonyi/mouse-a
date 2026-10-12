@@ -50,6 +50,8 @@ export const newConversation = () => invoke<void>("new_conversation");
 export const agentRun = (task: string, source: "main" | "overlay" = "main", imageDataUrl: string | null = null) =>
   invoke<AgentRunResult>("agent_run", { task, source, autonomous: true, imageDataUrl });
 
+export const agentCancel = (source: "main" | "overlay" = "main") => invoke<void>("agent_cancel", { source });
+
 export const agentConfirm = (requestId: string, approved: boolean) =>
   invoke<boolean>("agent_confirm", { requestId, approved });
 
@@ -115,6 +117,102 @@ export interface ChangedFile {
 export const gitStatus = (repoPath: string) => invoke<ChangedFile[]>("git_status", { repoPath });
 export const gitDiffFile = (repoPath: string, filePath: string) =>
   invoke<string>("git_diff_file", { repoPath, filePath });
+
+// ── Meeting & interview copilot (src-tauri/src/meeting.rs) ──
+export type MeetingMode = "meeting" | "interview" | "practice";
+export type MeetingAction =
+  | "suggest"
+  | "summary"
+  | "followups"
+  | "explain"
+  | "notes"
+  | "practice_question"
+  | "practice_feedback"
+  | "ask";
+
+export interface MeetingProfile {
+  about: string;
+  projects: string;
+  session_context: string;
+  style: string;
+}
+
+export interface TranscriptEntry {
+  id: number;
+  speaker: "them" | "me" | "coach" | "note";
+  text: string;
+  at_ms: number;
+}
+
+export interface MeetingStatus {
+  live: boolean;
+  mode: MeetingMode | "";
+  mic: boolean;
+  system: boolean;
+  started_at_ms: number | null;
+  warning: string | null;
+}
+
+export const meetingStart = (mode: MeetingMode, captureMic: boolean, captureSystem: boolean) =>
+  invoke<MeetingStatus>("meeting_start", { mode, captureMic, captureSystem });
+export const meetingStop = () => invoke<MeetingStatus>("meeting_stop");
+export const meetingStatus = () => invoke<MeetingStatus>("meeting_status");
+export const meetingTranscript = () => invoke<TranscriptEntry[]>("meeting_transcript");
+export const meetingAddEntry = (speaker: "them" | "me" | "note", text: string) =>
+  invoke<TranscriptEntry>("meeting_add_entry", { speaker, text });
+export const meetingClear = () => invoke<void>("meeting_clear");
+export const meetingAssist = (action: MeetingAction, question: string | null = null, includeScreen = false) =>
+  invoke<string>("meeting_assist", { action, question, includeScreen });
+export const meetingGetProfile = () => invoke<MeetingProfile>("meeting_get_profile");
+export const meetingSetProfile = (profile: MeetingProfile) => invoke<void>("meeting_set_profile", { profile });
+export const meetingSaveNotes = (notes: string, includeTranscript: boolean) =>
+  invoke<string>("meeting_save_notes", { notes, includeTranscript });
+export const onMeetingTranscript = (cb: (e: TranscriptEntry) => void) =>
+  listen<TranscriptEntry>("meeting-transcript", (e) => cb(e.payload));
+export const onMeetingStatus = (cb: (s: MeetingStatus) => void) =>
+  listen<MeetingStatus>("meeting-status", (e) => cb(e.payload));
+export const onMeetingLevel = (cb: (l: { mic: number; system: number }) => void) =>
+  listen<{ mic: number; system: number }>("meeting-level", (e) => cb(e.payload));
+export const onMeetingTranscribing = (cb: (busy: boolean) => void) =>
+  listen<boolean>("meeting-transcribing", (e) => cb(e.payload));
+export const onMeetingHotkey = (cb: () => void) => listen("meeting-hotkey", () => cb());
+
+// ── Agent link: desktop ⇄ browser agents (src-tauri/src/link.rs) ──
+export interface LinkInfo {
+  connected: boolean;
+  paired: boolean;
+  port: number;
+  pair_code: string;
+  accept_tasks: boolean;
+}
+
+export interface LinkStep {
+  kind: string;
+  message: string;
+  at_ms: number;
+}
+
+export interface LinkTask {
+  id: string;
+  direction: "to_browser" | "from_browser";
+  title: string;
+  status: "queued" | "running" | "waiting" | "stalled" | "done" | "failed" | "cancelled";
+  steps: LinkStep[];
+  started_ms: number;
+  updated_ms: number;
+  result: string | null;
+  error: string | null;
+}
+
+export const linkInfo = () => invoke<LinkInfo>("link_info");
+export const linkSetAcceptTasks = (accept: boolean) => invoke<LinkInfo>("link_set_accept_tasks", { accept });
+export const linkNewPairCode = () => invoke<LinkInfo>("link_new_pair_code");
+export const linkTasks = () => invoke<LinkTask[]>("link_tasks");
+export const linkCancelTask = (id: string) => invoke<void>("link_cancel_task", { id });
+export const linkClearFinished = () => invoke<LinkTask[]>("link_clear_finished");
+export const onLinkTask = (cb: (t: LinkTask) => void) => listen<LinkTask>("bridge-task", (e) => cb(e.payload));
+export const onBridgeStatus = (cb: (s: { connected: boolean; paired: boolean; port: number }) => void) =>
+  listen<{ connected: boolean; paired: boolean; port: number }>("bridge-status", (e) => cb(e.payload));
 
 export function withTimeout<T>(promise: Promise<T>, ms: number, message = "Request timed out."): Promise<T> {
   return Promise.race([

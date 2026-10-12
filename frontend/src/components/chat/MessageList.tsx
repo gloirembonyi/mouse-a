@@ -1,87 +1,82 @@
-import { useEffect, useRef } from "react";
-import { Camera, FileText, MessageCircle, MessageSquare, Search } from "lucide-react";
-import { ThinkingOrb } from "thinking-orbs";
+import { useEffect, useRef, useState } from "react";
+import { ArrowDown, Check, Copy, FileText, MessageSquare } from "lucide-react";
+import { BotAvatar } from "../ui/BotAvatar";
 import { Markdown } from "./Markdown";
 import { AgentActivity } from "./AgentActivity";
 import type { UiMessage } from "../../lib/chatTypes";
 
 interface MessageListProps {
   messages: UiMessage[];
-  onQuickAction: (action: "capture" | "ask" | "search") => void;
 }
 
-export function MessageList({ messages, onQuickAction }: MessageListProps) {
+export function MessageList({ messages }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
 
+  // Follow new output only while the reader is already at the bottom — never
+  // yank them away from something they scrolled up to re-read.
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
+    if (!el || !stickRef.current) return;
     requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight;
     });
   }, [messages]);
 
+  const jumpToBottom = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  };
+
   return (
-    <div ref={containerRef} className="scrollbar-thin flex-1 overflow-y-auto px-6 py-5">
-      <div className="mx-auto max-w-[760px]">
-        {messages.length === 0 ? (
-          <Welcome onQuickAction={onQuickAction} />
-        ) : (
-          messages.map((m) => <MessageItem key={m.id} message={m} />)
-        )}
+    <div className="relative min-h-0 flex-1">
+      <div
+        ref={containerRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+          stickRef.current = atBottom;
+          setShowJump(!atBottom);
+        }}
+        className="scrollbar-thin h-full overflow-y-auto px-6 pb-6 pt-6"
+      >
+        <div className="mx-auto flex max-w-[760px] flex-col gap-6">
+          {messages.map((m, i) => (
+            <MessageItem key={m.id} message={m} latest={i === messages.length - 1} />
+          ))}
+        </div>
       </div>
+      {showJump && (
+        <button
+          onClick={jumpToBottom}
+          title="Jump to latest"
+          className="animate-pop absolute bottom-3 left-1/2 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-border-default bg-bg-elevated text-text-secondary shadow-pop transition hover:text-text-primary"
+        >
+          <ArrowDown size={15} />
+        </button>
+      )}
     </div>
   );
 }
 
-function Welcome({ onQuickAction }: { onQuickAction: MessageListProps["onQuickAction"] }) {
-  return (
-    <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-      <div className="animate-[float_3s_ease-in-out_infinite] text-[40px]">🖱️✨</div>
-      <h3 className="text-lg font-semibold">Mouse AI Ready</h3>
-      <p className="max-w-[280px] text-xs text-text-secondary">
-        Press <kbd className="rounded border border-border-default bg-bg-tertiary px-1.5 py-0.5 font-sans text-[11px]">Ctrl+Shift+Space</kbd> anywhere
-        — an ask box opens right at your cursor about whatever you're pointing at. Or press{" "}
-        <kbd className="rounded border border-border-default bg-bg-tertiary px-1.5 py-0.5 font-sans text-[11px]">Ctrl+Shift+Q</kbd> for hover mode:
-        pause the mouse and a <strong>✦ Ask AI</strong> button appears.
-      </p>
-      <div className="mt-2 flex flex-wrap justify-center gap-1.5">
-        <ActionChip icon={<Camera size={13} />} label="Capture & Analyze" onClick={() => onQuickAction("capture")} />
-        <ActionChip icon={<MessageCircle size={13} />} label="Quick Ask" onClick={() => onQuickAction("ask")} />
-        <ActionChip icon={<Search size={13} />} label="Web Search" onClick={() => onQuickAction("search")} />
-      </div>
-    </div>
-  );
-}
-
-function ActionChip({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-1.5 rounded-full border border-border-default bg-bg-tertiary px-3.5 py-1.5 text-xs text-text-secondary transition hover:-translate-y-px hover:border-accent hover:bg-accent-soft hover:text-accent"
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function MessageItem({ message }: { message: UiMessage }) {
+function MessageItem({ message, latest }: { message: UiMessage; latest: boolean }) {
   if (message.kind === "user") {
     const attachments = message.attachments ?? [];
     return (
-      <div className="mb-3.5 flex flex-col items-end gap-1.5 border-b border-border-soft pb-3.5 last:border-none last:pb-0">
+      <div className="animate-fade-up flex flex-col items-end gap-1.5">
         {attachments.length > 0 && (
           <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
             {attachments.map((a) =>
               a.kind === "image" ? (
-                <img key={a.id} src={a.dataUrl} alt={a.name} className="h-14 w-14 rounded-lg border border-border-default object-cover" />
+                <img key={a.id} src={a.dataUrl} alt={a.name} className="h-20 w-20 rounded-xl border border-border-default object-cover" />
               ) : (
                 <span
                   key={a.id}
-                  className="flex items-center gap-1 rounded-full border border-border-default bg-bg-tertiary px-2.5 py-1 text-[11px] text-text-secondary"
+                  className="flex items-center gap-1 rounded-lg border border-border-default bg-bg-tertiary px-2 py-1 text-[12px] text-text-secondary"
                 >
-                  {a.kind === "file" ? <FileText size={11} /> : <MessageSquare size={11} />}
+                  {a.kind === "file" ? <FileText size={12} /> : <MessageSquare size={12} />}
                   {a.kind === "file" ? a.name : a.title}
                 </span>
               ),
@@ -89,7 +84,7 @@ function MessageItem({ message }: { message: UiMessage }) {
           </div>
         )}
         {message.content && (
-          <div className="max-w-[85%] rounded-2xl rounded-br-md bg-gradient-to-br from-accent to-accent-light px-3.5 py-2.5 text-[13px] text-white shadow-[0_3px_12px_rgba(118,159,205,0.25)]">
+          <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-[20px] bg-user-bubble px-4 py-2.5 text-[14px] leading-relaxed text-text-primary">
             {message.content}
           </div>
         )}
@@ -99,33 +94,30 @@ function MessageItem({ message }: { message: UiMessage }) {
 
   if (message.kind === "system") {
     return (
-      <div className="mb-3.5 flex justify-center">
-        <div className="rounded-md border border-border-default bg-bg-tertiary px-3 py-1.5 text-center text-[11px] text-text-muted">
-          {message.content}
-        </div>
+      <div className="flex justify-center">
+        <div className="rounded-full border border-border-soft px-3 py-1 text-center text-[11.5px] text-text-muted">{message.content}</div>
       </div>
     );
   }
 
   if (message.kind === "thinking") {
     return (
-      <div className="mb-3.5 flex items-start gap-2 border-b border-border-soft pb-3.5">
-        <Avatar />
-        {/* Same indicator as the browser extension — one loading language across both
-            products. Nothing streams on this path yet, so this orb is the only signal
-            the user gets for the whole model latency; it has to read as deliberate. */}
-        <div className="flex items-center gap-2.5 px-2 py-2">
-          <ThinkingOrb state="working" size={20} theme="dark" aria-label="Thinking" />
-          <span className="text-[12.5px] text-text-muted">Thinking…</span>
-        </div>
+      <div className="animate-fade-up flex items-center gap-3">
+        <BotAvatar kind="ghost" mood="thinking" size={28} title="Mouse AI is thinking" />
+        <span className="shimmer-text text-[13.5px] font-medium">Thinking…</span>
       </div>
     );
   }
 
   if (message.kind === "agent") {
     return (
-      <div className="mb-3.5 flex items-start gap-2 border-b border-border-soft pb-3.5">
-        <Avatar />
+      <div className="animate-fade-up flex min-w-0 gap-3">
+        <BotAvatar
+          kind="ghost"
+          mood={message.status === "running" ? "working" : message.status === "failed" ? "error" : "still"}
+          size={28}
+          className="mt-1.5"
+        />
         <div className="min-w-0 flex-1">
           <AgentActivity steps={message.steps} status={message.status} elapsedMs={message.elapsedMs} />
         </div>
@@ -133,21 +125,34 @@ function MessageItem({ message }: { message: UiMessage }) {
     );
   }
 
-  // assistant
-  return (
-    <div className="mb-3.5 flex items-start gap-2 border-b border-border-soft pb-3.5 last:border-none last:pb-0">
-      <Avatar />
-      <div className="min-w-0 flex-1 text-[13px] leading-[1.65] text-text-primary">
-        <Markdown>{message.content}</Markdown>
-      </div>
-    </div>
-  );
+  return <AssistantMessage content={message.content} latest={latest} />;
 }
 
-function Avatar() {
+function AssistantMessage({ content, latest }: { content: string; latest: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    await navigator.clipboard.writeText(content).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
   return (
-    <div className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-border-default bg-gradient-to-br from-accent-soft to-transparent text-xs">
-      🖱️
+    <div className="animate-fade-up group flex min-w-0 gap-3">
+      <BotAvatar kind="ghost" mood={latest ? "idle" : "still"} size={28} className="mt-0.5" />
+      <div className="min-w-0 flex-1">
+      <div className="text-[14px] leading-[1.7] text-text-primary">
+        <Markdown>{content}</Markdown>
+      </div>
+      <div className="mt-1 flex h-6 items-center gap-1 opacity-0 transition group-hover:opacity-100">
+        <button
+          onClick={copy}
+          title="Copy"
+          className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11.5px] text-text-muted transition hover:bg-bg-hover hover:text-text-primary"
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      </div>
     </div>
   );
 }

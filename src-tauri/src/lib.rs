@@ -4,6 +4,7 @@
 mod agent;
 mod backend;
 mod bridge;
+mod link;
 mod capture;
 mod commands;
 mod explorer;
@@ -12,6 +13,7 @@ mod git_diff;
 mod hover;
 mod input;
 mod mcp;
+mod meeting;
 mod mouse;
 mod oauth;
 mod terminal;
@@ -52,9 +54,21 @@ fn load_env_files() {
 pub fn run() {
     load_env_files();
     tauri::Builder::default()
+        // Must be the first plugin. A second launch used to start a full second
+        // copy: another tray icon, hotkeys that fail to register (fatal, see
+        // below) and a bridge that can't bind its port. Now the second launch
+        // just brings the running window forward and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             backend: backend::BackendClient::new(None),
             ai_active: Arc::new(RwLock::new(false)),
@@ -112,6 +126,22 @@ pub fn run() {
             git_diff::git_status,
             git_diff::git_diff_file,
             commands::bridge_status,
+            link::link_info,
+            link::link_set_accept_tasks,
+            link::link_new_pair_code,
+            link::link_tasks,
+            link::link_cancel_task,
+            link::link_clear_finished,
+            meeting::meeting_start,
+            meeting::meeting_stop,
+            meeting::meeting_status,
+            meeting::meeting_transcript,
+            meeting::meeting_add_entry,
+            meeting::meeting_clear,
+            meeting::meeting_assist,
+            meeting::meeting_get_profile,
+            meeting::meeting_set_profile,
+            meeting::meeting_save_notes,
         ])
         .setup(|app| {
             // ── System Tray ──────────────────────────────────────
@@ -176,11 +206,29 @@ pub fn run() {
             // Ctrl+Shift+Q — toggle hover mode (auto "Ask AI" pill on dwell).
             let hover_mode_shortcut =
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyQ);
+            // Ctrl+Shift+Enter — meeting copilot: "What should I say?"
+            let meeting_shortcut =
+                Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Enter);
 
             // NOTE: shortcut handlers fire on both key press AND release —
             // only act on Pressed, otherwise every hotkey runs twice.
+            //
+            // Registration failures are reported, not propagated: if another
+            // app already owns a combo, `?` here used to abort setup and the
+            // whole app died at launch. Now that one hotkey is just missing
+            // (the tray menu still offers the same actions).
+            let report = |name: &str, res: Result<(), tauri_plugin_global_shortcut::Error>| {
+                if let Err(e) = res {
+                    eprintln!("[shortcuts] could not register {}: {}", name, e);
+                    let _ = app.handle().emit(
+                        "shortcut-unavailable",
+                        serde_json::json!({ "shortcut": name, "error": e.to_string() }),
+                    );
+                }
+            };
+
             let app_handle = app.handle().clone();
-            app.global_shortcut().on_shortcut(ask_shortcut, {
+            report("Ctrl+Shift+Space", app.global_shortcut().on_shortcut(ask_shortcut, {
                 let app_handle = app_handle.clone();
                 move |_app, _shortcut, event| {
                     if event.state() != ShortcutState::Pressed {
@@ -188,10 +236,10 @@ pub fn run() {
                     }
                     commands::trigger_ask_at_cursor(&app_handle);
                 }
-            })?;
+            }));
 
             let app_handle2 = app.handle().clone();
-            app.global_shortcut().on_shortcut(capture_shortcut, {
+            report("Ctrl+Shift+S", app.global_shortcut().on_shortcut(capture_shortcut, {
                 let app_handle = app_handle2.clone();
                 move |_app, _shortcut, event| {
                     if event.state() != ShortcutState::Pressed {
@@ -203,10 +251,10 @@ pub fn run() {
                         let _ = window.set_focus();
                     }
                 }
-            })?;
+            }));
 
             let app_handle3 = app.handle().clone();
-            app.global_shortcut().on_shortcut(hover_mode_shortcut, {
+            report("Ctrl+Shift+Q", app.global_shortcut().on_shortcut(hover_mode_shortcut, {
                 let app_handle = app_handle3.clone();
                 move |_app, _shortcut, event| {
                     if event.state() != ShortcutState::Pressed {
@@ -217,7 +265,22 @@ pub fn run() {
                         commands::flip_ai_state(&app_handle).await;
                     });
                 }
-            })?;
+            }));
+
+            let app_handle4 = app.handle().clone();
+            report("Ctrl+Shift+Enter", app.global_shortcut().on_shortcut(meeting_shortcut, {
+                let app_handle = app_handle4.clone();
+                move |_app, _shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    // Show without stealing focus from the call window.
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.emit("meeting-hotkey", ());
+                    }
+                }
+            }));
 
             // ── Main Window Setup ────────────────────────────────
             if let Some(window) = app.get_webview_window("main") {
@@ -232,6 +295,7 @@ pub fn run() {
             // ── Browser bridge (WebSocket server for the extension) ──
             // Lets the desktop agent delegate web tasks to the Thothai browser
             // extension in real time. Runs for the whole app lifetime.
+            link::start(app.handle().clone());
             let bridge_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 bridge::serve(bridge_app).await;

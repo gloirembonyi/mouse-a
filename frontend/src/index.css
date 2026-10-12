@@ -3,43 +3,150 @@
    to precede Tailwind's own @import, which expands into non-import rules and
    makes any @import after it invalid per the CSS spec. */
 
-/* Thothai's blue accent on a cool navy, solid (non-glass) dark theme — glass/
-   blur is reserved for the hover-overlay "Ask AI" popup only (see
-   public/overlay.css), which floats over arbitrary desktop content and needs
-   to blend with whatever's behind it; the main window has its own opaque
-   background so it doesn't need that treatment. Exposed as Tailwind theme
-   tokens (bg-bg-card, text-accent, etc.) instead of raw CSS custom
-   properties, so components can use utility classes directly. */
-@theme {
-  --font-sans: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+/* Codex-style neutral surfaces with Thothai's blue kept as a sparing accent.
+   Two palettes — dark (default) and light — live as raw custom properties
+   switched by <html data-theme="…"> (see lib/theme.ts), and are exposed to
+   Tailwind as theme tokens (bg-bg-card, text-accent, …) via `@theme inline`,
+   so every utility repaints when the theme flips with no per-component
+   light/dark logic. Glass/blur stays reserved for the hover overlay
+   (public/overlay.css), which floats over arbitrary desktop content. */
+/* Thothai palette (same scales as thothai-landing/src/app/globals.css):
+   brand  #f1f6fb … #769fcd (500) … #263b5a
+   ink    #f4f8fb … #12223a   — cool blue-greys for text
+   night  #1f2638 / #161c2b / #0f1421 — the dark surfaces
+   Dark = night surfaces + ink-light text; light = snow/canvas + ink text,
+   with brand-600 (#5578a8) for accent text so it passes 4.5:1. */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --mx-bg-primary: #121827;
+  --mx-bg-secondary: #0d1220;
+  --mx-bg-tertiary: #1b2335;
+  --mx-bg-hover: #222b40;
+  --mx-bg-elevated: #182033;
+  --mx-bg-card: rgba(151, 185, 222, 0.04);
 
-  --color-bg-primary: #0a0d12;
-  --color-bg-secondary: #10141c;
-  --color-bg-tertiary: #171d28;
-  --color-bg-hover: #1e2634;
-  --color-bg-card: rgba(255, 255, 255, 0.035);
+  --mx-border-default: rgba(185, 215, 234, 0.1);
+  --mx-border-soft: rgba(185, 215, 234, 0.065);
+  --mx-border-strong: rgba(185, 215, 234, 0.18);
+  --mx-border-focus: rgba(118, 159, 205, 0.55);
 
-  --color-border-default: rgba(255, 255, 255, 0.06);
-  --color-border-soft: rgba(255, 255, 255, 0.045);
-  --color-border-focus: rgba(118, 159, 205, 0.45);
+  --mx-text-primary: #e9f0f6;
+  --mx-text-secondary: #a9bcd0;
+  --mx-text-muted: #6f87a2;
 
-  --color-text-primary: #e9edf3;
-  --color-text-secondary: #93a2b8;
-  --color-text-muted: #5c6678;
+  --mx-accent: #8fb3dc;
+  --mx-accent-light: #b9d7ea;
+  --mx-accent-dark: #5578a8;
+  --mx-accent-soft: rgba(118, 159, 205, 0.16);
+  --mx-accent-glow: rgba(118, 159, 205, 0.42);
 
-  --color-accent: #769fcd;
-  --color-accent-light: #a8c8e8;
-  --color-accent-dark: #4a7ab0;
-  --color-accent-soft: rgba(118, 159, 205, 0.15);
-  --color-accent-glow: rgba(118, 159, 205, 0.4);
+  --mx-cta-from: #769fcd;
+  --mx-cta-to: #5578a8;
+  --mx-user-bubble: #1f2a40;
+  --mx-shadow: 0 14px 34px -10px rgba(4, 8, 18, 0.7);
+  --mx-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --mx-scrollbar: rgba(185, 215, 234, 0.12);
 
-  --color-success: #4caf50;
-  --color-success-soft: rgba(76, 175, 80, 0.15);
-  --color-danger: #ef5350;
-  --color-danger-soft: rgba(239, 83, 80, 0.15);
-  --color-warning: #ffb74d;
-  --color-warning-soft: rgba(255, 183, 77, 0.15);
+  --mx-success: #34d399;
+  --mx-danger: #f0605c;
+  --mx-warning: #f2b766;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --mx-bg-primary: #f7fbfc;
+  --mx-bg-secondary: #eef4f9;
+  --mx-bg-tertiary: #e4eef7;
+  --mx-bg-hover: #dce8f3;
+  --mx-bg-elevated: #ffffff;
+  --mx-bg-card: rgba(255, 255, 255, 0.7);
+
+  --mx-border-default: rgba(42, 69, 96, 0.12);
+  --mx-border-soft: rgba(42, 69, 96, 0.08);
+  --mx-border-strong: rgba(42, 69, 96, 0.2);
+  --mx-border-focus: rgba(85, 120, 168, 0.5);
+
+  --mx-text-primary: #12223a;
+  --mx-text-secondary: #3a5572;
+  --mx-text-muted: #6a87a4;
+
+  --mx-accent: #5578a8;
+  --mx-accent-light: #769fcd;
+  --mx-accent-dark: #436391;
+  --mx-accent-soft: rgba(118, 159, 205, 0.16);
+  --mx-accent-glow: rgba(85, 120, 168, 0.3);
+
+  --mx-cta-from: #5578a8;
+  --mx-cta-to: #436391;
+  --mx-user-bubble: #e1ecf7;
+  --mx-shadow: 0 18px 40px -24px rgba(42, 69, 96, 0.45);
+  --mx-inset: inset 0 1px 0 #ffffff;
+  --mx-scrollbar: rgba(42, 69, 96, 0.18);
+
+  --mx-success: #0f9f6e;
+  --mx-danger: #d9534f;
+  --mx-warning: #b7791f;
+}
+
+@theme inline {
+  --font-sans: "Inter", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+
+  --color-bg-primary: var(--mx-bg-primary);
+  --color-bg-secondary: var(--mx-bg-secondary);
+  --color-bg-tertiary: var(--mx-bg-tertiary);
+  --color-bg-hover: var(--mx-bg-hover);
+  --color-bg-elevated: var(--mx-bg-elevated);
+  --color-bg-card: var(--mx-bg-card);
+  --color-user-bubble: var(--mx-user-bubble);
+
+  --color-border-default: var(--mx-border-default);
+  --color-border-soft: var(--mx-border-soft);
+  --color-border-strong: var(--mx-border-strong);
+  --color-border-focus: var(--mx-border-focus);
+
+  --color-text-primary: var(--mx-text-primary);
+  --color-text-secondary: var(--mx-text-secondary);
+  --color-text-muted: var(--mx-text-muted);
+
+  --color-accent: var(--mx-accent);
+  --color-accent-light: var(--mx-accent-light);
+  --color-accent-dark: var(--mx-accent-dark);
+  --color-accent-soft: var(--mx-accent-soft);
+  --color-accent-glow: var(--mx-accent-glow);
+
+  --color-success: var(--mx-success);
+  --color-success-soft: color-mix(in oklab, var(--mx-success) 14%, transparent);
+  --color-danger: var(--mx-danger);
+  --color-danger-soft: color-mix(in oklab, var(--mx-danger) 14%, transparent);
+  --color-warning: var(--mx-warning);
+  --color-warning-soft: color-mix(in oklab, var(--mx-warning) 14%, transparent);
+
+  --shadow-pop: var(--mx-shadow);
+}
+
+/* Primary call-to-action: the landing page's brand-gradient pill button. */
+.btn-brand {
+  background: linear-gradient(180deg, var(--mx-cta-from), var(--mx-cta-to));
+  color: #fff;
+  box-shadow:
+    0 8px 20px -10px rgba(67, 99, 145, 0.8),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition: transform 140ms ease, filter 140ms ease, opacity 140ms ease;
+}
+.btn-brand:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.btn-brand:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+/* Soft brand glow behind hero areas (landing's blurred brand wash). */
+.brand-wash {
+  background:
+    radial-gradient(60% 50% at 50% 0%, rgba(118, 159, 205, 0.16), transparent 70%),
+    radial-gradient(40% 35% at 85% 10%, rgba(185, 215, 234, 0.08), transparent 70%);
 }
 
 html,
@@ -56,6 +163,7 @@ body {
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss01";
   overflow: hidden;
 }
 
@@ -63,24 +171,35 @@ body {
   box-sizing: border-box;
 }
 
+::selection {
+  background: var(--mx-accent-soft);
+}
+
+button:focus-visible,
+[role="button"]:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--mx-border-focus);
+  outline-offset: 1px;
+}
+
 /* Thin, unobtrusive scrollbars used throughout the app instead of the OS default. */
 .scrollbar-thin::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 .scrollbar-thin::-webkit-scrollbar-track {
   background: transparent;
 }
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: var(--color-bg-hover);
-  border-radius: 4px;
+  background: var(--mx-scrollbar);
+  border-radius: 6px;
 }
 
 /* react-resizable-panels drag handle */
 .resize-handle {
   position: relative;
   flex-shrink: 0;
-  background: var(--color-border-default);
+  background: var(--color-border-soft);
   transition: background 120ms ease;
 }
 .resize-handle:hover,
@@ -94,13 +213,101 @@ body {
   height: 1px;
 }
 
-@keyframes float {
-  0%,
-  100% {
+/* ── Motion ──────────────────────────────────────────────── */
+
+/* Loading copy ("Thinking…", "Transcribing…") gets a light sweep across the
+   text instead of a spinner next to it — the same language as Codex/Cursor. */
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    var(--mx-text-muted) 0%,
+    var(--mx-text-muted) 35%,
+    var(--mx-text-primary) 50%,
+    var(--mx-text-muted) 65%,
+    var(--mx-text-muted) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.2s linear infinite;
+}
+@keyframes shimmer {
+  from {
+    background-position: 125% 0;
+  }
+  to {
+    background-position: -125% 0;
+  }
+}
+
+/* Border beam: a soft colored highlight that travels around a card's border
+   (libraries.dev "Border beam"). Put `.border-beam` on a `relative`,
+   rounded element; the beam only runs while `data-active="true"`. */
+@property --beam-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+.border-beam::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--beam-angle),
+    transparent 0deg,
+    transparent 250deg,
+    #7aa2d6 290deg,
+    #b28cf0 320deg,
+    #f08cc4 340deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms ease;
+  animation: beam-spin 3.2s linear infinite;
+}
+.border-beam[data-active="true"]::before {
+  opacity: 1;
+}
+@keyframes beam-spin {
+  to {
+    --beam-angle: 360deg;
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
     transform: translateY(0);
   }
-  50% {
-    transform: translateY(-8px);
+}
+
+.animate-pop {
+  animation: pop 160ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
   }
 }
 
@@ -116,12 +323,97 @@ body {
   }
 }
 
-@keyframes badge-pulse {
-  0%,
-  100% {
-    opacity: 1;
+/* ── Bot avatars (components/ui/BotAvatar.tsx) ─────────────────── */
+.bot svg {
+  overflow: visible;
+}
+.bot .bot-body {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+.bot .bot-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: bot-blink 4.2s infinite;
+}
+.bot-still .bot-eyes {
+  animation: none;
+}
+.bot-idle .bot-body {
+  animation: bot-bob 3.2s ease-in-out infinite;
+}
+.bot-thinking .bot-body {
+  animation: bot-sway 2.4s ease-in-out infinite;
+}
+.bot-thinking .bot-eyes {
+  animation:
+    bot-look 2.4s ease-in-out infinite,
+    bot-blink 4.2s infinite;
+}
+.bot-working .bot-body {
+  animation: bot-hop 0.9s cubic-bezier(0.3, 0, 0.3, 1) infinite;
+}
+.bot-listening .bot-body {
+  animation: bot-pulse 1.6s ease-in-out infinite;
+}
+.bot-happy .bot-body {
+  animation: bot-hop 1.4s ease-in-out 2;
+}
+.bot-sleeping .bot-body {
+  animation: bot-breathe 4s ease-in-out infinite;
+}
+.bot-error .bot-body {
+  animation: bot-shake 0.5s ease-in-out 2;
+}
+@keyframes bot-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.1); }
+}
+@keyframes bot-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3%); }
+}
+@keyframes bot-sway {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(4deg); }
+}
+@keyframes bot-look {
+  0%, 100% { translate: 0 0; }
+  30% { translate: 4% -5%; }
+  65% { translate: -4% -4%; }
+}
+@keyframes bot-hop {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  15% { transform: translateY(0) scale(1.06, 0.93); }
+  45% { transform: translateY(-9%) scale(0.96, 1.05); }
+  75% { transform: translateY(0) scale(1.04, 0.96); }
+}
+@keyframes bot-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+@keyframes bot-breathe {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: scale(1.02, 0.97); }
+}
+@keyframes bot-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4%); }
+  75% { transform: translateX(4%); }
+}
+
+@keyframes link-flow {
+  to {
+    stroke-dashoffset: -12;
   }
-  50% {
-    opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
   }
 }
