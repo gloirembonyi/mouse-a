@@ -47,10 +47,12 @@ export const captureAnalyze = () =>
 export const newConversation = () => invoke<void>("new_conversation");
 
 // ── Agent ────────────────────────────────────────────────
-export const agentRun = (task: string, source: "main" | "overlay" = "main", imageDataUrl: string | null = null) =>
+/** `source` tags the run's progress events and its Stop flag - chat runs use
+ *  "main:<session>" so several chats can each have a run going at once. */
+export const agentRun = (task: string, source: string = "main", imageDataUrl: string | null = null) =>
   invoke<AgentRunResult>("agent_run", { task, source, autonomous: true, imageDataUrl });
 
-export const agentCancel = (source: "main" | "overlay" = "main") => invoke<void>("agent_cancel", { source });
+export const agentCancel = (source: string = "main") => invoke<void>("agent_cancel", { source });
 
 export const agentConfirm = (requestId: string, approved: boolean) =>
   invoke<boolean>("agent_confirm", { requestId, approved });
@@ -97,14 +99,29 @@ export const fsWriteTextFile = (path: string, content: string) =>
 export const fsParentDir = (path: string) => invoke<string | null>("fs_parent_dir", { path });
 export const fsSearchFiles = (root: string, query: string, limit = 30) =>
   invoke<FsEntry[]>("fs_search_files", { root, query, limit });
+export interface FileInfo {
+  size: number;
+  kind: "text" | "image" | "pdf" | "binary";
+  crlf: boolean;
+}
+export const fsFileInfo = (path: string) => invoke<FileInfo>("fs_file_info", { path });
+export const fsReadDataUrl = (path: string) => invoke<string>("fs_read_data_url", { path });
+export const fsCreateFile = (path: string) => invoke<void>("fs_create_file", { path });
+export const fsCreateDir = (path: string) => invoke<void>("fs_create_dir", { path });
+export const fsRename = (from: string, to: string) => invoke<void>("fs_rename", { from, to });
+export const fsDelete = (path: string) => invoke<void>("fs_delete", { path });
+export const fsReveal = (path: string) => invoke<void>("fs_reveal", { path });
+export const fsOpenDefault = (path: string) => invoke<void>("fs_open_default", { path });
 
 // ── Terminal (IDE dock) ───────────────────────────────────
-export const ptySpawn = (cwd: string | null, cols: number, rows: number) =>
-  invoke<void>("pty_spawn", { cwd, cols, rows });
-export const ptyWrite = (data: string) => invoke<void>("pty_write", { data });
-export const ptyResize = (cols: number, rows: number) => invoke<void>("pty_resize", { cols, rows });
-export const onPtyOutput = (cb: (data: string) => void) => listen<string>("pty-output", (e) => cb(e.payload));
-export const onPtyExit = (cb: () => void) => listen("pty-exit", () => cb());
+export const ptySpawn = (id: string, cwd: string | null, cols: number, rows: number) =>
+  invoke<void>("pty_spawn", { id, cwd, cols, rows });
+export const ptyWrite = (id: string, data: string) => invoke<void>("pty_write", { id, data });
+export const ptyResize = (id: string, cols: number, rows: number) => invoke<void>("pty_resize", { id, cols, rows });
+export const ptyKill = (id: string) => invoke<void>("pty_kill", { id });
+export const onPtyOutput = (cb: (e: { id: string; data: string }) => void) =>
+  listen<{ id: string; data: string }>("pty-output", (e) => cb(e.payload));
+export const onPtyExit = (cb: (e: { id: string }) => void) => listen<{ id: string }>("pty-exit", (e) => cb(e.payload));
 
 // ── Git diff (IDE dock) ───────────────────────────────────
 export interface ChangedFile {

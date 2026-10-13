@@ -1,5 +1,5 @@
-// Mouse AI Desktop — Git status/diff backend for the IDE dock's Changes tab.
-// Shells out to the system `git` binary rather than pulling in git2 — this
+// Mouse AI Desktop - Git status/diff backend for the IDE dock's Changes tab.
+// Shells out to the system `git` binary rather than pulling in git2 - this
 // only needs `status --porcelain` + `diff --numstat`/`diff`, which a couple
 // of subprocess calls cover without the extra dependency weight.
 use serde::Serialize;
@@ -64,7 +64,7 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
 }
 
 // `git diff --no-index` exits 1 when there IS a difference (which is the
-// expected/only case we call it for) — treat that as success and just return
+// expected/only case we call it for) - treat that as success and just return
 // stdout, only propagating a real error on a spawn failure.
 fn run_git_allow_failure(repo_path: &str, args: &[&str]) -> Result<String, String> {
     let output = spawn_git(repo_path, args).map_err(|e| format!("Failed to run git: {}", e))?;

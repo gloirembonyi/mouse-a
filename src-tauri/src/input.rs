@@ -1,7 +1,7 @@
-// Mouse AI Desktop — Computer-use input synthesis
+// Mouse AI Desktop - Computer-use input synthesis
 //
 // Lets the agent physically drive the machine: move+click the mouse, type text,
-// and press key combos — via the Win32 SendInput API. This is what makes the
+// and press key combos - via the Win32 SendInput API. This is what makes the
 // agent able to fill a form in any app (browser included), not just read the
 // screen. All coordinates are GLOBAL virtual-desktop pixels, matching the rest
 // of the app and GetCursorPos.
@@ -154,7 +154,7 @@ mod win {
         let mut chars = token.chars();
         let ch = chars.next()?;
         if chars.next().is_some() {
-            return None; // multi-char, non-named token — unsupported
+            return None; // multi-char, non-named token - unsupported
         }
         let scan = unsafe { VkKeyScanW(ch as u16) };
         if scan == -1 {

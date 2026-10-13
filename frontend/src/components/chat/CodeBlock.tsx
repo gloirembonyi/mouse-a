@@ -1,6 +1,7 @@
 import { useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Play } from "lucide-react";
+import { requestRunInTerminal } from "../../lib/openFile";
 import { languageFor } from "../../lib/languages";
 import { editorTheme } from "../../lib/editorTheme";
 import { useTheme } from "../../lib/theme";
@@ -12,7 +13,9 @@ interface CodeBlockProps {
 
 // Reuses the CodeMirror instance already pulled in for the file editor (phase
 // 3) instead of adding a separate syntax-highlighter dependency just for chat
-// code blocks — one highlighting engine for the whole app.
+// code blocks - one highlighting engine for the whole app.
+const SHELL_LANGS = new Set(["bash", "sh", "shell", "zsh", "powershell", "ps1", "pwsh", "cmd", "bat", "console"]);
+
 export function CodeBlock({ code, language }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const { theme } = useTheme();
@@ -30,6 +33,17 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
         <span className="font-mono text-[10px] uppercase tracking-wide text-text-muted">
           {language || "text"}
         </span>
+        <span className="flex items-center gap-1">
+        {SHELL_LANGS.has((language ?? "").toLowerCase()) && (
+          <button
+            onClick={() => requestRunInTerminal(code)}
+            title="Run in the terminal (Editor panel → Terminal)"
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-text-muted transition hover:bg-accent-soft hover:text-accent"
+          >
+            <Play size={11} />
+            Run
+          </button>
+        )}
         <button
           onClick={copy}
           className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-text-muted transition hover:bg-bg-hover hover:text-text-primary"
@@ -37,6 +51,7 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
           {copied ? <Check size={11} /> : <Copy size={11} />}
           {copied ? "Copied" : "Copy"}
         </button>
+        </span>
       </div>
       <CodeMirror
         value={code}

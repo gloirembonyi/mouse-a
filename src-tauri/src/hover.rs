@@ -1,4 +1,4 @@
-// Mouse AI Desktop — Global Hover-Dwell Watcher
+// Mouse AI Desktop - Global Hover-Dwell Watcher
 // While AI mode is active, watches the cursor system-wide. When the mouse
 // pauses over something (dwell), it shows the floating "Ask AI" overlay next
 // to the cursor and sends it the context of what's being hovered.
@@ -40,7 +40,7 @@ pub fn spawn_hover_watcher(app: AppHandle) {
         let mut last_trigger_pos = (i32::MIN / 2, i32::MIN / 2);
         let mut overlay_anchor = (i32::MIN / 2, i32::MIN / 2);
         // Only true between a hover-dwell trigger and the pill being
-        // hidden/dismissed — distinguishes "the collapsed pill is up and
+        // hidden/dismissed - distinguishes "the collapsed pill is up and
         // should drift with the cursor" from other reasons the overlay window
         // might be visible (the brief AI-on/off toast, the expanded panel),
         // which must NOT get repositioned by ordinary mouse movement.
@@ -72,13 +72,13 @@ pub fn spawn_hover_watcher(app: AppHandle) {
                     .max((y - overlay_anchor.1).abs());
                 if let Some(overlay) = app.get_webview_window("overlay") {
                     if away > HIDE_DISTANCE {
-                        // Cursor left the overlay area — hide the pill again.
+                        // Cursor left the overlay area - hide the pill again.
                         pill_showing = false;
                         let _ = overlay.hide();
                     } else if pill_showing && overlay.is_visible().unwrap_or(false) {
                         // Still nearby and the collapsed pill is what's up (the
                         // expanded panel pins itself via overlay_pinned, which
-                        // already `continue`d past this whole branch above) —
+                        // already `continue`d past this whole branch above) -
                         // drift the pill along with the cursor instead of
                         // leaving it stuck at the original dwell point.
                         overlay_anchor = (x, y);
@@ -176,7 +176,7 @@ fn position_overlay(app: &AppHandle, x: i32, y: i32, sample_theme: bool) {
     let _ = overlay.show();
 
     // Sample the screen right where the overlay now sits and tell it whether
-    // to render as light-glass-on-dark-text or dark-glass-on-light-text —
+    // to render as light-glass-on-dark-text or dark-glass-on-light-text -
     // whichever stays readable against whatever's actually behind it (a dark
     // code editor vs. a bright document, a light desktop wallpaper, etc.),
     // mirroring the browser extension's adaptive-theme.js.

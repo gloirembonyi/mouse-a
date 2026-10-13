@@ -1,4 +1,4 @@
-// Mouse AI Desktop — Thothai Backend HTTP Client
+// Mouse AI Desktop - Thothai Backend HTTP Client
 // Mirrors the extension's shared/backend-client.js but in Rust.
 // Session + backend URL persist to a small config file so sign-in
 // survives app restarts.
@@ -13,11 +13,11 @@ use tokio::sync::RwLock;
 const DEFAULT_BACKEND_URL: &str = "https://backend-thothai.vercel.app";
 // Fail fast when the server is unreachable instead of hanging the UI.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
-// Total budget — Gemini calls with screenshots can legitimately take a while.
+// Total budget - Gemini calls with screenshots can legitimately take a while.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 // A dated snapshot like "gemini-2.5-flash" WILL eventually 404 with "no longer
 // available to new users" once Google retires it (this is exactly what broke
-// the agent live) — "-latest" is Google's own alias for "whatever the current
+// the agent live) - "-latest" is Google's own alias for "whatever the current
 // recommended flash model is", so it doesn't need a code change when that
 // happens again. Overridable without a rebuild if it ever needs to change fast.
 pub fn default_gemini_model() -> String {
@@ -82,7 +82,7 @@ pub struct ChatMessage {
 
 // ── Conversation history ─────────────────────────────────────────
 // The backend's DB rows come back with raw snake_case columns (the Neon
-// serverless driver doesn't camelCase them) — field names here match the
+// serverless driver doesn't camelCase them) - field names here match the
 // wire JSON exactly instead of renaming, since these are only ever read by
 // the history UI, not round-tripped back to the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,7 +189,7 @@ impl BackendClient {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         if stored.device_id.as_deref() != Some(device_id.as_str()) {
-            // First run on this install — persist the freshly generated id
+            // First run on this install - persist the freshly generated id
             // immediately so a crash before the next save can't lose it.
             let mut cfg = stored.clone();
             cfg.device_id = Some(device_id.clone());
@@ -298,14 +298,14 @@ impl BackendClient {
             Ok(base)
         } else {
             Err(format!(
-                "Backend responded with HTTP {} — is {} the right URL?",
+                "Backend responded with HTTP {} - is {} the right URL?",
                 resp.status().as_u16(),
                 base
             ))
         }
     }
 
-    /// Anonymous device sign-in — no Google OAuth involved. Used so the app
+    /// Anonymous device sign-in - no Google OAuth involved. Used so the app
     /// is usable immediately; `google_sign_in` remains available separately
     /// for whoever wants to link a real account later.
     pub async fn guest_sign_in(&self) -> Result<AuthResponse, String> {
@@ -403,14 +403,14 @@ impl BackendClient {
     }
 
     /// Send a chat message to the Thothai backend. Gemini key selection (including
-    /// rotating across multiple shared keys) is entirely the backend's job now —
-    /// see backend-Thothai/src/lib/gemini-request.js — so no apiKey is ever sent
+    /// rotating across multiple shared keys) is entirely the backend's job now -
+    /// see backend-Thothai/src/lib/gemini-request.js - so no apiKey is ever sent
     /// from here.
     pub async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, String> {
         let token = self
             .get_session_token()
             .await
-            .ok_or("Not signed in — open the Mouse AI window (tray icon) and sign in first.")?;
+            .ok_or("Not signed in - open the Mouse AI window (tray icon) and sign in first.")?;
         let url = format!("{}/api/chat", self.base_url.read().await);
 
         let resp = self
@@ -427,7 +427,7 @@ impl BackendClient {
             let text = resp.text().await.unwrap_or_default();
             if status == 401 {
                 self.clear_session().await;
-                return Err("Session expired — please sign in again.".to_string());
+                return Err("Session expired - please sign in again.".to_string());
             }
             return Err(format!("Chat failed ({}): {}", status, truncate(&text, 300)));
         }
@@ -457,7 +457,7 @@ impl BackendClient {
         let token = self
             .get_session_token()
             .await
-            .ok_or("Not signed in — open the Mouse AI window and try again.")?;
+            .ok_or("Not signed in - open the Mouse AI window and try again.")?;
         let url = format!("{}/api/agent/step", self.base_url.read().await);
 
         let body = serde_json::json!({
@@ -486,7 +486,7 @@ impl BackendClient {
             let text = resp.text().await.unwrap_or_default();
             if status == 401 {
                 self.clear_session().await;
-                return Err("Session expired — please try again.".to_string());
+                return Err("Session expired - please try again.".to_string());
             }
             let suffix = match retry_after_secs {
                 Some(secs) => format!(" [retry-after={}]", secs),
@@ -506,8 +506,8 @@ impl BackendClient {
     }
 
     /// Whisper speech-to-text for the meeting copilot (Groq, server-side key).
-    /// `Ok(None)` means this backend can't transcribe — an older deploy without
-    /// the endpoint (404) or no GROQ_API_KEY configured (503) — so the caller
+    /// `Ok(None)` means this backend can't transcribe - an older deploy without
+    /// the endpoint (404) or no GROQ_API_KEY configured (503) - so the caller
     /// should fall back rather than retry.
     pub async fn transcribe_audio(&self, wav_b64: &str, prompt: &str) -> Result<Option<String>, String> {
         let token = self.get_session_token().await.ok_or("Not signed in")?;
@@ -576,7 +576,7 @@ impl BackendClient {
     }
 
     /// Persists a finished agent task as a user+assistant message pair, same
-    /// as a normal chat exchange — agent runs go through /api/agent/step,
+    /// as a normal chat exchange - agent runs go through /api/agent/step,
     /// never /api/chat, so without this explicit call they'd never show up
     /// in conversation history/the Threads list. Best-effort by design: the
     /// caller should swallow errors here rather than fail the whole task
@@ -611,7 +611,7 @@ impl BackendClient {
 
     // ── Conversation history ───────────────────────────────────────
 
-    /// Per-user counts (conversations/messages/memories/skills/...) — a
+    /// Per-user counts (conversations/messages/memories/skills/...) - a
     /// camelCase object hand-built server-side, unlike the snake_case rows
     /// below.
     pub async fn get_history_stats(&self) -> Result<serde_json::Value, String> {
@@ -686,7 +686,7 @@ impl BackendClient {
             .await
             .map_err(|e| Self::friendly_network_error(&e))?;
         if resp.status().as_u16() == 404 {
-            return Err("That conversation could not be found — it may have been deleted.".to_string());
+            return Err("That conversation could not be found - it may have been deleted.".to_string());
         }
         if !resp.status().is_success() {
             return Err(format!("Failed to load conversation ({})", resp.status().as_u16()));
@@ -713,7 +713,7 @@ impl BackendClient {
             .await
             .map_err(|e| Self::friendly_network_error(&e))?;
         if resp.status().as_u16() == 404 {
-            return Err("That conversation could not be found — it may already be deleted.".to_string());
+            return Err("That conversation could not be found - it may already be deleted.".to_string());
         }
         if !resp.status().is_success() {
             return Err(format!("Failed to delete conversation ({})", resp.status().as_u16()));

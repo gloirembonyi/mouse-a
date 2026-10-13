@@ -16,7 +16,7 @@ type Item = { kind: "file"; entry: FsEntry } | { kind: "conversation"; conv: Con
 
 // Cursor-style @ picker: type "@" in the composer to open this, live-filtered
 // as you keep typing. Selecting an item turns it into a removable chip above
-// the input rather than inline text — see InputBar/resolveAttachments.
+// the input rather than inline text - see InputBar/resolveAttachments.
 export function MentionPopover({ query, workspaceRoot, conversations, onSelectFile, onSelectConversation, onClose }: MentionPopoverProps) {
   const [files, setFiles] = useState<FsEntry[]>([]);
   const [selected, setSelected] = useState(0);

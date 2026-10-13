@@ -1,4 +1,4 @@
-// Ghost AI — the "thinking orb": a dotted canvas loading indicator with nine states,
+// Ghost AI - the "thinking orb": a dotted canvas loading indicator with nine states,
 // each saying what the assistant is actually doing (searching, solving, connecting…)
 // rather than just "busy". Geometry comes from shared/orb-engine.js (vendored from the
 // thinking-orbs package); this file is the rendering, theming and lifecycle around it.
@@ -14,15 +14,15 @@
   try { global.GhostOrb?.destroyAll?.(); } catch { /* first load */ }
 
   const STATES = [
-    "working",    // orbits — the neutral "busy"
-    "searching",  // globe  — scanning / web research
-    "solving",    // rubik  — multi-step reasoning
-    "listening",  // wave   — mic open
-    "connecting", // web    — wiring sources together
-    "weaving",    // braid  — running a tool
-    "composing",  // ribbon — writing the answer
-    "breathing",  // ring   — idle / waiting on the user
-    "shaping",    // morph  — making sense of an image
+    "working",    // orbits - the neutral "busy"
+    "searching",  // globe  - scanning / web research
+    "solving",    // rubik  - multi-step reasoning
+    "listening",  // wave   - mic open
+    "connecting", // web    - wiring sources together
+    "weaving",    // braid  - running a tool
+    "composing",  // ribbon - writing the answer
+    "breathing",  // ring   - idle / waiting on the user
+    "shaping",    // morph  - making sense of an image
   ];
 
   // Announced to screen readers; the visible phase label is separate and live.
@@ -56,7 +56,7 @@
     return E && E.STATE_TO_MODE[state] ? state : "working";
   }
 
-  // The 64 design is not "the 20 design, bigger" — it is a denser, richer piece of
+  // The 64 design is not "the 20 design, bigger" - it is a denser, richer piece of
   // geometry (a searching globe is 204 dots at 64 and a fraction of that at 20). So
   // which design to use is worth choosing independently of the display size: a 30px
   // orb drawn from the 64 design reads as detailed rather than sparse.
@@ -156,7 +156,7 @@
         for (const orb of handles) orb._resize();
         watchDpr();
       }, { once: true });
-    } catch { /* unsupported — the per-frame check still covers it */ }
+    } catch { /* unsupported - the per-frame check still covers it */ }
   }
   if (typeof global.matchMedia === "function") watchDpr();
 
@@ -185,7 +185,7 @@
    * @param {string}  [opts.ariaLabel]        defaults to the state's label
    * @param {number}  [opts.fps=30]           frame cap
    * @param {string}  [opts.className=""]     extra class on the wrapper
-   * @returns {object} handle — same shape whether it rendered a canvas or the fallback
+   * @returns {object} handle - same shape whether it rendered a canvas or the fallback
    */
   function create(container, opts = {}) {
     const {
@@ -291,7 +291,7 @@
         ctx.clearRect(0, 0, preset, preset);
         E.MODE_DRAWS[resolved.mode](ctx, preset, orbTime, dark, resolved.opts);
       } catch {
-        // A painter that throws once will throw every frame — degrade instead of
+        // A painter that throws once will throw every frame - degrade instead of
         // spamming the page's console 30 times a second.
         broken = true;
         setLive(handle, false);
@@ -329,7 +329,7 @@
       const next = resolveDark(orbEl, themeOpt);
       if (next === dark) return;
       dark = next;
-      paint(); // repaint immediately — matters most when reduced motion means no loop
+      paint(); // repaint immediately - matters most when reduced motion means no loop
     }
     function watchTheme() {
       themeObserver?.disconnect();
@@ -371,7 +371,7 @@
       resolved = E.resolvePreset(curState, preset);
       orbEl.setAttribute("aria-label", ariaLabel || STATE_LABELS[curState] || "Working");
       // The adaptive-theme host may only have appeared after this orb was created
-      // (content.js themes the panel after the scripts load) — pick it up now.
+      // (content.js themes the panel after the scripts load) - pick it up now.
       if (!themeObserver) watchTheme();
       refreshTheme();
       paint();
@@ -402,7 +402,7 @@
     return handle;
   }
 
-  /** Destroys every live orb — used by content.js cleanup and on re-injection. */
+  /** Destroys every live orb - used by content.js cleanup and on re-injection. */
   function destroyAll() {
     for (const orb of [...handles]) {
       try { orb.destroy(); } catch { /* keep going */ }

@@ -14,7 +14,7 @@ export function MessageList({ messages }: MessageListProps) {
   const stickRef = useRef(true);
   const [showJump, setShowJump] = useState(false);
 
-  // Follow new output only while the reader is already at the bottom — never
+  // Follow new output only while the reader is already at the bottom - never
   // yank them away from something they scrolled up to re-read.
   useEffect(() => {
     const el = containerRef.current;
@@ -77,7 +77,7 @@ function MessageItem({ message, latest }: { message: UiMessage; latest: boolean 
                   className="flex items-center gap-1 rounded-lg border border-border-default bg-bg-tertiary px-2 py-1 text-[12px] text-text-secondary"
                 >
                   {a.kind === "file" ? <FileText size={12} /> : <MessageSquare size={12} />}
-                  {a.kind === "file" ? a.name : a.title}
+                  {a.kind === "file" ? a.name : a.kind === "snippet" ? "Terminal output" : a.title}
                 </span>
               ),
             )}

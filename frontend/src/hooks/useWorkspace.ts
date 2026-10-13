@@ -24,7 +24,7 @@ function loadProjects(): Project[] {
 }
 
 // The folders the user works in ("projects", like Codex). The active project
-// is shared by everything that needs a folder — the IDE dock's file tree,
+// is shared by everything that needs a folder - the IDE dock's file tree,
 // editor, terminal cwd and git changes, plus the agent, which is told to work
 // inside it. With no project selected the dock falls back to the home folder.
 export function useWorkspace() {

@@ -1,4 +1,4 @@
-// Mouse AI Desktop — Mouse Position & Context Detection
+// Mouse AI Desktop - Mouse Position & Context Detection
 // Uses Windows API to track cursor position and detect what's under it.
 
 use serde::Serialize;
@@ -87,7 +87,7 @@ fn context_for_hwnd(hwnd: winapi::shared::windef::HWND, x: i32, y: i32) -> Curso
 }
 
 /// Same lookup `get_cursor_context()` does, but for an arbitrary global point
-/// instead of always re-reading the live cursor position — lets a caller ask
+/// instead of always re-reading the live cursor position - lets a caller ask
 /// "what app/window is AT this specific point" (e.g. where a click is about
 /// to land) without first moving the mouse there.
 #[cfg(windows)]
@@ -109,7 +109,7 @@ pub fn get_cursor_context() -> CursorContext {
     context_at_point(x, y)
 }
 
-/// The window that actually has keyboard focus right now — distinct from
+/// The window that actually has keyboard focus right now - distinct from
 /// `get_cursor_context()`, which reports whatever window is merely UNDER the
 /// pointer. These commonly differ (e.g. the cursor rests over a background
 /// window while a dialog elsewhere holds focus), and the agent needs to know
@@ -230,7 +230,7 @@ pub struct ElementInfo {
     pub name: String,
     pub value: String,
     pub role: String,
-    /// Approximate immediate container (e.g. a list/table/pane name) —
+    /// Approximate immediate container (e.g. a list/table/pane name) -
     /// gives the model surrounding context beyond the single hovered
     /// control, at the cost of occasionally being one level too high.
     pub container: String,
@@ -248,7 +248,7 @@ fn truncate_text(mut s: String) -> String {
 }
 
 /// Core lookup shared by `get_element_under_cursor` and `sample_window_content`
-/// — assumes COM is already initialized on this thread by the caller, so a
+/// - assumes COM is already initialized on this thread by the caller, so a
 /// multi-point sample only pays the CoInitializeEx/CoUninitialize cost once.
 #[cfg(windows)]
 fn element_at_point_raw(x: i32, y: i32) -> ElementInfo {
@@ -316,7 +316,7 @@ pub fn get_element_under_cursor(_x: i32, _y: i32) -> ElementInfo {
 
 // ── Generic "what's in this window" content sampling ─────────────
 // File Explorer gets a real directory listing (see explorer.rs); everything
-// else — Excel, Notepad, a browser, any other app — only exposes its content
+// else - Excel, Notepad, a browser, any other app - only exposes its content
 // through the accessibility tree. Rather than write a bespoke integration per
 // app, this walks a grid of points across the window's bounds and reads
 // whatever accessible element sits at each one via the same MSAA call
@@ -381,7 +381,7 @@ pub fn sample_window_content(_x: i32, _y: i32, _w: u32, _h: u32) -> Vec<ContentN
 /// True when the top-level window at the given global point belongs to THIS
 /// process (Mouse AI's own overlay/main window). The always-on-top overlay
 /// floats above the app the agent is trying to drive, so without this check
-/// the agent can click its own panel — or type into its own input box — and
+/// the agent can click its own panel - or type into its own input box - and
 /// believe it acted on the target app.
 #[cfg(windows)]
 pub fn is_own_process_at(x: i32, y: i32) -> bool {
@@ -404,7 +404,7 @@ pub fn is_own_process_at(_x: i32, _y: i32) -> bool {
 }
 
 /// True when keyboard focus is currently on one of THIS process's own windows
-/// — the state in which type_text/press_key would land in Mouse AI's own UI
+/// - the state in which type_text/press_key would land in Mouse AI's own UI
 /// instead of the app the user meant.
 #[cfg(windows)]
 pub fn is_own_process_foreground() -> bool {
@@ -425,7 +425,7 @@ pub fn is_own_process_foreground() -> bool {
     false
 }
 
-/// Bounding rect of whichever window currently has keyboard focus — the
+/// Bounding rect of whichever window currently has keyboard focus - the
 /// counterpart to `explorer::window_rect_at` (which resolves a window under an
 /// arbitrary point) for tools that care about "the app the user is actually
 /// typing into right now" instead of whatever's under the cursor.
@@ -458,7 +458,7 @@ pub fn foreground_window_rect() -> Option<(i32, i32, u32, u32)> {
 
 /// Top-level window handle at a global screen point, as a plain integer so it
 /// can be stored across threads (a raw HWND is !Send). Returns 0 when nothing
-/// is there or the window belongs to THIS process — 0 is "nothing worth
+/// is there or the window belongs to THIS process - 0 is "nothing worth
 /// remembering", never a valid target.
 #[cfg(windows)]
 pub fn target_hwnd_at_point(x: i32, y: i32) -> isize {
@@ -485,7 +485,7 @@ pub fn target_hwnd_at_point(_x: i32, _y: i32) -> isize {
     0
 }
 
-/// Bring a remembered window handle back to the foreground — the same
+/// Bring a remembered window handle back to the foreground - the same
 /// AttachThreadInput dance agent::focus_window_by_title uses, but by handle,
 /// so it still works when the window's title has changed (unread-count
 /// prefixes etc.). Fails cleanly if the window has since closed.
@@ -534,7 +534,7 @@ pub fn focus_hwnd(_hwnd_raw: isize) -> Result<(), String> {
 /// Toggle WS_EX_NOACTIVATE on this process's own windows whose title contains
 /// `title_contains` (case-insensitive). While ON, the window stays visible and
 /// still takes mouse clicks (Stop keeps working), but it can never seize
-/// keyboard focus — so the user watching or scrolling the overlay mid-run no
+/// keyboard focus - so the user watching or scrolling the overlay mid-run no
 /// longer redirects the agent's keystrokes into Mouse AI's own UI.
 #[cfg(windows)]
 pub fn set_own_window_no_activate(title_contains: &str, enable: bool) {

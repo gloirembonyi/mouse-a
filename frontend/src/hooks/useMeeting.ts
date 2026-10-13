@@ -45,7 +45,7 @@ export const ACTION_LABELS: Record<MeetingAction, string> = {
   ask: "Question",
 };
 
-/** Heuristic for "the other side just asked something" — drives auto-answer. */
+/** Heuristic for "the other side just asked something" - drives auto-answer. */
 export function looksLikeQuestion(text: string) {
   const t = text.trim().toLowerCase();
   if (t.length < 8) return false;

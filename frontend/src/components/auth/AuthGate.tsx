@@ -28,7 +28,7 @@ export function AuthGate({ status, error, onRetry, onSignedIn }: AuthGateProps) 
       if (result.signed_in && result.user) {
         onSignedIn(result.user);
       } else {
-        setGoogleError("Sign in failed — please try again.");
+        setGoogleError("Sign in failed - please try again.");
       }
     } catch (err) {
       setGoogleError(err instanceof Error ? err.message : String(err));
@@ -107,7 +107,7 @@ export function AuthGate({ status, error, onRetry, onSignedIn }: AuthGateProps) 
           {showTokenInput && (
             <div className="flex flex-col gap-2 border-t border-border-default pt-3">
               <p className="text-left text-[11px] text-text-muted">
-                Or paste a Google access token — a raw token or a full redirect URL containing{" "}
+                Or paste a Google access token - a raw token or a full redirect URL containing{" "}
                 <code className="rounded bg-bg-tertiary px-1">access_token=…</code> both work:
               </p>
               <input

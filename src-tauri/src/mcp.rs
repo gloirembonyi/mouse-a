@@ -1,4 +1,4 @@
-// Mouse AI Desktop — MCP (Model Context Protocol) client
+// Mouse AI Desktop - MCP (Model Context Protocol) client
 //
 // Lets the agent use tools from external MCP servers (filesystem, GitHub,
 // databases, browser drivers, …) alongside its built-in tools. Servers are
@@ -8,7 +8,7 @@
 //
 // Design rule: MCP is strictly additive and fail-safe. If a server won't start,
 // times out, or errors, it's skipped with a logged note and the agent proceeds
-// on its built-in tools — MCP problems must never break the core loop.
+// on its built-in tools - MCP problems must never break the core loop.
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -66,7 +66,7 @@ impl RunningServer {
                 continue;
             }
             let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
-                continue; // non-JSON stderr/log noise on stdout — ignore
+                continue; // non-JSON stderr/log noise on stdout - ignore
             };
             if value.get("id").and_then(|v| v.as_i64()) != Some(id) {
                 continue; // a notification or a different response

@@ -22,6 +22,8 @@ import { dateBucket, threadTitle, type DateBucket } from "../../lib/format";
 import { useTheme } from "../../lib/theme";
 import type { Conversation, User } from "../../lib/types";
 import type { Project } from "../../hooks/useWorkspace";
+import type { ChatSession } from "../../hooks/useChat";
+import { BotAvatar } from "../ui/BotAvatar";
 import { IconButton, Kbd, SectionLabel, Switch } from "../ui/primitives";
 
 interface SidebarProps {
@@ -51,6 +53,9 @@ interface SidebarProps {
   onAddProject: () => void;
   onRemoveProject: (path: string) => void;
   onCollapse: () => void;
+  backgroundSessions: ChatSession[];
+  runningConversationIds: string[];
+  onOpenSession: (key: string) => void;
 }
 
 const BUCKET_ORDER: DateBucket[] = ["Today", "Yesterday", "Previous 7 days", "Previous 30 days", "Older"];
@@ -73,7 +78,7 @@ export function Sidebar(props: SidebarProps) {
     return BUCKET_ORDER.filter((b) => map.has(b)).map((b) => ({ bucket: b, items: map.get(b)! }));
   }, [threads, query]);
 
-  // Ctrl+K focuses thread search, Ctrl+N starts a new chat — the two
+  // Ctrl+K focuses thread search, Ctrl+N starts a new chat - the two
   // keyboard paths people expect from Codex/ChatGPT-style apps.
   const newChatRef = useRef(props.onNewChat);
   newChatRef.current = props.onNewChat;
@@ -188,6 +193,31 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       <div className="scrollbar-thin mt-3 flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2">
+        {/* Chats running (or just finished) in the background */}
+        {props.backgroundSessions.length > 0 && (
+          <div className="mb-2">
+            <SectionLabel>In progress</SectionLabel>
+            {props.backgroundSessions.map((s) => (
+              <button
+                key={s.key}
+                onClick={() => props.onOpenSession(s.key)}
+                title={s.running ? "Still working - click to watch" : "Finished - click to see the result"}
+                className="group flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left transition hover:bg-bg-hover"
+              >
+                <BotAvatar kind="ghost" mood={s.running ? "working" : "happy"} size={20} />
+                <span className="min-w-0 flex-1 truncate text-[13px] text-text-primary">{s.title || "New chat"}</span>
+                {s.needsYou ? (
+                  <span className="flex-shrink-0 rounded-full bg-warning px-1.5 text-[10px] font-semibold text-black">Needs you</span>
+                ) : s.running ? (
+                  <span className="h-1.5 w-1.5 flex-shrink-0 animate-pulse rounded-full bg-accent" />
+                ) : (
+                  <Check size={13} className="flex-shrink-0 text-success" />
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Projects */}
         <SectionLabel
           action={
@@ -233,6 +263,7 @@ export function Sidebar(props: SidebarProps) {
               {g.items.map((t) => (
                 <ThreadRow
                   key={t.id}
+                  running={props.runningConversationIds.includes(t.id)}
                   thread={t}
                   active={t.id === activeId}
                   onOpen={() => props.onOpenThread(t.id)}
@@ -343,11 +374,13 @@ function ProjectRow({
 
 function ThreadRow({
   thread,
+  running,
   active,
   onOpen,
   onDelete,
 }: {
   thread: Conversation;
+  running?: boolean;
   active: boolean;
   onOpen: () => void;
   onDelete: () => void;
@@ -384,6 +417,7 @@ function ThreadRow({
       <button onClick={onOpen} title={thread.title} className="min-w-0 flex-1 truncate px-2.5 text-left text-[13px]">
         {threadTitle(thread.title)}
       </button>
+      {running && <span className="mr-2 h-1.5 w-1.5 flex-shrink-0 animate-pulse rounded-full bg-accent" title="Working" />}
 
       {confirming ? (
         <button

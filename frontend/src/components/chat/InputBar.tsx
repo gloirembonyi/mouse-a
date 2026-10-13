@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Plus,
   Square,
+  SquareTerminal,
   X,
 } from "lucide-react";
 import { newId, type FsEntry } from "../../lib/tauri";
@@ -378,8 +379,9 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
       </div>
     );
   }
-  const icon = attachment.kind === "file" ? <FileText size={12} /> : <MessageSquare size={12} />;
-  const label = attachment.kind === "file" ? attachment.name : attachment.title;
+  const icon =
+    attachment.kind === "file" ? <FileText size={12} /> : attachment.kind === "snippet" ? <SquareTerminal size={12} /> : <MessageSquare size={12} />;
+  const label = attachment.kind === "file" ? attachment.name : attachment.kind === "snippet" ? "Terminal output" : attachment.title;
   return (
     <div className="flex max-w-[200px] items-center gap-1.5 rounded-lg border border-border-default bg-bg-tertiary py-1 pl-2 pr-1 text-[12px] text-text-secondary">
       {icon}

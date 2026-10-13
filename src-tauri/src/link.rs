@@ -1,16 +1,16 @@
-// Mouse AI Desktop — Agent link: pairing, the shared task board, and the watcher.
+// Mouse AI Desktop - Agent link: pairing, the shared task board, and the watcher.
 //
 // bridge.rs is the transport (the localhost WebSocket to the browser
 // extension). This module is what turns it into ONE system of two agents:
 //
 //   • Both directions. The desktop agent hands web work to the browser agent
-//     (`delegate_to_browser`), and the browser agent hands PC work — terminal,
-//     files, apps — to the desktop agent (`desktop_task` frames). A task that
+//     (`delegate_to_browser`), and the browser agent hands PC work - terminal,
+//     files, apps - to the desktop agent (`desktop_task` frames). A task that
 //     arrived from one side may not delegate back to it, so they can't ping-pong.
 //
 //   • Pairing. Running shell commands on request is powerful, so tasks FROM the
 //     browser are only accepted from a connection that presented this app's
-//     pairing code (Settings → Browser link) — merely being a browser
+//     pairing code (Settings → Browser link) - merely being a browser
 //     extension, or a local process, is not enough. The user can also switch
 //     incoming tasks off entirely.
 //
@@ -18,7 +18,7 @@
 //     (`bridge-task` events → the Agents panel): who asked, every step, and a
 //     status. A background loop notices when a task goes quiet, marks it
 //     "stalled", asks the other side what it's doing (`status_request`), and
-//     fails it if the other side has lost it or stops answering — so neither
+//     fails it if the other side has lost it or stops answering - so neither
 //     agent hangs for ten minutes on a task that died with a restarted browser.
 
 use std::sync::{Mutex, OnceLock};
@@ -251,7 +251,7 @@ fn inbound_lock() -> &'static tokio::sync::Mutex<()> {
 }
 
 /// Runs a task the browser agent handed us, through the normal desktop agent
-/// loop (same tools, same confirmation gate — its Allow/Deny prompts appear in
+/// loop (same tools, same confirmation gate - its Allow/Deny prompts appear in
 /// the Agents panel). One at a time: incoming tasks queue behind each other.
 pub fn handle_desktop_task(v: &Value, paired: bool) {
     let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
@@ -298,7 +298,7 @@ Do the PC-side part (terminal, files, folders, apps), then answer with a concise
 (paths written, command output, values found). Do not delegate back to the browser.]\n\n",
         );
         if let Some(dir) = &cwd {
-            prompt.push_str(&format!("[Working folder: {} — use absolute paths under it.]\n\n", dir));
+            prompt.push_str(&format!("[Working folder: {} - use absolute paths under it.]\n\n", dir));
         }
         prompt.push_str(&task);
 

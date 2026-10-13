@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <!-- Thothai mascot (same ghost as the extension icon and the in-app bot):
        white body, soft 3D shading, ink outline, two dot eyes. Source for
-       `npx tauri icon` — regenerate every size from this one file. -->
+       `npx tauri icon` - regenerate every size from this one file. -->
   <defs>
     <radialGradient id="body" cx="38%" cy="28%" r="80%">
       <stop offset="0%" stop-color="#ffffff"/>

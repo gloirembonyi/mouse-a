@@ -30,7 +30,7 @@ const STATUS_STYLE: Record<LinkTask["status"], { label: string; className: strin
   queued: { label: "Queued", className: "bg-bg-hover text-text-secondary" },
   running: { label: "Working", className: "bg-accent-soft text-accent" },
   waiting: { label: "Needs you", className: "bg-warning-soft text-warning" },
-  stalled: { label: "Quiet — checking", className: "bg-warning-soft text-warning" },
+  stalled: { label: "Quiet - checking", className: "bg-warning-soft text-warning" },
   done: { label: "Done", className: "bg-success-soft text-success" },
   failed: { label: "Failed", className: "bg-danger-soft text-danger" },
   cancelled: { label: "Cancelled", className: "bg-bg-hover text-text-muted" },
@@ -79,8 +79,8 @@ export function AgentsView({ agents, onClose }: AgentsViewProps) {
               />
             </div>
             <p className="mt-5 max-w-[460px] text-center text-[12.5px] text-text-muted">
-              Each agent hands the other what it does best — the browser agent does web work, Mouse AI does the
-              terminal, files and apps on your PC — and the watcher keeps an eye on every handoff.
+              Each agent hands the other what it does best - the browser agent does web work, Mouse AI does the
+              terminal, files and apps on your PC - and the watcher keeps an eye on every handoff.
             </p>
           </div>
         </div>
@@ -106,7 +106,7 @@ export function AgentsView({ agents, onClose }: AgentsViewProps) {
                 <BotAvatar kind="square" mood="sleeping" size={40} />
                 <p className="text-[12.5px] text-text-secondary">No handoffs yet</p>
                 <p className="max-w-[380px] text-[12px] text-text-muted">
-                  Try “Find the cheapest flight to Kigali next Friday and save the options to a file on my Desktop” —
+                  Try “Find the cheapest flight to Kigali next Friday and save the options to a file on my Desktop” -
                   the browser does the search, Mouse AI writes the file.
                 </p>
               </div>
@@ -203,7 +203,7 @@ export function LinkCard({ agents }: { agents: ReturnType<typeof useAgents> }) {
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-semibold">
-            {state === "paired" ? "Linked and paired" : state === "unpaired" ? "Connected — not paired yet" : "Browser not connected"}
+            {state === "paired" ? "Linked and paired" : state === "unpaired" ? "Connected - not paired yet" : "Browser not connected"}
           </div>
           <div className="text-[11.5px] text-text-muted">
             {state === "paired"
@@ -232,7 +232,7 @@ export function LinkCard({ agents }: { agents: ReturnType<typeof useAgents> }) {
         </button>
         <button
           onClick={agents.newCode}
-          title="Make a new code — the browser has to be paired again"
+          title="Make a new code - the browser has to be paired again"
           className="ml-auto text-[11.5px] text-text-muted underline-offset-2 hover:text-text-primary hover:underline"
         >
           New code

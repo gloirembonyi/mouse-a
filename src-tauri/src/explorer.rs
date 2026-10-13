@@ -1,12 +1,12 @@
-// Mouse AI Desktop — Windows Explorer folder-content context
+// Mouse AI Desktop - Windows Explorer folder-content context
 //
 // The accessible name/role under the cursor (e.g. "list item", a bare file
 // name) can't answer "what's in this folder?" or "what language is this
-// project?" — the AI has to hedge, which is exactly what users see. This
+// project?" - the AI has to hedge, which is exactly what users see. This
 // module finds the real, currently-open Explorer window under the cursor
 // via Shell Automation (the same COM API Windows Explorer itself is built
 // on: CoCreateInstance(CLSID_ShellWindows) → match by HWND → read the
-// folder's real path) and lists that folder straight from disk — cheaper
+// folder's real path) and lists that folder straight from disk - cheaper
 // and more complete than enumerating COM FolderItems one at a time.
 
 use serde::Serialize;
@@ -53,7 +53,7 @@ mod win {
     use winapi::shared::windef::{HWND, POINT, RECT};
     use winapi::um::winuser::{GetAncestor, GetClassNameW, GetWindowRect, WindowFromPoint, GA_ROOT};
 
-    // {9BA05972-F6A8-11CF-A442-00A0C90A8F39} — CLSID_ShellWindows, stable since
+    // {9BA05972-F6A8-11CF-A442-00A0C90A8F39} - CLSID_ShellWindows, stable since
     // Windows 2000. No generated CoClass ships in the `windows` crate for it, so
     // the GUID is spelled out directly (the standard approach for this API).
     const CLSID_SHELL_WINDOWS: windows::core::GUID = windows::core::GUID::from_values(
@@ -91,7 +91,7 @@ mod win {
     }
 
     /// Bounding rect of the top-level window under the given point, in
-    /// global (virtual-desktop) screen coordinates — used by the capture
+    /// global (virtual-desktop) screen coordinates - used by the capture
     /// module to grab the whole window instead of a small crop.
     pub fn window_rect_at(x: i32, y: i32) -> Option<(i32, i32, u32, u32)> {
         let hwnd = root_window_at(x, y)?;
@@ -137,7 +137,7 @@ mod win {
             if browser_hwnd.0 != target {
                 continue;
             }
-            // Found the matching Explorer window — any failure past this
+            // Found the matching Explorer window - any failure past this
             // point means "no path available", not "keep looking".
             let doc = browser.Document().ok()?;
             let view = doc.cast::<IShellFolderViewDual>().ok()?;
@@ -186,7 +186,7 @@ fn list_directory(path: &str) -> (Vec<ExplorerEntry>, usize) {
 }
 
 /// Cheap, deterministic project-type detection from what's actually on
-/// disk — gives the model a factual answer instead of a guess from the
+/// disk - gives the model a factual answer instead of a guess from the
 /// folder name alone.
 fn detect_tech(entries: &[ExplorerEntry]) -> Vec<String> {
     let has = |n: &str| entries.iter().any(|e| e.name.eq_ignore_ascii_case(n));
@@ -224,7 +224,7 @@ fn detect_tech(entries: &[ExplorerEntry]) -> Vec<String> {
     }
 
     if tags.is_empty() {
-        // No recognized project marker — fall back to a plain extension
+        // No recognized project marker - fall back to a plain extension
         // histogram so the model still gets something concrete to reason
         // from instead of "not possible to determine".
         use std::collections::HashMap;
@@ -249,7 +249,7 @@ fn detect_tech(entries: &[ExplorerEntry]) -> Vec<String> {
 
 pub fn format_context(ctx: &ExplorerContext) -> String {
     let mut out = format!(
-        "[FOLDER CONTENTS — real directory listing, not a guess]\nPath: {}\n",
+        "[FOLDER CONTENTS - real directory listing, not a guess]\nPath: {}\n",
         ctx.path
     );
     if !ctx.tech_tags.is_empty() {

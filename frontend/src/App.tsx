@@ -23,6 +23,7 @@ import {
   toggleAiActive,
 } from "./lib/tauri";
 import { threadTitle } from "./lib/format";
+import { OPEN_DOCK_EVENT } from "./lib/openFile";
 import type { Attachment, UiMessage } from "./lib/chatTypes";
 
 const AgentsView = lazy(() => import("./components/agents/AgentsView").then((m) => ({ default: m.AgentsView })));
@@ -45,6 +46,16 @@ export default function App() {
   const [view, setView] = useState<View>("chat");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [rightDockOpen, setRightDockOpen] = useState(false);
+  const [chatHidden, setChatHidden] = useState(false);
+  // Hiding the chat only makes sense with the dock showing; closing the dock
+  // always brings the chat back so the window is never empty.
+  const setChatHiddenSafe = useCallback((hidden: boolean) => {
+    if (hidden) setRightDockOpen(true);
+    setChatHidden(hidden);
+  }, []);
+  useEffect(() => {
+    if (!rightDockOpen) setChatHidden(false);
+  }, [rightDockOpen]);
   const [aiActive, setAiActive] = useState(false);
   const [injected, setInjected] = useState<Attachment[]>([]);
 
@@ -88,12 +99,23 @@ export default function App() {
     prevWaiting.current = agents.waitingCount;
   }, [agents.waitingCount]);
 
+  // Any "open this file" request (e.g. a path in a chat answer) shows the dock.
+  useEffect(() => {
+    const show = () => setRightDockOpen(true); // RightDock itself picks the requested tab
+    window.addEventListener(OPEN_DOCK_EVENT, show);
+    return () => window.removeEventListener(OPEN_DOCK_EVENT, show);
+  }, []);
+
   // Ctrl+B toggles the sidebar, Ctrl+J the editor/terminal dock.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
       const k = e.key.toLowerCase();
-      if (k === "b") {
+      if (e.key === "\\") {
+        e.preventDefault();
+        setRightDockOpen(true);
+        setChatHidden((v) => !v);
+      } else if (k === "b") {
         e.preventDefault();
         setSidebarOpen((v) => !v);
       } else if (k === "j") {
@@ -119,16 +141,19 @@ export default function App() {
   const handleOpenThread = useCallback(
     async (id: string) => {
       try {
-        const msgs = await getConversationMessages(id, 200);
         await setConversationId(id);
+        conversations.setActiveId(id);
+        setView("chat");
+        // Still open in memory (maybe with a run going)? Show it live
+        // instead of reloading a snapshot from the server.
+        if (chat.openConversation(id)) return;
+        const msgs = await getConversationMessages(id, 200);
         const uiMsgs: UiMessage[] = msgs.map((m) => ({
           id: newId(),
           kind: m.role === "assistant" ? "assistant" : "user",
           content: m.role === "assistant" ? m.content : stripProjectPrefix(m.content),
         }));
-        chat.loadMessages(uiMsgs);
-        conversations.setActiveId(id);
-        setView("chat");
+        chat.loadMessages(uiMsgs, id);
       } catch (err) {
         chat.addSystemMessage(`Couldn't open that conversation: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -139,7 +164,7 @@ export default function App() {
   const handleDeleteThread = useCallback(
     async (id: string) => {
       await conversations.remove(id);
-      // The deleted thread was the one open in the chat view — clear it so
+      // The deleted thread was the one open in the chat view - clear it so
       // the next message doesn't try to continue a conversation that no
       // longer exists.
       if (conversations.activeId === id) {
@@ -159,6 +184,11 @@ export default function App() {
 
   const handleAskAboutFile = useCallback((path: string, name: string) => {
     setInjected([{ id: newId(), kind: "file", path, name }]);
+    setView("chat");
+  }, []);
+
+  const handleAskAboutText = useCallback((text: string, title: string) => {
+    setInjected([{ id: newId(), kind: "snippet", title, text }]);
     setView("chat");
   }, []);
 
@@ -197,7 +227,9 @@ export default function App() {
         onToggleAi={handleToggleHoverMode}
         title={title}
         sidebarOpen={sidebarOpen}
-        onOpenSidebar={() => setSidebarOpen(true)}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
+        chatHidden={chatHidden}
+        onToggleChat={() => setChatHiddenSafe(!chatHidden)}
         dockOpen={rightDockOpen}
         onToggleDock={() => setRightDockOpen((v) => !v)}
       />
@@ -211,11 +243,15 @@ export default function App() {
           projectName={workspace.activeProject?.name ?? null}
           onAddProject={handleAddProject}
           onAskAboutFile={handleAskAboutFile}
+          onAskAboutText={handleAskAboutText}
+          chatHidden={chatHidden}
+          onChatHiddenChange={setChatHiddenSafe}
+          agentBusy={chat.isLoading || chat.backgroundSessions.some((s) => s.running)}
           sidebar={
             <Sidebar
               user={auth.user}
               threads={conversations.threads}
-              activeId={view === "chat" ? conversations.activeId : null}
+              activeId={view === "chat" ? (chat.currentConversationId ?? conversations.activeId) : null}
               onNewChat={handleNewChat}
               onOpenThread={handleOpenThread}
               onDeleteThread={handleDeleteThread}
@@ -231,6 +267,14 @@ export default function App() {
               browserLinked={!!agents.info?.connected}
               onToggleHoverMode={handleToggleHoverMode}
               aiActive={aiActive}
+              backgroundSessions={chat.backgroundSessions}
+              runningConversationIds={chat.runningConversationIds}
+              onOpenSession={(key) => {
+                chat.openSession(key);
+                const conv = chat.backgroundSessions.find((s) => s.key === key)?.conversationId ?? null;
+                conversations.setActiveId(conv);
+                setView("chat");
+              }}
               onToggleIdeDock={() => setRightDockOpen((v) => !v)}
               ideDockOpen={rightDockOpen}
               projects={workspace.projects}

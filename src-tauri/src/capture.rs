@@ -1,8 +1,8 @@
-// Mouse AI Desktop — Screen Capture Module
+// Mouse AI Desktop - Screen Capture Module
 // Captures screen regions using the `screenshots` crate for cross-platform support.
 //
 // Coordinate contract: all public functions here take GLOBAL (virtual desktop)
-// coordinates — the same space GetCursorPos reports. The screenshots crate's
+// coordinates - the same space GetCursorPos reports. The screenshots crate's
 // capture_area() wants coordinates RELATIVE to a specific screen, so every
 // capture first resolves which monitor the point is on and converts.
 
@@ -29,7 +29,7 @@ fn screen_at(x: i32, y: i32) -> Result<Screen, String> {
 
 /// Encodes with `Fast` compression instead of the `image` crate's default
 /// (`Balanced`, with adaptive per-scanline filtering). These screenshots are
-/// sent to an LLM and discarded, never saved — a larger file is a fine trade
+/// sent to an LLM and discarded, never saved - a larger file is a fine trade
 /// for cutting encode time on a large capture from ~seconds to milliseconds.
 fn encode_png_fast(img: &RgbaImage) -> Result<String, String> {
     let mut buf = Vec::new();
@@ -87,7 +87,7 @@ pub fn capture_around_point(cx: i32, cy: i32, radius: u32) -> Result<String, Str
     capture_region(cx - r, cy - r, radius * 2, radius * 2)
 }
 
-// Longest side an outgoing screenshot is allowed to have — a small crop
+// Longest side an outgoing screenshot is allowed to have - a small crop
 // around the cursor often misses the very content the user is asking about
 // (a whole File Explorer pane, a full browser tab); capturing the entire
 // window instead gives the model far more to work with. Downscaling keeps
@@ -95,7 +95,7 @@ pub fn capture_around_point(cx: i32, cy: i32, radius: u32) -> Result<String, Str
 const MAX_CAPTURE_SIDE: u32 = 1600;
 
 /// Capture the whole top-level window under the given point so the model
-/// can see everything relevant, not just a small crop — falls back to the
+/// can see everything relevant, not just a small crop - falls back to the
 /// radius-based crop if no window rect can be resolved (non-Windows, an
 /// unusual/minimized window, etc). Resizes BEFORE encoding (not after) so a
 /// large 4K window doesn't pay for a full-resolution PNG encode it's about
@@ -110,7 +110,7 @@ pub fn capture_window_or_around_point(cx: i32, cy: i32, fallback_radius: u32) ->
 }
 
 /// Never upscales. `Triangle` (bilinear-ish) trades a little sharpness for
-/// being far cheaper than `Lanczos3` on a large screenshot — plenty good
+/// being far cheaper than `Lanczos3` on a large screenshot - plenty good
 /// enough for a model reading text/UI, not a saved photo.
 fn maybe_downscale(img: RgbaImage, max_side: u32) -> RgbaImage {
     let (w, h) = (img.width(), img.height());
@@ -127,13 +127,13 @@ fn maybe_downscale(img: RgbaImage, max_side: u32) -> RgbaImage {
 // The agent re-sends its ENTIRE conversation each step, and that history can
 // hold several screenshots. A full-res PNG is megabytes; a few of them blow
 // past the backend's request-body limit (HTTP 413). So agent captures are
-// downscaled hard and encoded as JPEG — an order of magnitude smaller, still
+// downscaled hard and encoded as JPEG - an order of magnitude smaller, still
 // perfectly legible for the model.
 //
 // Critically, the model only ever SEES the downscaled image, but clicks must
 // land in REAL screen pixels. So every agent screenshot also reports the
 // captured region's origin (global screen coords) and native (pre-downscale)
-// size — the agent loop uses this to convert the model's normalized 0-1000
+// size - the agent loop uses this to convert the model's normalized 0-1000
 // click coordinates back to exact screen pixels. Without this, a click is off
 // by the downscale ratio (e.g. 1.5x on a 1920-wide screen shown at 1280) and
 // lands on the wrong element entirely.
@@ -147,7 +147,7 @@ pub struct AgentShot {
     /// Top-left of the captured region, in global (virtual-desktop) pixels.
     pub origin_x: i32,
     pub origin_y: i32,
-    /// Size of the captured region BEFORE downscaling — i.e. the real pixel
+    /// Size of the captured region BEFORE downscaling - i.e. the real pixel
     /// span that the image's normalized 0-1000 coordinate space maps onto.
     pub native_width: u32,
     pub native_height: u32,
@@ -155,7 +155,7 @@ pub struct AgentShot {
 
 fn encode_jpeg_downscaled(img: RgbaImage, max_side: u32, quality: u8) -> Result<String, String> {
     let img = maybe_downscale(img, max_side);
-    // JPEG has no alpha channel — flatten RGBA → RGB first.
+    // JPEG has no alpha channel - flatten RGBA → RGB first.
     let rgb = image::DynamicImage::ImageRgba8(img).to_rgb8();
     let mut buf = Vec::new();
     JpegEncoder::new_with_quality(&mut buf, quality)
@@ -181,7 +181,7 @@ pub fn capture_agent_full() -> Result<AgentShot, String> {
 // ── Adaptive glass theming ────────────────────────────────────────
 // Mirrors the browser extension's shared/adaptive-theme.js (samples the page
 // behind the panel to decide light-glass-vs-dark-glass), but there's no DOM to
-// read behind a native overlay window — real screen pixels are sampled
+// read behind a native overlay window - real screen pixels are sampled
 // instead, at a coarse stride since a rough average is all a two-way light/
 // dark decision needs.
 
@@ -202,7 +202,7 @@ fn srgb_luminance(r: u8, g: u8, b: u8) -> f64 {
 }
 
 /// Average luminance of a screen region, sampled on a coarse grid (not every
-/// pixel — a rough average is all a light-vs-dark decision needs, and this
+/// pixel - a rough average is all a light-vs-dark decision needs, and this
 /// keeps it cheap enough to call on every overlay reposition). Returns `None`
 /// if the region can't be captured (e.g. entirely off-screen).
 pub fn average_luminance_at(x: i32, y: i32, width: u32, height: u32) -> Option<f32> {
@@ -234,7 +234,7 @@ pub fn average_luminance_at(x: i32, y: i32, width: u32, height: u32) -> Option<f
     Some((sum / count as f64) as f32)
 }
 
-/// The window under the cursor (or a crop fallback), as a small JPEG — the
+/// The window under the cursor (or a crop fallback), as a small JPEG - the
 /// agent's initial grounding screenshot.
 pub fn capture_agent_window(cx: i32, cy: i32) -> Result<AgentShot, String> {
     if let Some((x, y, w, h)) = crate::explorer::window_rect_at(cx, cy) {

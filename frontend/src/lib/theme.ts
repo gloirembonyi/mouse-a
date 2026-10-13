@@ -3,8 +3,8 @@ import { useSyncExternalStore } from "react";
 // Light/dark appearance for the main window. The preference ("system" |
 // "light" | "dark") persists in localStorage; the *resolved* theme is written
 // to <html data-theme>, which index.css keys every color token off. Kept as a
-// tiny external store (not React context) so non-React consumers — CodeMirror
-// themes, xterm — can read and subscribe to it too.
+// tiny external store (not React context) so non-React consumers - CodeMirror
+// themes, xterm - can read and subscribe to it too.
 export type ThemePref = "system" | "light" | "dark";
 export type Theme = "light" | "dark";
 

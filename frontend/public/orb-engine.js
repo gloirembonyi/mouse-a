@@ -1,4 +1,4 @@
-// Ghost AI — thinking-orb render engine. GENERATED FILE — DO NOT EDIT.
+// Ghost AI - thinking-orb render engine. GENERATED FILE - DO NOT EDIT.
 // Source:     node_modules/thinking-orbs@0.3.1/dist/engine.cjs (MIT © Jakub Antalik)
 // Regenerate: npm run sync:orbs
 //
@@ -9,7 +9,7 @@
 (function (global) {
   "use strict";
   // var, not const: if a future minified bundle declares its own top-level `exports`,
-  // var merges harmlessly where const would be a SyntaxError — and a parse error here
+  // var merges harmlessly where const would be a SyntaxError - and a parse error here
   // would take down every content script injected after it.
   var exports = {};
 

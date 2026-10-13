@@ -1,19 +1,19 @@
-// Mouse AI Desktop — Browser bridge (WebSocket server).
+// Mouse AI Desktop - Browser bridge (WebSocket server).
 //
 // The desktop app is the ORCHESTRATOR. When an agent task needs something done
-// on the web — open a page, fill a form, read a site — it can't do that itself
+// on the web - open a page, fill a form, read a site - it can't do that itself
 // reliably (screenshot+coordinate automation is fragile in a browser). Instead
 // it delegates that piece to the Thothai browser extension over a local
 // WebSocket the desktop hosts here. The extension runs its DOM-level browser
 // agent, streams progress back (shown inline in the desktop's own step log),
-// and returns the final result — so the desktop and browser act as one system.
+// and returns the final result - so the desktop and browser act as one system.
 //
 // Local-only + origin-gated: binds 127.0.0.1 and accepts only chrome-extension
 // / moz-extension origins, so a random web page can't drive the desktop app.
 //
 // Two modes, exposed as agent tools (see agent.rs):
-//   • run_task  — delegate and await the result inline.
-//   • start_task + await_task — delegate, keep working, collect the result later
+//   • run_task  - delegate and await the result inline.
+//   • start_task + await_task - delegate, keep working, collect the result later
 //     (true parallelism: the desktop agent continues while the browser works).
 
 use std::collections::HashMap;
@@ -45,7 +45,7 @@ pub struct Bridge {
 
 struct Inner {
     connected: AtomicBool,
-    /// The live connection presented this app's pairing code (see link.rs) —
+    /// The live connection presented this app's pairing code (see link.rs) -
     /// required before the browser may hand the desktop tasks.
     paired: AtomicBool,
     port: AtomicU16,
@@ -127,7 +127,7 @@ impl Bridge {
     }
 
     /// Delegate a web task to the extension and return its task id immediately.
-    /// The result is collected later via `await_task` — so the caller can keep
+    /// The result is collected later via `await_task` - so the caller can keep
     /// working while the browser does its part.
     pub fn start_task(&self, source: &str, instruction: &str, options: Value) -> Result<String, String> {
         if !self.is_connected() {
@@ -238,7 +238,7 @@ pub async fn serve(app: AppHandle) {
     let listener = match bind_first_free().await {
         Some(l) => l,
         None => {
-            eprintln!("[bridge] no free port in {:?} — browser bridge disabled", PORTS);
+            eprintln!("[bridge] no free port in {:?} - browser bridge disabled", PORTS);
             return;
         }
     };
@@ -269,7 +269,28 @@ async fn bind_first_free() -> Option<TcpListener> {
 }
 
 async fn handle_connection(stream: tokio::net::TcpStream, app: AppHandle) {
-    // Reject any origin that isn't a browser extension — a web page must never
+    // Plain HTTP request (no WebSocket upgrade) = the extension's reachability
+    // probe. Answering it lets the extension check "is Mouse AI running?" with
+    // a fetch before opening a WebSocket - a refused WebSocket is logged by
+    // Chrome as an extension error on every retry when the app is closed.
+    {
+        let mut head = [0u8; 1024];
+        let n = match tokio::time::timeout(Duration::from_secs(3), stream.peek(&mut head)).await {
+            Ok(Ok(n)) => n,
+            _ => return,
+        };
+        let text = String::from_utf8_lossy(&head[..n]).to_ascii_lowercase();
+        if text.starts_with("get ") && !text.contains("upgrade: websocket") {
+            use tokio::io::AsyncWriteExt;
+            let mut stream = stream;
+            let _ = stream
+                .write_all(b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+                .await;
+            let _ = stream.shutdown().await;
+            return;
+        }
+    }
+    // Reject any origin that isn't a browser extension - a web page must never
     // be able to drive the desktop app through this socket. Returning Err from
     // the handshake callback fails the upgrade, so a rejected origin never
     // reaches the read loop below.
@@ -329,7 +350,7 @@ async fn handle_connection(stream: tokio::net::TcpStream, app: AppHandle) {
         }
     }
 
-    // Disconnected — clear live state and fail any still-pending tasks.
+    // Disconnected - clear live state and fail any still-pending tasks.
     {
         let b = bridge();
         b.inner.connected.store(false, Ordering::SeqCst);
@@ -422,7 +443,7 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
                 }
             }
         }
-        // "accepted", "pong", "notify" — informational, nothing to do.
+        // "accepted", "pong", "notify" - informational, nothing to do.
         _ => {}
     }
 }

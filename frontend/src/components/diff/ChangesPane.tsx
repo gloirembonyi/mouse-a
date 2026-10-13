@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FileDiff, RefreshCw } from "lucide-react";
+import { FileDiff, PanelLeftClose, PanelLeftOpen, RefreshCw } from "lucide-react";
 import { gitDiffFile, gitStatus, type ChangedFile } from "../../lib/tauri";
 
 interface ChangesPaneProps {
@@ -20,6 +20,8 @@ export function ChangesPane({ root }: ChangesPaneProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [diff, setDiff] = useState<string>("");
   const [loadingDiff, setLoadingDiff] = useState(false);
+  // The file list can be hidden to read a wide diff.
+  const [listOpen, setListOpen] = useState(true);
 
   const refresh = () => {
     setError(null);
@@ -47,14 +49,34 @@ export function ChangesPane({ root }: ChangesPaneProps) {
 
   return (
     <div className="flex h-full min-w-0 flex-1">
-      <div className="flex w-[240px] flex-shrink-0 flex-col border-r border-border-soft">
+      {!listOpen && (
+        <div className="flex flex-shrink-0 flex-col items-center border-r border-border-soft px-1 py-1.5">
+          <button
+            onClick={() => setListOpen(true)}
+            title="Show changed files"
+            className="rounded p-1 text-text-muted transition hover:bg-bg-hover hover:text-text-primary"
+          >
+            <PanelLeftOpen size={13} />
+          </button>
+        </div>
+      )}
+      <div className={`w-[240px] flex-shrink-0 flex-col border-r border-border-soft ${listOpen ? "flex" : "hidden"}`}>
         <div className="flex h-9 items-center justify-between px-3">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
             {files ? `${files.length} changed file${files.length === 1 ? "" : "s"}` : "Changes"}
           </span>
-          <button onClick={refresh} title="Refresh" className="rounded p-1 text-text-muted transition hover:bg-bg-hover hover:text-text-primary">
-            <RefreshCw size={12} />
-          </button>
+          <span className="flex items-center">
+            <button onClick={refresh} title="Refresh" className="rounded p-1 text-text-muted transition hover:bg-bg-hover hover:text-text-primary">
+              <RefreshCw size={12} />
+            </button>
+            <button
+              onClick={() => setListOpen(false)}
+              title="Hide the file list"
+              className="rounded p-1 text-text-muted transition hover:bg-bg-hover hover:text-text-primary"
+            >
+              <PanelLeftClose size={12} />
+            </button>
+          </span>
         </div>
         <div className="scrollbar-thin flex-1 overflow-y-auto">
           {error ? (
@@ -62,7 +84,7 @@ export function ChangesPane({ root }: ChangesPaneProps) {
           ) : !files ? (
             <p className="p-3 text-xs text-text-muted">Loading…</p>
           ) : files.length === 0 ? (
-            <p className="p-3 text-xs text-text-muted">No changes — working tree is clean.</p>
+            <p className="p-3 text-xs text-text-muted">No changes - working tree is clean.</p>
           ) : (
             files.map((f) => (
               <button

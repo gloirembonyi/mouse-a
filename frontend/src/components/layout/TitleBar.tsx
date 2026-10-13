@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Minus, PanelLeftOpen, PanelRight, Square, X } from "lucide-react";
+import { MessageSquare, Minus, PanelLeft, PanelRight, Square, X } from "lucide-react";
 import { appWindow } from "../../lib/tauri";
 import { BrandMark, IconButton } from "../ui/primitives";
 
@@ -12,22 +12,30 @@ interface TitleBarProps {
   onOpenSidebar?: () => void;
   dockOpen?: boolean;
   onToggleDock?: () => void;
+  onToggleSidebar?: () => void;
+  chatHidden?: boolean;
+  onToggleChat?: () => void;
 }
 
 // Frameless window chrome: one slim, draggable row. Everything that isn't a
 // button is a drag region, so the window moves from anywhere along the top.
-export function TitleBar({ aiActive, onToggleAi, title, sidebarOpen = true, onOpenSidebar, dockOpen, onToggleDock }: TitleBarProps) {
+export function TitleBar({
+  aiActive,
+  onToggleAi,
+  title,
+  sidebarOpen = true,
+  dockOpen,
+  onToggleDock,
+  onToggleSidebar,
+  chatHidden,
+  onToggleChat,
+}: TitleBarProps) {
   return (
     <header
       data-tauri-drag-region
       className="relative z-10 flex h-10 flex-shrink-0 select-none items-center justify-between gap-2 border-b border-border-soft bg-bg-secondary pl-3 pr-1.5"
     >
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
-        {!sidebarOpen && onOpenSidebar && (
-          <IconButton title="Show sidebar" size="sm" onClick={onOpenSidebar}>
-            <PanelLeftOpen size={14} />
-          </IconButton>
-        )}
         <BrandMark size={18} />
         <span data-tauri-drag-region className="text-[13px] font-semibold tracking-[-0.01em]">
           Mouse AI
@@ -60,10 +68,23 @@ export function TitleBar({ aiActive, onToggleAi, title, sidebarOpen = true, onOp
       )}
 
       <div className="flex items-center gap-0.5">
-        {onToggleDock && (
-          <IconButton title={dockOpen ? "Hide editor panel" : "Show editor, terminal & changes"} size="sm" active={dockOpen} onClick={onToggleDock}>
-            <PanelRight size={14} />
-          </IconButton>
+        {/* Layout toggles (VS Code-style): each panel can be hidden. */}
+        {onToggleSidebar && (
+          <div className="flex items-center gap-0.5 rounded-lg bg-bg-tertiary/60 p-0.5">
+            <IconButton title={sidebarOpen ? "Hide sidebar (Ctrl+B)" : "Show sidebar (Ctrl+B)"} size="sm" active={sidebarOpen} onClick={onToggleSidebar}>
+              <PanelLeft size={14} />
+            </IconButton>
+            {onToggleChat && (
+              <IconButton title={chatHidden ? "Show chat (Ctrl+\\)" : "Hide chat (Ctrl+\\)"} size="sm" active={!chatHidden} onClick={onToggleChat}>
+                <MessageSquare size={13} />
+              </IconButton>
+            )}
+            {onToggleDock && (
+              <IconButton title={dockOpen ? "Hide editor & terminal (Ctrl+J)" : "Show editor & terminal (Ctrl+J)"} size="sm" active={dockOpen} onClick={onToggleDock}>
+                <PanelRight size={14} />
+              </IconButton>
+            )}
+          </div>
         )}
         <span className="mx-1.5 h-4 w-px bg-border-default" />
         <WindowButton onClick={() => appWindow.minimize().catch(() => {})} title="Minimize">
@@ -74,7 +95,7 @@ export function TitleBar({ aiActive, onToggleAi, title, sidebarOpen = true, onOp
         </WindowButton>
         <WindowButton
           onClick={() => appWindow.close().catch(() => {})}
-          title="Close (minimizes to tray — reopen from the tray icon or a shortcut)"
+          title="Close (minimizes to tray - reopen from the tray icon or a shortcut)"
           danger
         >
           <X size={14} />

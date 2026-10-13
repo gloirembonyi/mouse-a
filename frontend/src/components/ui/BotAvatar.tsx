@@ -12,7 +12,7 @@ import clsx from "clsx";
 //   clover → the meeting copilot              square → background helpers
 
 export type BotKind = "clover" | "flower" | "ghost" | "square";
-/** "still" = no motion at all (for long lists — only the newest bot animates). */
+/** "still" = no motion at all (for long lists - only the newest bot animates). */
 export type BotMood = "idle" | "still" | "thinking" | "working" | "listening" | "happy" | "sleeping" | "error";
 
 const PALETTE: Record<BotKind, { light: string; base: string; dark: string }> = {

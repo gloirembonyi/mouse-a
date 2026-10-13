@@ -1,4 +1,4 @@
-// Mouse AI Desktop — Hover Overlay Logic
+// Mouse AI Desktop - Hover Overlay Logic
 // Runs inside the transparent always-on-top overlay window. Rust shows this
 // window next to the cursor on hover-dwell and sends context via events.
 
@@ -13,8 +13,8 @@ const panelElement = document.getElementById("panel-element");
 const answerEl = document.getElementById("answer");
 const thinkingEl = document.getElementById("thinking");
 
-// The overlay never streams — the user watches this indicator for the whole model
-// latency — so it is worth being the same considered orb the extension uses rather
+// The overlay never streams - the user watches this indicator for the whole model
+// latency - so it is worth being the same considered orb the extension uses rather
 // than three bouncing dots. If the orb scripts are absent the original dots remain.
 const thinkingLabelEl = thinkingEl?.querySelector(".thinking-label");
 let thinkingOrb = null;
@@ -70,7 +70,7 @@ let autoHideTimer = null;
 // quick "what's under my mouse" answers.
 let agentMode = true; // when on, the ask runs as a full agent task on the PC
 let agentSummary = null; // live "Thought for Xs" summary widget for the in-flight run
-let agentRunning = false; // an agent_run is in flight — the send button doubles as Stop
+let agentRunning = false; // an agent_run is in flight - the send button doubles as Stop
 
 // ── Events from Rust ───────────────────────────────────────
 window.addEventListener("DOMContentLoaded", async () => {
@@ -87,7 +87,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 });
 
 // Hotkey / tray "Ask at Cursor": Rust already positioned, sized, and focused
-// the window — jump straight to the input panel.
+// the window - jump straight to the input panel.
 function onTriggerAsk(payload) {
   hover = payload;
   showPanel({ resize: false });
@@ -120,7 +120,7 @@ function onAiToast(active) {
   pill.hidden = true;
   panel.hidden = true;
   toast.textContent = active
-    ? "🖱️✨ Mouse AI active — pause your mouse on anything to ask"
+    ? "🖱️✨ Mouse AI active - pause your mouse on anything to ask"
     : "Mouse AI off";
   toast.hidden = false;
   scheduleAutoHide(TOAST_AUTOHIDE_MS);
@@ -143,7 +143,7 @@ function scheduleAutoHide(ms) {
 // moving. Deliberately NOT using data-tauri-drag-region here: Tauri's native
 // drag-region invokes the OS window-move on mousedown for ANY click, which on
 // Windows reliably swallows the paired click on a real <button> (the OS's
-// caption-drag loop takes over the mouse) — the exact "I can't click it
+// caption-drag loop takes over the mouse) - the exact "I can't click it
 // anymore" symptom. Instead: only actually start the native drag once the
 // pointer has moved past a small threshold, so a real click never triggers it.
 function makeDraggableClickable(el, onClick) {
@@ -175,7 +175,7 @@ function makeDraggableClickable(el, onClick) {
 
   el.addEventListener("click", (e) => {
     if (dragging) {
-      // Tail end of a drag gesture, not a real click — swallow it.
+      // Tail end of a drag gesture, not a real click - swallow it.
       e.preventDefault();
       e.stopPropagation();
       dragging = false;
@@ -218,12 +218,12 @@ function setupUI() {
   });
 
   document.addEventListener("keydown", (e) => {
-    // A pending confirm owns Escape (Deny) — don't collapse the panel out from
+    // A pending confirm owns Escape (Deny) - don't collapse the panel out from
     // under it.
     if (e.key === "Escape" && confirmHost.hidden && !agentRunning) collapse();
   });
 
-  // Manual resize handle — the window is also natively resizable from its
+  // Manual resize handle - the window is also natively resizable from its
   // edges (tauri.conf.json's overlay window has resizable:true), but that's
   // barely discoverable on a borderless window, so this corner grip gives an
   // explicit affordance for making the panel bigger.
@@ -235,7 +235,7 @@ function setupUI() {
     } catch { /* ignore */ }
   });
 
-  // Clicking elsewhere on the desktop used to auto-collapse the panel — lost
+  // Clicking elsewhere on the desktop used to auto-collapse the panel - lost
   // in-progress research/answers the moment the user glanced at another
   // window. The panel now stays open regardless of focus; ✕ / Esc / the
   // pill's own collapse() are the only ways to dismiss it. Alt+Tab-ing back
@@ -247,7 +247,7 @@ async function expand() {
 }
 
 // The window used to be resized to hardcoded pixel constants (380/460/480)
-// regardless of how much text actually came back — a one-line answer left a
+// regardless of how much text actually came back - a one-line answer left a
 // large blank gap below it up to that fixed height. Instead, measure how
 // tall the panel's content actually wants to be (by briefly letting it hug
 // its content instead of stretching to fill the window) and resize the
@@ -255,7 +255,7 @@ async function expand() {
 // growing the window off-screen.
 //
 // A modest floor so a bare "Ask" state (header + input) still looks like a
-// deliberate compact panel rather than a sliver — but low enough that the
+// deliberate compact panel rather than a sliver - but low enough that the
 // window truly hugs short answers instead of leaving a large empty gap above
 // the input (the content areas are sized to content + capped, not flex:1, so
 // the measured height is the real content height).
@@ -326,7 +326,7 @@ function toggleAgentMode() {
     : "Ask about what's under your mouse…";
 }
 
-// The panel only ever showed the ANSWER, never what was actually asked — easy
+// The panel only ever showed the ANSWER, never what was actually asked - easy
 // to lose track of, especially once the panel's grown to fit a long reply.
 // Echoed above the answer/log for both the plain-ask and agent-task paths.
 function questionHeaderHtml(question) {
@@ -334,7 +334,7 @@ function questionHeaderHtml(question) {
   return `<div class="asked-question">${escapeHtml(question)}</div>`;
 }
 
-// "Worked for 4m 28s" — same run-duration line shown under a finished agent
+// "Worked for 4m 28s" - same run-duration line shown under a finished agent
 // task in the main window (main.js's finishAgentActivity/formatDuration).
 function durationFooterHtml(elapsedMs) {
   return `<div class="agent-activity-footer">Worked for ${formatDuration(elapsedMs)}</div>`;
@@ -354,7 +354,7 @@ async function ask(question) {
   setBusy(true);
   questionInput.value = "";
   setThinking(true, "shaping", "Looking at your screen…");
-  // Fully clear both panes (not just toggle `hidden`) — a stale previous
+  // Fully clear both panes (not just toggle `hidden`) - a stale previous
   // answer's innerHTML sitting under a newly-visible agent-log (or vice
   // versa) is exactly how two unrelated Q&A turns end up visually stacked.
   answerEl.hidden = true;
@@ -387,7 +387,7 @@ async function ask(question) {
     setBusy(false);
     questionInput.value = "";
     questionInput.focus();
-    // Grow (or shrink) the window to fit whatever came back — answer or error.
+    // Grow (or shrink) the window to fit whatever came back - answer or error.
     await syncOverlaySize(520);
   }
 }
@@ -407,7 +407,7 @@ async function runAgentTask(task) {
   clearPinnedConfirm();
   questionInput.value = "";
   setThinking(false);
-  // Fully clear both panes — see the matching comment in ask() above.
+  // Fully clear both panes - see the matching comment in ask() above.
   answerEl.hidden = true;
   answerEl.innerHTML = "";
   agentLogEl.hidden = false;
@@ -427,7 +427,7 @@ async function runAgentTask(task) {
     });
     finishAgentSummary(true);
     // The final answer joins the SAME scrollable log the collapsed "Thought
-    // for Xs" recap lives in (Cursor-style) — it doesn't replace it. Only the
+    // for Xs" recap lives in (Cursor-style) - it doesn't replace it. Only the
     // plain (non-agent) ask() path uses the separate #answer element.
     appendFinalAnswer(`<div class="answer-body">${renderMarkdown(result.text || "(done)")}</div>` + answerActionsHtml());
   } catch (err) {
@@ -447,7 +447,7 @@ async function runAgentTask(task) {
 }
 
 // The panel border animates and a "don't touch" banner shows while the agent
-// is acting on the machine — a clear, unmissable "AI is driving" signal so the
+// is acting on the machine - a clear, unmissable "AI is driving" signal so the
 // user doesn't grab the mouse/keyboard and fight it mid-run.
 function setWorkingIndicator(on) {
   panel.classList.toggle("agent-running", on);
@@ -455,7 +455,7 @@ function setWorkingIndicator(on) {
 }
 
 // ── Chat history (from the cursor overlay) ─────────────────────────
-// The overlay could only ask/act — you couldn't get back to earlier chats
+// The overlay could only ask/act - you couldn't get back to earlier chats
 // without opening the main window. This lets you browse recent conversations
 // and jump into one (its transcript loads here, and the next message continues
 // that thread) right from the pill.
@@ -473,7 +473,7 @@ async function toggleHistory() {
   historyOpen = true;
   historyPanel.hidden = false;
   btnHistory.classList.add("active");
-  // History replaces the content area — never stacks on top of a previous
+  // History replaces the content area - never stacks on top of a previous
   // answer/log (which is how the two used to end up visible at once).
   answerEl.hidden = true;
   agentLogEl.hidden = true;
@@ -526,14 +526,14 @@ async function openConversation(id, title) {
   } catch (err) {
     answerEl.innerHTML = `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
   }
-  // A transcript deserves room to read — a taller cap so it rarely needs a
+  // A transcript deserves room to read - a taller cap so it rarely needs a
   // manual resize to see the whole conversation.
   await syncOverlaySize(600);
 }
 
 // Titles and stored user messages carry the agent's internal prompt scaffolding
 // (hover context, "[TASK]" markers, "…on their screen and asks:"). None of that
-// belongs in a human-facing list/transcript — reduce it to what the user meant.
+// belongs in a human-facing list/transcript - reduce it to what the user meant.
 function cleanUserText(raw) {
   let s = String(raw || "");
   const taskIdx = s.lastIndexOf("[TASK]");
@@ -569,9 +569,9 @@ function renderTranscript(title, messages) {
     })
     .join("");
   answerEl.innerHTML =
-    `<div class="transcript-head"><span class="transcript-title">${escapeHtml(title)}</span><span class="transcript-hint">Continuing this chat — type below</span></div>` +
+    `<div class="transcript-head"><span class="transcript-title">${escapeHtml(title)}</span><span class="transcript-hint">Continuing this chat - type below</span></div>` +
     `<div class="transcript-body">${rows || `<div class="history-empty">This chat has no messages.</div>`}</div>`;
-  // Reading a past chat starts at the BEGINNING, not the last reply — scrolling
+  // Reading a past chat starts at the BEGINNING, not the last reply - scrolling
   // to the bottom is what made an opened chat look like only its final message.
   requestAnimationFrame(() => { answerEl.scrollTop = 0; });
 }
@@ -603,7 +603,7 @@ function relativeTime(iso) {
   return days < 30 ? `${days}d ago` : new Date(t).toLocaleDateString();
 }
 
-// Cursor/Codex-style collapsible "Thought for Xs" widget — the raw step-by-
+// Cursor/Codex-style collapsible "Thought for Xs" widget - the raw step-by-
 // step tool log defaults to hidden inside it (expanded automatically only
 // while running or when a confirm prompt needs the user's attention), so the
 // popup reads as a clean one-line status instead of a wall of tool-call text.
@@ -695,7 +695,7 @@ function finishAgentSummary(success) {
 }
 
 // Appends the final answer (or error box) below the now-collapsed "Thought
-// for Xs" summary, inside the same scrollable log — then scrolls down so the
+// for Xs" summary, inside the same scrollable log - then scrolls down so the
 // answer is what's actually in view, not left scrolled up at the old step
 // log's position.
 function appendFinalAnswer(html) {
@@ -738,7 +738,7 @@ function renderAgentProgress(p) {
 }
 
 // A rollup ("Explored 12 files, 3 searches +367 -14") isn't a timeline entry
-// the way a tool call is — no icon/rail, just a small muted recap line under
+// the way a tool call is - no icon/rail, just a small muted recap line under
 // whatever heading it summarizes (same as Cursor's grey rollup lines).
 function buildPhaseSummary(p) {
   const div = document.createElement("div");
@@ -747,7 +747,7 @@ function buildPhaseSummary(p) {
   return div;
 }
 
-// Icon badge + connecting rail beside the message — same timeline shape as
+// Icon badge + connecting rail beside the message - same timeline shape as
 // the main window's buildAgentStep (src/main.js), so both surfaces read as
 // one product instead of two different-looking activity logs.
 function buildAgentStep(p) {
@@ -766,7 +766,7 @@ function buildAgentStep(p) {
 
   const body = document.createElement("div");
   body.className = "agent-step-body";
-  // Same friendly formatting the final error box uses — the log is normally
+  // Same friendly formatting the final error box uses - the log is normally
   // hidden before an error-kind row would be seen, but this covers the race
   // between the agent-progress event arriving and the invoke() rejecting.
   // Rendered as inline markdown (not raw textContent) so `code` and **bold**
@@ -780,7 +780,7 @@ function buildAgentStep(p) {
 }
 
 // Approval requests used to be appended into the scrollable step log, where a
-// long run pushed them below the fold — the user had to scroll/expand to even
+// long run pushed them below the fold - the user had to scroll/expand to even
 // see the Allow/Deny buttons. Now they render into a pinned host that sits
 // above the input and is ALWAYS visible, slides in with a pulse, and auto-
 // focuses Allow (Enter = Allow, Esc = Deny) so a decision is one keypress away.
@@ -788,7 +788,7 @@ let confirmKeyHandler = null;
 
 function showPinnedConfirm(p) {
   clearPinnedConfirm();
-  // While waiting on the human, the "don't touch" banner is wrong — the user
+  // While waiting on the human, the "don't touch" banner is wrong - the user
   // MUST interact to answer. Hide it for the duration of the prompt.
   workingIndicator.hidden = true;
 
@@ -824,7 +824,7 @@ function clearPinnedConfirm() {
   confirmHost.classList.remove("confirm-enter");
 }
 
-// Real Allow/Deny prompt the agent is waiting on — the click is reported
+// Real Allow/Deny prompt the agent is waiting on - the click is reported
 // straight back to the paused tool call in Rust via agent_confirm.
 function buildConfirmPrompt(p) {
   const wrap = document.createElement("div");
@@ -856,9 +856,9 @@ function buildConfirmPrompt(p) {
     try {
       await invoke("agent_confirm", { requestId: p.request_id, approved });
     } catch { /* ignore */ }
-    // Briefly show the outcome, then dismiss the pinned host and — if the run
-    // is still going — restore the "AI working" banner.
-    msg.textContent = approved ? `✅ Allowed — continuing…` : `🚫 Denied — stopping that action.`;
+    // Briefly show the outcome, then dismiss the pinned host and - if the run
+    // is still going - restore the "AI working" banner.
+    msg.textContent = approved ? `✅ Allowed - continuing…` : `🚫 Denied - stopping that action.`;
     row.remove();
     setTimeout(() => {
       clearPinnedConfirm();
@@ -879,7 +879,7 @@ function withTimeout(promise, ms) {
   return Promise.race([
     promise,
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Request timed out — the backend didn't respond.")), ms)
+      setTimeout(() => reject(new Error("Request timed out - the backend didn't respond.")), ms)
     ),
   ]);
 }
@@ -893,24 +893,24 @@ function friendlyError(err) {
     return "Can't reach the Thothai backend. Check your internet or the Backend URL in Settings (⤢ → ⚙).";
   }
   if (/empty response/i.test(msg)) {
-    return "The model didn't respond after several tries — it may be under heavy load. Try again in a moment.";
+    return "The model didn't respond after several tries - it may be under heavy load. Try again in a moment.";
   }
   if (/step limit/i.test(msg)) {
     return "That task took more steps than I could finish in one go. Try breaking it into smaller steps.";
   }
   if (/daily message limit|daily limit/i.test(msg)) {
-    return "You've hit today's free message limit. It resets daily — try again tomorrow.";
+    return "You've hit today's free message limit. It resets daily - try again tomorrow.";
   }
   if (/referer|permission_denied|rejected every configured api key|api key not valid/i.test(msg)) {
-    return "The backend's Gemini API key is misconfigured (not something you can fix here) — let the app owner know it needs a working key.";
+    return "The backend's Gemini API key is misconfigured (not something you can fix here) - let the app owner know it needs a working key.";
   }
   // Distinct from a transient rate limit: a quota/billing error means the
-  // account's Gemini quota is genuinely exhausted — retrying can't fix it.
+  // account's Gemini quota is genuinely exhausted - retrying can't fix it.
   if (/exceeded your current quota|check your plan and billing|quota_exceeded|resource_exhausted/i.test(msg)) {
-    return "The Gemini API quota/billing limit has been reached — this won't resolve by retrying. Check the plan/billing for the API key in use, or switch to a different key in Settings.";
+    return "The Gemini API quota/billing limit has been reached - this won't resolve by retrying. Check the plan/billing for the API key in use, or switch to a different key in Settings.";
   }
   if (/429|rate limit/i.test(msg)) {
-    return "Too many requests right now — wait a few seconds and try again.";
+    return "Too many requests right now - wait a few seconds and try again.";
   }
   return msg;
 }
@@ -918,7 +918,7 @@ function friendlyError(err) {
 function setBusy(state) {
   busy = state;
   // While an agent task runs, the send button stays clickable as a Stop
-  // button — a minutes-long run with no way out reads as a hang.
+  // button - a minutes-long run with no way out reads as a hang.
   btnAsk.disabled = state && !agentRunning;
   const isStop = state && agentRunning;
   btnAsk.innerHTML = isStop ? STOP_ICON : SEND_ICON;
@@ -926,7 +926,7 @@ function setBusy(state) {
   btnAsk.title = isStop ? "Stop the agent" : "Ask / do it (Enter)";
   btnAnalyze.disabled = state;
   // The question is already echoed above (questionHeaderHtml) once a task
-  // starts — leaving the same text sitting in the input for the whole
+  // starts - leaving the same text sitting in the input for the whole
   // "Working…" duration just duplicates it on screen. Lock the field instead
   // so it visibly reads as busy rather than as an editable, stale question.
   questionInput.readOnly = state;
@@ -942,7 +942,7 @@ function setBusy(state) {
 // ── Helpers ────────────────────────────────────────────────
 // Window titles from UI Automation are sometimes internal class names
 // ("Chrome Legacy Window", "Intermediate D3D Window") rather than anything a
-// person would recognize — those are dropped instead of shown in the pill.
+// person would recognize - those are dropped instead of shown in the pill.
 const JUNK_TITLE = /^(chrome legacy window|chrome_widgetwin_\d+|chrome_renderwidgethosthwnd|intermediate d3d window|default ime|msctfime ui|desktop|program manager)$/i;
 
 function prettyApp(name) {
@@ -955,7 +955,7 @@ function appSummary(p) {
   let title = (p?.context?.window_title || "").trim();
   if (JUNK_TITLE.test(title)) title = "";
   // Browsers/editors append " - Google Chrome" etc.; the app name already says that.
-  if (app && title.toLowerCase().endsWith(app.toLowerCase())) title = title.slice(0, -app.length).replace(/[\s\-–—|]+$/, "");
+  if (app && title.toLowerCase().endsWith(app.toLowerCase())) title = title.slice(0, -app.length).replace(/[\s\-–-|]+$/, "");
   if (app && title) return `${app} · ${title}`;
   return app || title;
 }
@@ -965,7 +965,7 @@ function elementSummary(p) {
   if (!el) return "";
   const parts = [];
   // Generic container roles ("pane", "document", "group") say nothing on
-  // their own — only keep the role when it adds meaning ("button", "link").
+  // their own - only keep the role when it adds meaning ("button", "link").
   if (el.role && !/^(pane|document|group|window|custom|client)$/i.test(el.role)) parts.push(el.role);
   if (el.name && !JUNK_TITLE.test(el.name)) parts.push(el.name);
   if (el.value && el.value !== el.name) parts.push(el.value);
@@ -1167,7 +1167,7 @@ function answerHeight() {
   return Math.round(Math.min(760, Math.max(520, (window.screen?.availHeight || 900) * 0.75)));
 }
 
-// Same escaping as renderMarkdown but no block-level wrapping (no <p>/<br>) —
+// Same escaping as renderMarkdown but no block-level wrapping (no <p>/<br>) -
 // used for the compact single-line agent-step narration, where a full
 // markdown block layout would look broken in an 11px-tall row.
 function renderInlineMarkdown(text) {

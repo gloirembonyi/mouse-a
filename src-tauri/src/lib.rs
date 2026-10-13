@@ -1,4 +1,4 @@
-// Mouse AI Desktop — Main Application Entry Point
+// Mouse AI Desktop - Main Application Entry Point
 // Sets up Tauri with system tray, global shortcuts, and all plugins.
 
 mod agent;
@@ -31,7 +31,7 @@ use tokio::sync::RwLock;
 /// Load MOUSE_AI_* vars from .env.local / .env so they don't have to be set in
 /// the shell. Checked in the cwd and its parent (covers `tauri dev`, whose cwd
 /// is src-tauri/, with the env file at the project root). Real environment
-/// variables always win — dotenvy never overrides an already-set var.
+/// variables always win - dotenvy never overrides an already-set var.
 fn load_env_files() {
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
@@ -120,9 +120,18 @@ pub fn run() {
             fs_browser::fs_write_text_file,
             fs_browser::fs_parent_dir,
             fs_browser::fs_search_files,
+            fs_browser::fs_file_info,
+            fs_browser::fs_read_data_url,
+            fs_browser::fs_create_file,
+            fs_browser::fs_create_dir,
+            fs_browser::fs_rename,
+            fs_browser::fs_delete,
+            fs_browser::fs_reveal,
+            fs_browser::fs_open_default,
             terminal::pty_spawn,
             terminal::pty_write,
             terminal::pty_resize,
+            terminal::pty_kill,
             git_diff::git_status,
             git_diff::git_diff_file,
             commands::bridge_status,
@@ -154,7 +163,7 @@ pub fn run() {
             let _tray = TrayIconBuilder::new()
                 .icon(Image::from_bytes(include_bytes!("../icons/32x32.png"))?)
                 .menu(&menu)
-                .tooltip("Mouse AI — Thothai Desktop Assistant")
+                .tooltip("Mouse AI - Thothai Desktop Assistant")
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "quit" => {
                         app.exit(0);
@@ -197,20 +206,20 @@ pub fn run() {
                 Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
             };
 
-            // Ctrl+Shift+Space — ask about whatever is under the cursor, anywhere.
+            // Ctrl+Shift+Space - ask about whatever is under the cursor, anywhere.
             let ask_shortcut =
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space);
-            // Ctrl+Shift+S — screenshot & analyze in the main window.
+            // Ctrl+Shift+S - screenshot & analyze in the main window.
             let capture_shortcut =
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyS);
-            // Ctrl+Shift+Q — toggle hover mode (auto "Ask AI" pill on dwell).
+            // Ctrl+Shift+Q - toggle hover mode (auto "Ask AI" pill on dwell).
             let hover_mode_shortcut =
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyQ);
-            // Ctrl+Shift+Enter — meeting copilot: "What should I say?"
+            // Ctrl+Shift+Enter - meeting copilot: "What should I say?"
             let meeting_shortcut =
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Enter);
 
-            // NOTE: shortcut handlers fire on both key press AND release —
+            // NOTE: shortcut handlers fire on both key press AND release -
             // only act on Pressed, otherwise every hotkey runs twice.
             //
             // Registration failures are reported, not propagated: if another
@@ -285,7 +294,7 @@ pub fn run() {
             // ── Main Window Setup ────────────────────────────────
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_always_on_top(true);
-                // Start hidden — user activates via hotkey or tray
+                // Start hidden - user activates via hotkey or tray
                 // Window will be shown when ready via frontend
             }
 

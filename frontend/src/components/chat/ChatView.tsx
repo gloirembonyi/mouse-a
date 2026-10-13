@@ -37,7 +37,7 @@ export function ChatView(props: ChatViewProps) {
       return;
     }
     // Each tick crosses into Win32 UI Automation through Tauri, so it must not keep
-    // running while the window is hidden — there is no cursor context worth reading
+    // running while the window is hidden - there is no cursor context worth reading
     // when nobody is looking at the app.
     const poll = async () => {
       try {
@@ -172,7 +172,7 @@ export function ChatView(props: ChatViewProps) {
             </h1>
             <p className="mb-7 text-center text-[13px] text-text-muted">
               {chat.agentMode
-                ? "Agent mode can run commands, edit files and use your PC — it asks before anything risky."
+                ? "Agent mode can run commands, edit files and use your PC - it asks before anything risky."
                 : "Chat mode only answers; nothing on your computer is touched."}
             </p>
             {composer("hero")}

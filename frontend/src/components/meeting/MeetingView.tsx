@@ -70,7 +70,7 @@ export function MeetingView({ meeting, onClose }: MeetingViewProps) {
   const hasProfile = Boolean(meeting.profile.about.trim() || meeting.profile.projects.trim());
   const hasSession = status.live || meeting.transcript.length > 0 || meeting.cards.length > 0;
 
-  // Practice is just you and the coach — there's no "other side" to capture.
+  // Practice is just you and the coach - there's no "other side" to capture.
   useEffect(() => {
     setSystem(mode !== "practice");
   }, [mode]);
@@ -224,7 +224,7 @@ function SetupScreen(props: {
             <SourceRow
               icon={<Volume2 size={15} />}
               title="Computer audio"
-              body="The other participants (Zoom, Meet, Teams…) — use headphones for the cleanest transcript"
+              body="The other participants (Zoom, Meet, Teams…) - use headphones for the cleanest transcript"
               on={props.system}
               onChange={props.onSystem}
             />
@@ -545,7 +545,7 @@ function CopilotPane({
             <p>
               {mode === "practice"
                 ? "The coach asks role-specific questions and scores your answers using only your real experience."
-                : "Press “What should I say?” — or Ctrl+Shift+Enter from any app — for a reply to whatever was just asked."}
+                : "Press “What should I say?” - or Ctrl+Shift+Enter from any app - for a reply to whatever was just asked."}
             </p>
             {!hasProfile && (
               <button onClick={onEditContext} className="w-fit text-warning underline-offset-2 hover:underline">
@@ -746,7 +746,7 @@ function ContextDrawer({
             <Lock size={13} className="mt-0.5 flex-shrink-0" />
             Stored only on this computer. The copilot grounds every suggestion in this and won't invent experience you don't have.
           </p>
-          {field("about", "About me", "Role, years of experience, key skills — or paste your resume.", 5)}
+          {field("about", "About me", "Role, years of experience, key skills - or paste your resume.", 5)}
           {field("projects", "Projects & responsibilities", "What you're working on, your part in it, results and numbers you'd cite.", 5)}
           {field("session_context", "This session", "Agenda, who you're meeting, or the job description you're interviewing for.", 4)}
           {field("style", "Answer style", "e.g. concise and confident, under 40 words, plain English", 1)}

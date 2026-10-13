@@ -33,7 +33,9 @@ const SHORTCUTS: { keys: string[]; label: string }[] = [
   { keys: ["Ctrl", "K"], label: "Search chats" },
   { keys: ["Ctrl", "B"], label: "Toggle sidebar" },
   { keys: ["Ctrl", "J"], label: "Toggle editor / terminal" },
+  { keys: ["Ctrl", "\\"], label: "Hide / show the chat (full-width editor)" },
   { keys: ["Ctrl", "P"], label: "Go to file (in the editor)" },
+  { keys: ["Ctrl", "Shift", "E"], label: "Hide / show the editor's file tree" },
   { keys: ["Esc"], label: "Dismiss" },
 ];
 
@@ -206,7 +208,7 @@ export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPa
 
           <Section title="About">
             <p className="text-[12.5px] text-text-muted">
-              Mouse AI v0.2.0 — Thothai for the Windows desktop. The ✕ button hides the window to the system tray; Mouse AI keeps
+              Mouse AI v0.2.0 - Thothai for the Windows desktop. The ✕ button hides the window to the system tray; Mouse AI keeps
               listening for its shortcuts in the background.
             </p>
             <div>

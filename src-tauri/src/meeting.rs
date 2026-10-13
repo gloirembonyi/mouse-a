@@ -1,9 +1,9 @@
-// Mouse AI Desktop — Meeting & Interview Copilot
+// Mouse AI Desktop - Meeting & Interview Copilot
 //
 // Live transcription + context-aware assistance for meetings, interviews and
 // interview practice. Same split as the agent: this file does the *doing*
 // (audio capture, chunking, silence detection, prompt assembly) and the
-// Thothai backend does the *thinking* — every model call goes through
+// Thothai backend does the *thinking* - every model call goes through
 // /api/agent/step (no tools), so there is still no Gemini key in this app.
 //
 // Audio pipeline:
@@ -42,7 +42,7 @@ use tauri::{AppHandle, Emitter, State};
 // ── Tunables ─────────────────────────────────────────────────────
 
 const TARGET_RATE: u32 = 16_000;
-/// Don't cut a chunk before this much audio — very short clips transcribe
+/// Don't cut a chunk before this much audio - very short clips transcribe
 /// badly and burn a backend call each. Short enough that a question shows up
 /// (and can be answered) a beat after the speaker pauses.
 const MIN_CHUNK: Duration = Duration::from_secs(3);
@@ -76,7 +76,7 @@ const FULL_TRANSCRIPT_CHARS: usize = 60_000;
 /// their real experience instead of generic advice.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MeetingProfile {
-    /// Role, experience, skills — or a pasted resume.
+    /// Role, experience, skills - or a pasted resume.
     #[serde(default)]
     pub about: String,
     /// Current projects, responsibilities, numbers they care about.
@@ -118,7 +118,7 @@ struct AudioBuf {
     /// speech detection adapts to the device: a quiet laptop mic and a hot
     /// USB mic need very different thresholds. 0 = not measured yet.
     noise_floor: f32,
-    /// Loudest frame seen this session — lets us warn about a muted mic.
+    /// Loudest frame seen this session - lets us warn about a muted mic.
     peak_rms: f32,
 }
 
@@ -138,7 +138,7 @@ static LIVE: Mutex<Option<LiveSession>> = Mutex::new(None);
 static TRANSCRIPT: Mutex<Vec<TranscriptEntry>> = Mutex::new(Vec::new());
 static LAST_MODE: Mutex<String> = Mutex::new(String::new());
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-/// Name of the input device actually opened — quoted in the "mic is silent"
+/// Name of the input device actually opened - quoted in the "mic is silent"
 /// warning, since the usual cause is Windows defaulting to the wrong input.
 static MIC_NAME: Mutex<String> = Mutex::new(String::new());
 
@@ -274,7 +274,7 @@ fn spawn_capture_thread(
 
             if let Some(buf) = system {
                 // On Windows/WASAPI, an *input* stream built on an *output*
-                // device is a loopback capture of whatever that device plays —
+                // device is a loopback capture of whatever that device plays -
                 // i.e. the other people on the call.
                 let opened = host
                     .default_output_device()
@@ -418,7 +418,7 @@ fn encode_wav_16k(samples: &[f32]) -> Vec<u8> {
 }
 
 /// Takes everything buffered so far for one source and returns it as 16 kHz
-/// WAV bytes — or None when it's effectively silence (not worth a backend call,
+/// WAV bytes - or None when it's effectively silence (not worth a backend call,
 /// and silence is exactly where speech models hallucinate words).
 fn drain_clip(buf: &Option<SharedBuf>) -> Option<Vec<u8>> {
     let buf = buf.as_ref()?;
@@ -466,7 +466,7 @@ Transcribe the audio clips verbatim in the language spoken (do not translate, su
 Output exactly two lines and nothing else:\n\
 THEM: <transcript of the THEM clip>\n\
 ME: <transcript of the ME clip>\n\
-Leave a line's text empty when that clip is missing or has no intelligible speech — never guess or invent words. \
+Leave a line's text empty when that clip is missing or has no intelligible speech - never guess or invent words. \
 If the ME clip only contains the same speech as the THEM clip (speaker echo picked up by the microphone), leave ME empty.";
 
 async fn transcribe_gemini(
@@ -595,7 +595,7 @@ fn is_whisper_hallucination(text: &str) -> bool {
         || t.contains("please subscribe")
 }
 
-/// Fraction of shared words — catches the mic picking up the other side's
+/// Fraction of shared words - catches the mic picking up the other side's
 /// voice from the speakers (no headphones) and re-transcribing it as "me".
 fn word_overlap(a: &str, b: &str) -> f32 {
     let words = |s: &str| -> std::collections::HashSet<String> {
@@ -656,7 +656,7 @@ async fn transcribe(
             Ok(out)
         }
         // No Whisper route, or it failed (rate limit, outage): don't lose the
-        // audio — transcribe this chunk through Gemini instead.
+        // audio - transcribe this chunk through Gemini instead.
         (them_res, me_res) => {
             for r in [&them_res, &me_res] {
                 if let Err(e) = r {
@@ -768,7 +768,7 @@ fn current_status(warning: Option<String>) -> MeetingStatus {
 }
 
 /// Background chunker: waits for a natural pause (or the hard cap), then
-/// flushes. Exits — after one last flush — once the session is stopped.
+/// flushes. Exits - after one last flush - once the session is stopped.
 async fn chunker(app: AppHandle, backend: BackendClient, stop: Arc<AtomicBool>, finished: Arc<AtomicBool>) {
     let mut chunk_start = Instant::now();
     let session_start = Instant::now();
@@ -787,7 +787,7 @@ async fn chunker(app: AppHandle, backend: BackendClient, stop: Arc<AtomicBool>, 
                 emit_status(
                     &app,
                     Some(format!(
-                        "Your microphone{} is almost silent — it may be muted or the wrong input. Check Windows Settings → System → Sound → Input, then restart the session.",
+                        "Your microphone{} is almost silent - it may be muted or the wrong input. Check Windows Settings → System → Sound → Input, then restart the session.",
                         if name.is_empty() { String::new() } else { format!(" (\"{}\")", name) }
                     )),
                 );
@@ -848,7 +848,7 @@ Rules:\n\
 - Ground everything in the user's real background below. NEVER invent experience, employers, projects, metrics, credentials or results \
 they haven't given you. If their notes don't cover something, say so in one line and suggest an honest way to answer \
 (related experience, how they would approach it, or a clarifying question).\n\
-- Write suggested replies in the user's first-person voice, natural and spoken — not an essay.\n\
+- Write suggested replies in the user's first-person voice, natural and spoken - not an essay.\n\
 - Transcripts come from speech recognition and may contain errors or mis-attributed lines; infer intent sensibly.\n",
         mode_label(mode)
     );
@@ -875,7 +875,7 @@ they haven't given you. If their notes don't cover something, say so in one line
 
 fn instruction_for(action: &str, question: Option<&str>) -> Result<String, String> {
     Ok(match action {
-        "suggest" => "Look at the most recent thing said to me (usually the last THEM lines — a question, objection or request). \
+        "suggest" => "Look at the most recent thing said to me (usually the last THEM lines - a question, objection or request). \
 Give me what to say next: first a bold **Say:** line (1-3 sentences I can say verbatim), then up to 3 bullets of supporting points or specifics \
 from my background. If nothing is currently being asked of me, say so and offer one useful contribution instead."
             .to_string(),
@@ -885,11 +885,11 @@ End with one line on where the discussion is heading."
         "followups" => "Suggest 3-5 sharp questions or follow-ups I could raise right now, each one line, ordered by usefulness. \
 Prefer ones that use my context or uncover decisions, risks, owners or deadlines."
             .to_string(),
-        "explain" => "Explain any jargon, acronyms, names or concepts from the recent discussion that I might not know — \
+        "explain" => "Explain any jargon, acronyms, names or concepts from the recent discussion that I might not know - \
 one line each, most important first. If everything is plain, say so."
             .to_string(),
         "notes" => "Write meeting notes from the full transcript with these sections: **Summary** (3-5 sentences), \
-**Key points**, **Decisions**, **Action items** (owner — task — due, where known; write 'unassigned' otherwise), \
+**Key points**, **Decisions**, **Action items** (owner - task - due, where known; write 'unassigned' otherwise), \
 **Open questions**. Omit a section if it would be empty. Only include what was actually said."
             .to_string(),
         "practice_question" => "Ask me the next interview question. Base it on the job/session context and my background, \
@@ -897,7 +897,7 @@ vary the type across the session (behavioral, technical/role-specific, situation
 Reply with ONLY the question itself, as an interviewer would say it."
             .to_string(),
         "practice_feedback" => "Evaluate my answer (the ME/NOTE lines after the last COACH question). Give: **Score** x/10, \
-**What worked** (1-2 bullets), **Improve** (2-3 specific bullets — structure, specificity, missing results/metrics, length, filler), \
+**What worked** (1-2 bullets), **Improve** (2-3 specific bullets - structure, specificity, missing results/metrics, length, filler), \
 then **Stronger version**: a tighter answer that uses ONLY facts I actually said or that appear in my background. \
 If I haven't answered yet, say so."
             .to_string(),
@@ -953,11 +953,11 @@ pub async fn meeting_start(
         other => return Err(format!("Unknown mode: {}", other)),
     };
 
-    // A fresh session starts from a clean slate — nothing from the previous
+    // A fresh session starts from a clean slate - nothing from the previous
     // one leaks into the new prompts.
     TRANSCRIPT.lock().unwrap().clear();
     *LAST_MODE.lock().unwrap() = mode.clone();
-    // Re-probe the backend each session — it may have been redeployed.
+    // Re-probe the backend each session - it may have been redeployed.
     BACKEND_WHISPER_MISSING.store(false, Ordering::Relaxed);
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -1034,7 +1034,7 @@ pub fn meeting_transcript() -> Vec<TranscriptEntry> {
     TRANSCRIPT.lock().unwrap().clone()
 }
 
-/// Add a typed line — a question the user heard but audio missed, a typed
+/// Add a typed line - a question the user heard but audio missed, a typed
 /// practice answer, or a private note.
 #[tauri::command]
 pub fn meeting_add_entry(app: AppHandle, speaker: String, text: String) -> Result<TranscriptEntry, String> {
@@ -1066,7 +1066,7 @@ pub async fn meeting_assist(
     let backend = state.backend.clone();
     let instruction = instruction_for(&action, question.as_deref())?;
 
-    // Pull in what was *just* said before answering — this is the difference
+    // Pull in what was *just* said before answering - this is the difference
     // between answering the current question and the previous one.
     if action != "practice_question" {
         if let Err(e) = flush(&app, &backend).await {
@@ -1097,7 +1097,7 @@ pub async fn meeting_assist(
             .map_err(|e| format!("Task failed: {}", e))?;
         if let Ok(shot) = shot {
             if let Some(b64) = shot.data_url.strip_prefix("data:image/jpeg;base64,") {
-                parts.push(json!({ "text": "[SCREEN — what is on the user's screen right now, e.g. shared slides, a document or a coding question]" }));
+                parts.push(json!({ "text": "[SCREEN - what is on the user's screen right now, e.g. shared slides, a document or a coding question]" }));
                 parts.push(json!({ "inlineData": { "mimeType": "image/jpeg", "data": b64 } }));
             }
         }
@@ -1107,7 +1107,7 @@ pub async fn meeting_assist(
     let resp = backend.agent_step(&system_prompt(&mode, &profile), contents, json!([])).await?;
     let text = response_text(&resp);
     if text.is_empty() {
-        return Err("The assistant returned an empty answer — try again.".to_string());
+        return Err("The assistant returned an empty answer - try again.".to_string());
     }
     if action == "practice_question" {
         push_entry(&app, "coach", text.clone());
@@ -1143,7 +1143,7 @@ pub async fn meeting_save_notes(
         "practice" => "Interview practice",
         _ => "Meeting notes",
     };
-    let mut task = format!("{} — {}", title, chrono::Local::now().format("%Y-%m-%d %H:%M"));
+    let mut task = format!("{} - {}", title, chrono::Local::now().format("%Y-%m-%d %H:%M"));
     if include_transcript {
         task.push_str("\n\nTranscript:\n");
         task.push_str(&transcript_text(7_000));

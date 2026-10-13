@@ -24,7 +24,7 @@ export const isOpenTask = (t: LinkTask) => OPEN.has(t.status);
 
 /** Live view of the desktop ⇄ browser agent team: link/pairing state, every
  *  cross-agent task the watcher tracks (src-tauri/src/link.rs), and the
- *  Allow/Deny prompts of browser-requested runs — those runs aren't tied to a
+ *  Allow/Deny prompts of browser-requested runs - those runs aren't tied to a
  *  chat, so their confirmations surface here instead. */
 export function useAgents() {
   const [info, setInfo] = useState<LinkInfo | null>(null);

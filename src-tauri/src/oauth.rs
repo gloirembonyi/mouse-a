@@ -1,4 +1,4 @@
-// Mouse AI Desktop — Google OAuth loopback flow
+// Mouse AI Desktop - Google OAuth loopback flow
 // Opens the user's default browser on Google's OAuth consent screen (implicit
 // flow, same web client the Thothai extension uses) and catches the redirect
 // on a tiny localhost HTTP listener. The access token never leaves the machine
@@ -55,7 +55,7 @@ pub fn wait_for_token(listener: TcpListener) -> Result<String, String> {
     result
 }
 
-/// Release the in-progress flag — for callers that bound the listener but
+/// Release the in-progress flag - for callers that bound the listener but
 /// failed before wait_for_token (e.g. the browser couldn't be opened).
 pub fn release_flow() {
     FLOW_RUNNING.store(false, Ordering::SeqCst);
@@ -65,7 +65,7 @@ pub fn release_flow() {
 /// already running) before opening the browser.
 pub fn bind_listener() -> Result<TcpListener, String> {
     if FLOW_RUNNING.swap(true, Ordering::SeqCst) {
-        return Err("A Google sign-in is already in progress — finish it in your browser or wait a moment.".to_string());
+        return Err("A Google sign-in is already in progress - finish it in your browser or wait a moment.".to_string());
     }
     match TcpListener::bind(("127.0.0.1", OAUTH_PORT)) {
         Ok(l) => Ok(l),
@@ -83,7 +83,7 @@ fn accept_loop(listener: &TcpListener, deadline: Instant) -> Result<String, Stri
     loop {
         if Instant::now() >= deadline {
             return Err(format!(
-                "Timed out waiting for Google sign-in. If the browser showed a 'redirect_uri_mismatch' error, add {} to the OAuth client's Authorized redirect URIs in Google Cloud Console — or use the manual token option instead.",
+                "Timed out waiting for Google sign-in. If the browser showed a 'redirect_uri_mismatch' error, add {} to the OAuth client's Authorized redirect URIs in Google Cloud Console - or use the manual token option instead.",
                 redirect_uri()
             ));
         }
@@ -110,7 +110,7 @@ fn accept_loop(listener: &TcpListener, deadline: Instant) -> Result<String, Stri
 
         if path.starts_with("/callback") {
             // Token arrives in the URL *fragment*, which never reaches the
-            // server — serve a page that re-sends it as a query string.
+            // server - serve a page that re-sends it as a query string.
             respond_html(&mut stream, 200, CALLBACK_PAGE);
             continue;
         }
@@ -194,7 +194,7 @@ fn urldecode(s: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
-const CALLBACK_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Mouse AI — Signing in…</title></head>
+const CALLBACK_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Mouse AI - Signing in…</title></head>
 <body style="font-family:system-ui;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh">
 <p>Finishing sign-in…</p>
 <script>
@@ -204,7 +204,7 @@ const CALLBACK_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8">
 </script>
 </body></html>"#;
 
-const SUCCESS_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Mouse AI — Signed in</title></head>
+const SUCCESS_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Mouse AI - Signed in</title></head>
 <body style="font-family:system-ui;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column">
 <h2>✅ Signed in to Mouse AI</h2><p>You can close this tab and return to the app.</p>
 </body></html>"#;
@@ -216,7 +216,7 @@ fn error_page(err: &str) -> String {
         .take(200)
         .collect();
     format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"><title>Mouse AI — Sign-in failed</title></head>
+        r#"<!doctype html><html><head><meta charset="utf-8"><title>Mouse AI - Sign-in failed</title></head>
 <body style="font-family:system-ui;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column">
 <h2>⚠️ Sign-in failed</h2><p>{}</p><p>Return to the Mouse AI app and try again.</p>
 </body></html>"#,

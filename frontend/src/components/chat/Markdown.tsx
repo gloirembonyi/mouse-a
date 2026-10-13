@@ -1,6 +1,8 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { FileText } from "lucide-react";
 import { CodeBlock } from "./CodeBlock";
+import { looksLikeFilePath, requestOpenFile } from "../../lib/openFile";
 
 interface MarkdownProps {
   children: string;
@@ -19,6 +21,21 @@ export function Markdown({ children, className }: MarkdownProps) {
             const isBlock = Boolean(match) || String(children).includes("\n");
             if (isBlock) {
               return <CodeBlock code={String(children).replace(/\n$/, "")} language={match?.[1]} />;
+            }
+            // A file path the agent wrote or mentioned → one click opens it.
+            const text = String(children);
+            if (looksLikeFilePath(text)) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => requestOpenFile(text.trim())}
+                  title="Open in the editor"
+                  className="inline-flex max-w-full items-center gap-1 rounded bg-accent-soft px-1.5 py-0.5 align-baseline font-mono text-[12px] text-accent transition hover:underline"
+                >
+                  <FileText size={11} className="flex-shrink-0" />
+                  <span className="break-all text-left">{text}</span>
+                </button>
+              );
             }
             return (
               <code className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono text-[12px]" {...rest}>

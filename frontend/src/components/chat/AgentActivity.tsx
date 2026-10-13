@@ -29,7 +29,7 @@ interface AgentActivityProps {
 
 // Cursor/Codex-style: a single collapsible "Thought for Xs" summary line,
 // expanded automatically while the task runs (or if it's waiting on a
-// confirm prompt) and collapsed to a one-line recap once finished — the raw
+// confirm prompt) and collapsed to a one-line recap once finished - the raw
 // step log is still there, just tucked away instead of permanently taking up
 // transcript space.
 export function AgentActivity({ steps, status, elapsedMs }: AgentActivityProps) {
@@ -105,7 +105,7 @@ export function AgentActivity({ steps, status, elapsedMs }: AgentActivityProps) 
 
 // The model's own step narration ("thinking"/"tool"/"tool-result" text) can
 // contain `code` spans or **bold** the same way a final answer does, but this
-// row is a single compact line, not a full document — so this renders just
+// row is a single compact line, not a full document - so this renders just
 // those two inline forms instead of pulling in ReactMarkdown's block-level
 // layout (headings, lists, paragraphs) for what's meant to read as one line.
 function renderInline(text: string): React.ReactNode[] {
@@ -146,7 +146,7 @@ function iconForStep(step: AgentStep) {
 
 function Step({ step, isLast }: { step: AgentStep; isLast: boolean }) {
   // A rollup ("Explored 12 files, 3 searches +367 -14") isn't a timeline
-  // entry the way a tool call is — no icon/rail, just a small muted line
+  // entry the way a tool call is - no icon/rail, just a small muted line
   // under whatever heading it summarizes, same as Cursor's grey recap lines.
   if (step.kind === "phase-summary") {
     return <div className="pb-3 pl-1 text-[10.5px] leading-[1.5] text-text-muted">{step.message}</div>;
@@ -171,8 +171,8 @@ function Step({ step, isLast }: { step: AgentStep; isLast: boolean }) {
         ? "bg-danger-soft border-danger/40 text-danger"
         : "bg-bg-tertiary border-border-default text-text-secondary";
 
-  // The model's OPENING read of the task gets a distinct card — same idea as
-  // Cursor's separate "Thought for Xs" block — so it visually reads as the
+  // The model's OPENING read of the task gets a distinct card - same idea as
+  // Cursor's separate "Thought for Xs" block - so it visually reads as the
   // model's reasoning. Later narration ("thinking", between tool bursts)
   // renders as a plain bold heading instead, matching Cursor's un-boxed
   // phase-transition lines.

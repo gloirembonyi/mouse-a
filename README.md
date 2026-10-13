@@ -5,15 +5,15 @@ Built with Tauri 2 (Rust + vanilla HTML/JS). Point your mouse at anything on scr
 
 ## Features
 
-- **Agent mode** — describe a task and Mouse AI actually does it on your PC: runs terminal
+- **Agent mode** - describe a task and Mouse AI actually does it on your PC: runs terminal
   commands, reads/writes/searches files, researches the web, and drives the mouse & keyboard
-  (click, type, scroll) to operate apps and fill browser forms — reporting a live activity log
+  (click, type, scroll) to operate apps and fill browser forms - reporting a live activity log
   and the result back in the window you asked from. Toggle **🤖 Agent** in the main window, or the
   **🤖** button in the cursor overlay.
-- **Ask at Cursor** — `Ctrl+Shift+Space` anywhere: an input panel opens at your cursor about whatever you're pointing at (screenshot + accessible element text are sent as context).
-- **Hover Mode** — `Ctrl+Shift+Q`: pause the mouse over anything and a floating **✦ Ask AI** pill appears.
-- **Screenshot Analyze** — `Ctrl+Shift+S`: captures around the cursor and analyzes it in the main window.
-- **MCP support** — add external [MCP](https://modelcontextprotocol.io) servers in Settings; their
+- **Ask at Cursor** - `Ctrl+Shift+Space` anywhere: an input panel opens at your cursor about whatever you're pointing at (screenshot + accessible element text are sent as context).
+- **Hover Mode** - `Ctrl+Shift+Q`: pause the mouse over anything and a floating **✦ Ask AI** pill appears.
+- **Screenshot Analyze** - `Ctrl+Shift+S`: captures around the cursor and analyzes it in the main window.
+- **MCP support** - add external [MCP](https://modelcontextprotocol.io) servers in Settings; their
   tools are added to the agent automatically.
 - System tray app; closing the window minimizes to tray.
 
@@ -32,11 +32,11 @@ refused automatically.
 
 ## Gemini API keys
 
-There is no Gemini key configuration in this app at all — every chat/agent call goes through the
+There is no Gemini key configuration in this app at all - every chat/agent call goes through the
 Thothai backend, which holds the only Gemini key(s) and rotates across up to 5 shared keys
 (`GEMINI_API_KEY`, `GEMINI_API_KEY_2`..`_5` on the backend) when one is rate-limited or overloaded.
 See `backend-Thothai/src/lib/gemini-request.js`. To raise the effective rate limit, add more shared
-keys on the backend deployment — there's nothing to configure here.
+keys on the backend deployment - there's nothing to configure here.
 
 ## Prerequisites
 
@@ -59,7 +59,7 @@ npm run build      # = tauri build → src-tauri/target/release/bundle/
 ## Connecting to the Thothai backend
 
 The app talks to the same backend as the Thothai browser extension. Default URL:
-`https://backend-thothai.vercel.app` — change it in **Settings → Backend URL**
+`https://backend-thothai.vercel.app` - change it in **Settings → Backend URL**
 (use **Test connection** to verify), or set the `MOUSE_AI_BACKEND_URL` env var.
 Session + URL persist in `%APPDATA%/mouse-ai/config.json`.
 
@@ -76,7 +76,7 @@ in the extension's `.env`) and add this to **Authorized redirect URIs**:
 http://127.0.0.1:8917/callback
 ```
 
-Until that's registered, Google shows `redirect_uri_mismatch` — in that case
+Until that's registered, Google shows `redirect_uri_mismatch` - in that case
 the app also accepts a manually pasted access token (or a full redirect URL
 containing `access_token=…`) as a fallback.
 

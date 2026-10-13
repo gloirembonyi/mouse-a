@@ -1,10 +1,10 @@
 @import "tailwindcss";
-/* Font <link> lives in index.html/overlay.html — a CSS @import here would have
+/* Font <link> lives in index.html/overlay.html - a CSS @import here would have
    to precede Tailwind's own @import, which expands into non-import rules and
    makes any @import after it invalid per the CSS spec. */
 
 /* Codex-style neutral surfaces with Thothai's blue kept as a sparing accent.
-   Two palettes — dark (default) and light — live as raw custom properties
+   Two palettes - dark (default) and light - live as raw custom properties
    switched by <html data-theme="…"> (see lib/theme.ts), and are exposed to
    Tailwind as theme tokens (bg-bg-card, text-accent, …) via `@theme inline`,
    so every utility repaints when the theme flips with no per-component
@@ -12,8 +12,8 @@
    (public/overlay.css), which floats over arbitrary desktop content. */
 /* Thothai palette (same scales as thothai-landing/src/app/globals.css):
    brand  #f1f6fb … #769fcd (500) … #263b5a
-   ink    #f4f8fb … #12223a   — cool blue-greys for text
-   night  #1f2638 / #161c2b / #0f1421 — the dark surfaces
+   ink    #f4f8fb … #12223a   - cool blue-greys for text
+   night  #1f2638 / #161c2b / #0f1421 - the dark surfaces
    Dark = night surfaces + ink-light text; light = snow/canvas + ink text,
    with brand-600 (#5578a8) for accent text so it passes 4.5:1. */
 :root,
@@ -216,7 +216,7 @@ a:focus-visible {
 /* ── Motion ──────────────────────────────────────────────── */
 
 /* Loading copy ("Thinking…", "Transcribing…") gets a light sweep across the
-   text instead of a spinner next to it — the same language as Codex/Cursor. */
+   text instead of a spinner next to it - the same language as Codex/Cursor. */
 .shimmer-text {
   background: linear-gradient(
     90deg,
@@ -407,6 +407,18 @@ a:focus-visible {
     stroke-dashoffset: -12;
   }
 }
+
+/* Markdown files previewed in the editor read like a document. */
+.doc-preview h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; margin: 6px 0 14px; }
+.doc-preview h2 { font-size: 20px; font-weight: 650; margin: 26px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--mx-border-soft); }
+.doc-preview h3 { font-size: 16.5px; font-weight: 650; margin: 20px 0 8px; }
+.doc-preview h4, .doc-preview h5, .doc-preview h6 { font-size: 14.5px; font-weight: 650; margin: 16px 0 6px; }
+.doc-preview p { margin: 0 0 12px; }
+.doc-preview ul, .doc-preview ol { margin: 6px 0 14px; }
+.doc-preview li { margin: 4px 0; }
+.doc-preview hr { border: none; height: 1px; background: var(--mx-border-default); margin: 24px 0; }
+.doc-preview table { font-size: 13px; }
+.doc-preview img { max-width: 100%; border-radius: 10px; }
 
 @media (prefers-reduced-motion: reduce) {
   *,

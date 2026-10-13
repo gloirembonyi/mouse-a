@@ -49,11 +49,14 @@ export interface AgentProgressEvent {
   kind: AgentProgressKind;
   message?: string;
   request_id?: string;
-  source?: "main" | "overlay";
+  source?: string;
 }
 
 export interface AgentRunResult {
   text?: string;
+  /** Backend conversation the run was logged to (lets a background chat
+   *  session be matched to its sidebar thread). */
+  conversation_id?: string | null;
 }
 
 export interface HistoryStats {

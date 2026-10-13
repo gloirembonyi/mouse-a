@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { Group, Panel, Separator } from "react-resizable-panels";
-import { X } from "lucide-react";
+import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resizable-panels";
+import { PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
+import { IconButton } from "../ui/primitives";
 import { FileTree } from "./FileTree";
 import { Editor } from "./Editor";
 import { FileIcon } from "./fileIcons";
+import { subscribeOpenFile } from "../../lib/openFile";
 
 interface EditorPaneProps {
   root: string;
@@ -25,6 +27,28 @@ export function EditorPane({ root, onAskAboutFile }: EditorPaneProps) {
   const [tabs, setTabs] = useState<OpenFile[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
+  // The file tree can be hidden so the editor gets the whole dock.
+  const treeRef = useRef<PanelImperativeHandle>(null);
+  const [treeOpen, setTreeOpen] = useState(() => localStorage.getItem("mouse-ai-tree-open") !== "off");
+  useEffect(() => {
+    localStorage.setItem("mouse-ai-tree-open", treeOpen ? "on" : "off");
+    const panel = treeRef.current;
+    if (!panel) return;
+    if (treeOpen && panel.isCollapsed()) panel.resize("30%");
+    if (!treeOpen && !panel.isCollapsed()) panel.collapse();
+  }, [treeOpen]);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Ctrl+Shift+E (VS Code's Explorer key) toggles the tree while the dock is visible.
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "e" && rootRef.current?.offsetParent) {
+        e.preventDefault();
+        setTreeOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // A different project means a different set of files.
   useEffect(() => {
@@ -55,19 +79,52 @@ export function EditorPane({ root, onAskAboutFile }: EditorPaneProps) {
     [dirty],
   );
 
+  // Files opened from elsewhere (a path in a chat answer, "Open file…").
+  useEffect(() => subscribeOpenFile(open), [open]);
+
+  // The tree renamed or deleted something: retarget or drop matching tabs.
+  const onPathChanged = useCallback((from: string, to: string | null) => {
+    const hit = (p: string) => p === from || p.startsWith(from + "\\") || p.startsWith(from + "/");
+    setTabs((prev) =>
+      to === null
+        ? prev.filter((t) => !hit(t.path))
+        : prev.map((t) => (hit(t.path) ? { path: to + t.path.slice(from.length), name: fileName(to + t.path.slice(from.length)) } : t)),
+    );
+    setActive((cur) => (cur && hit(cur) ? (to === null ? null : to + cur.slice(from.length)) : cur));
+  }, []);
+
   const setFileDirty = useCallback((path: string, isDirty: boolean) => {
     setDirty((d) => (d[path] === isDirty ? d : { ...d, [path]: isDirty }));
   }, []);
 
   return (
+    <div ref={rootRef} className="flex min-w-0 flex-1">
     <Group orientation="horizontal" className="flex-1">
-      <Panel id="file-tree" defaultSize="32%" minSize="18%" maxSize="55%" className="min-w-0 border-r border-border-soft">
-        <FileTree root={root} activePath={active} onOpenFile={open} />
+      <Panel
+        panelRef={treeRef}
+        id="file-tree"
+        defaultSize={treeOpen ? "32%" : "0%"}
+        minSize="16%"
+        maxSize="55%"
+        collapsible
+        collapsedSize="0%"
+        onResize={(size) => {
+          const open = size.asPercentage > 0;
+          if (open !== treeOpen) setTreeOpen(open);
+        }}
+        className="min-w-0 border-r border-border-soft"
+      >
+        <FileTree root={root} activePath={active} onOpenFile={open} onPathChanged={onPathChanged} onHide={() => setTreeOpen(false)} />
       </Panel>
       <Separator className="resize-handle resize-handle-v" />
       <Panel id="editor" minSize="30%" className="flex min-w-0 flex-col bg-bg-primary">
-        {tabs.length > 0 && (
+        {(tabs.length > 0 || !treeOpen) && (
           <div className="scrollbar-thin flex h-9 flex-shrink-0 items-stretch overflow-x-auto border-b border-border-soft bg-bg-secondary">
+            <div className="flex flex-shrink-0 items-center border-r border-border-soft px-1">
+              <IconButton title={treeOpen ? "Hide files (Ctrl+Shift+E)" : "Show files (Ctrl+Shift+E)"} size="sm" onClick={() => setTreeOpen((v) => !v)}>
+                {treeOpen ? <PanelLeftClose size={13} /> : <PanelLeftOpen size={13} />}
+              </IconButton>
+            </div>
             {tabs.map((t) => (
               <div
                 key={t.path}
@@ -108,7 +165,7 @@ export function EditorPane({ root, onAskAboutFile }: EditorPaneProps) {
         {tabs.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-text-muted">
             <p className="text-[13px] text-text-secondary">No file open</p>
-            <p className="max-w-[220px] text-[12px]">Pick a file in the tree, or press Ctrl+P there to find one by name.</p>
+            <p className="max-w-[240px] text-[12px]">Pick a file in the tree, press Ctrl+P to find one by name, or right-click the tree to create files.</p>
           </div>
         ) : (
           tabs.map((t) => (
@@ -125,5 +182,6 @@ export function EditorPane({ root, onAskAboutFile }: EditorPaneProps) {
         )}
       </Panel>
     </Group>
+    </div>
   );
 }

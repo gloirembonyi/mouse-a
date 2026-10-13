@@ -19,7 +19,7 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_"],
   build: {
-    // This app only ships on Windows (WebView2/Chromium) — no need to guess
+    // This app only ships on Windows (WebView2/Chromium) - no need to guess
     // a target from Tauri's env vars, which also aren't set outside `tauri
     // build`/`tauri dev` (a plain `npm run build` was hitting the safari13
     // fallback and tripping an unrelated esbuild destructuring-transform bug).

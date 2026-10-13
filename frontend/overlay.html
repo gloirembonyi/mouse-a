@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mouse AI Overlay</title>
-  <!-- Kept as a plain static page (not part of the React rewrite) — it's a
+  <!-- Kept as a plain static page (not part of the React rewrite) - it's a
        small, already-working hover popup; ported verbatim from src/overlay.*
        as a second Vite entry point via public/overlay.css + public/overlay.js. -->
   <link rel="stylesheet" href="/overlay.css" />
@@ -46,7 +46,7 @@
            mouse/keyboard mid-run. The panel also gets an animated border. -->
       <div id="working-indicator" hidden>
         <span class="working-dot"></span>
-        <span class="working-text">Mouse AI is working — please don't move the mouse or type</span>
+        <span class="working-text">Mouse AI is working - please don't move the mouse or type</span>
       </div>
 
       <!-- Chat history browser (populated on demand from the backend). -->
@@ -68,7 +68,7 @@
         <span class="thinking-label">Looking at your screen…</span>
       </div>
 
-      <!-- Pinned approval prompt — lives OUTSIDE the scrollable log so it's
+      <!-- Pinned approval prompt - lives OUTSIDE the scrollable log so it's
            always fully visible the moment the agent needs a decision. -->
       <div id="confirm-host" hidden></div>
 
@@ -89,7 +89,7 @@
   </div>
 
   <!-- Same thinking orb as the browser extension. Vendored copies of
-       stealth-ai-extension/shared/orb-engine.js and orb.js — regenerate the
+       stealth-ai-extension/shared/orb-engine.js and orb.js - regenerate the
        engine there with `npm run sync:orbs`, then copy both across. -->
   <script src="/orb-engine.js"></script>
   <script src="/orb.js"></script>

@@ -1,7 +1,7 @@
 [package]
 name = "mouse-ai-desktop"
 version = "0.1.0"
-description = "Mouse AI — System-wide AI assistant powered by Thothai"
+description = "Mouse AI - System-wide AI assistant powered by Thothai"
 authors = ["Thothai"]
 edition = "2021"
 

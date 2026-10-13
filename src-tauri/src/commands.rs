@@ -1,4 +1,4 @@
-// Mouse AI Desktop — Tauri IPC Commands
+// Mouse AI Desktop - Tauri IPC Commands
 // These are the commands exposed to the JavaScript frontend via Tauri's invoke system.
 
 use crate::backend::{BackendClient, ChatRequest};
@@ -181,7 +181,7 @@ pub fn ask_at_cursor(app: AppHandle) {
 }
 
 // The header ✕ / window close intentionally only hides to the tray (see
-// lib.rs's on_window_event) — this is the one explicit way to actually exit,
+// lib.rs's on_window_event) - this is the one explicit way to actually exit,
 // surfaced as a "Quit Mouse AI" button in Settings since the tray menu isn't
 // discoverable from inside the app itself.
 #[tauri::command]
@@ -265,7 +265,7 @@ pub async fn collapse_overlay(app: AppHandle, state: State<'_, AppState>) -> Res
 
 #[tauri::command]
 pub async fn hide_overlay(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    // Auto-hide from the overlay's own timer — only when not pinned.
+    // Auto-hide from the overlay's own timer - only when not pinned.
     if !*state.overlay_pinned.read().await {
         if let Some(overlay) = app.get_webview_window("overlay") {
             let _ = overlay.hide();
@@ -295,7 +295,7 @@ pub async fn ask_about_hover(
     window_title: Option<String>,
     element_text: Option<String>,
 ) -> Result<ChatResult, String> {
-    // A failed capture (secure screens, etc.) shouldn't kill the ask —
+    // A failed capture (secure screens, etc.) shouldn't kill the ask -
     // the element text alone is often enough. Captures the whole window
     // under the cursor (not just a small crop) so the model actually sees
     // everything relevant, falling back to a radius crop if that fails.
@@ -305,7 +305,7 @@ pub async fn ask_about_hover(
             .map_err(|e| format!("Task failed: {}", e))?
             .ok();
 
-    // Ground-truth folder contents when hovering a File Explorer window —
+    // Ground-truth folder contents when hovering a File Explorer window -
     // fixes "I can't see what's inside this folder" for the single most
     // common context question.
     let explorer_ctx = tokio::task::spawn_blocking(move || explorer::get_context_at(x, y))
@@ -334,7 +334,7 @@ pub async fn ask_about_hover(
             context_info, q
         ),
         None => format!(
-            "{}\n\nBriefly explain what the user is hovering over in this screenshot. Be concise and helpful — a few sentences, no preamble.",
+            "{}\n\nBriefly explain what the user is hovering over in this screenshot. Be concise and helpful - a few sentences, no preamble.",
             context_info
         ),
     };
@@ -345,13 +345,18 @@ pub async fn ask_about_hover(
         model: Some(crate::backend::default_gemini_model()),
         image_data_url,
         web_search_needed: false,
-        conversation_id: conv_id,
+        conversation_id: conv_id.clone(),
         messages: vec![],
     };
 
     let response = state.backend.chat(request).await?;
     if let Some(cid) = &response.conversation_id {
-        *state.conversation_id.write().await = Some(cid.clone());
+        // Same rule as agent_run: only follow the reply's conversation if the
+        // user hasn't switched to a different chat while it was in flight.
+        let mut current = state.conversation_id.write().await;
+        if *current == conv_id {
+            *current = Some(cid.clone());
+        }
     }
 
     Ok(ChatResult {
@@ -389,7 +394,7 @@ pub async fn agent_run(
     let source = source.unwrap_or_else(|| "main".to_string());
     let autonomous = autonomous.unwrap_or(true);
     // Same shared conversation the chat view and the overlay's plain-ask both
-    // read/write — recent turns get folded into the agent's starting context
+    // read/write - recent turns get folded into the agent's starting context
     // below so a hover "ask AI" task isn't blind to what was just discussed.
     let conversation_id = state.conversation_id.read().await.clone();
 
@@ -412,11 +417,19 @@ pub async fn agent_run(
             // without this it would be invisible in the Threads sidebar even
             // though the user experiences it as the same assistant. A logging
             // failure (offline, etc.) shouldn't undo an otherwise-successful task.
-            match state.backend.log_agent_run(conversation_id.as_deref(), &task, &text).await {
-                Ok(new_conversation_id) => *state.conversation_id.write().await = Some(new_conversation_id),
-                Err(_) => { /* the task itself still succeeded; just won't show up in history this time */ }
+            let logged = state.backend.log_agent_run(conversation_id.as_deref(), &task, &text).await.ok();
+            if let Some(new_id) = &logged {
+                // Only adopt the logged conversation if the user is still on
+                // the chat this run started in - runs keep going in the
+                // background while the user opens other chats, and finishing
+                // must not yank them into this one.
+                let mut current = state.conversation_id.write().await;
+                if *current == conversation_id {
+                    *current = Some(new_id.clone());
+                }
             }
-            Ok(ChatResult { text, conversation_id: None })
+            // (A logging failure doesn't undo the task; it just won't show in history.)
+            Ok(ChatResult { text, conversation_id: logged })
         }
         Err(e) => {
             let _ = app.emit(
@@ -441,7 +454,7 @@ pub fn agent_confirm(request_id: String, approved: bool) -> bool {
 }
 
 /// Called when the user clicks Stop on a running agent task. `source` must
-/// match the one the task was started with ("overlay" | "main") — the loop
+/// match the one the task was started with ("overlay" | "main") - the loop
 /// checks the flag between steps and between tool calls and winds down.
 #[tauri::command]
 pub fn agent_cancel(source: Option<String>) {
@@ -607,7 +620,7 @@ pub async fn get_conversation_messages(
     state.backend.get_conversation_messages(&id, limit).await
 }
 
-/// Resume a past conversation — the next chat message continues this thread
+/// Resume a past conversation - the next chat message continues this thread
 /// (same mechanism new_conversation resets) instead of starting a fresh one.
 #[tauri::command]
 pub async fn set_conversation_id(state: State<'_, AppState>, id: Option<String>) -> Result<(), String> {

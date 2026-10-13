@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { OPEN_DOCK_EVENT, type DockTab as RequestedTab } from "../../lib/openFile";
 import clsx from "clsx";
-import { Code2, FolderOpen, GitCompare, PanelRightClose, TerminalSquare } from "lucide-react";
+import { Code2, FolderOpen, GitCompare, MessageSquare, PanelLeftClose, PanelRightClose, TerminalSquare } from "lucide-react";
 import { EditorPane } from "../editor/EditorPane";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { ChangesPane } from "../diff/ChangesPane";
@@ -14,17 +15,51 @@ interface RightDockProps {
   onAddProject: () => void;
   onClose: () => void;
   onAskAboutFile: (path: string, name: string) => void;
+  onAskAboutText: (text: string, title: string) => void;
+  chatHidden: boolean;
+  onToggleChat: () => void;
+  agentBusy: boolean;
 }
 
 // All three panes are mounted at all times (just hidden via CSS when not the
-// active tab) instead of conditionally rendered — switching tabs shouldn't
+// active tab) instead of conditionally rendered - switching tabs shouldn't
 // kill the terminal session or lose the editor's open files.
-export function RightDock({ root, projectName, onAddProject, onClose, onAskAboutFile }: RightDockProps) {
+export function RightDock({ root, projectName, onAddProject, onClose, onAskAboutFile, onAskAboutText, chatHidden, onToggleChat, agentBusy }: RightDockProps) {
   const [tab, setTab] = useState<DockTab>("editor");
+
+  // Requests from elsewhere ("open this file", "run this command") pick the tab.
+  useEffect(() => {
+    const onRequest = (e: Event) => {
+      const wanted = (e as CustomEvent<RequestedTab | undefined>).detail;
+      if (wanted) setTab(wanted);
+    };
+    window.addEventListener(OPEN_DOCK_EVENT, onRequest);
+    return () => window.removeEventListener(OPEN_DOCK_EVENT, onRequest);
+  }, []);
 
   return (
     <div className="flex h-full flex-col bg-bg-secondary">
       <div className="flex h-10 flex-shrink-0 items-center gap-1 border-b border-border-soft px-2">
+        {chatHidden ? (
+          <button
+            onClick={onToggleChat}
+            title="Show the chat (Ctrl+\)"
+            className="mr-1 flex h-7 items-center gap-1.5 rounded-lg px-2 text-[12px] font-medium text-text-secondary transition hover:bg-bg-hover hover:text-text-primary"
+          >
+            <MessageSquare size={13} />
+            Chat
+            {agentBusy && (
+              <span className="flex items-center gap-1 rounded-full bg-accent-soft px-1.5 py-px text-[10.5px] text-accent">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+                Agent working
+              </span>
+            )}
+          </button>
+        ) : (
+          <IconButton title="Hide the chat — give the editor the full width (Ctrl+\)" size="sm" onClick={onToggleChat} className="mr-0.5">
+            <PanelLeftClose size={14} />
+          </IconButton>
+        )}
         <div className="flex rounded-lg bg-bg-tertiary p-0.5">
           <DockTabButton icon={<Code2 size={13} />} label="Files" active={tab === "editor"} onClick={() => setTab("editor")} />
           <DockTabButton icon={<TerminalSquare size={13} />} label="Terminal" active={tab === "terminal"} onClick={() => setTab("terminal")} />
@@ -51,7 +86,7 @@ export function RightDock({ root, projectName, onAddProject, onClose, onAskAbout
             <EditorPane root={root} onAskAboutFile={onAskAboutFile} />
           </div>
           <div className={clsx("min-h-0 flex-1", tab === "terminal" ? "flex" : "hidden")}>
-            <TerminalPane cwd={root} visible={tab === "terminal"} />
+            <TerminalPane cwd={root} visible={tab === "terminal"} onAskAI={onAskAboutText} />
           </div>
           <div className={clsx("min-h-0 flex-1", tab === "changes" ? "flex" : "hidden")}>
             <ChangesPane root={root} />
