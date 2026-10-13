@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ensureSession, verifySession, withTimeout } from "../lib/tauri";
+import { ensureSession, onAuthChanged, verifySession, withTimeout } from "../lib/tauri";
 import type { User } from "../lib/types";
 
 export type AuthStatus = "connecting" | "signed-in" | "error";
@@ -31,6 +31,17 @@ export function useAuth() {
   useEffect(() => {
     connect();
   }, [connect]);
+
+  // Signed in from the browser extension (shared over the paired bridge).
+  useEffect(() => {
+    const un = onAuthChanged((s) => {
+      if (s.signed_in && s.user) {
+        setUser(s.user);
+        setStatus("signed-in");
+      }
+    });
+    return () => void un.then((fn) => fn());
+  }, []);
 
   const onSignedIn = useCallback((u: User) => {
     setUser(u);

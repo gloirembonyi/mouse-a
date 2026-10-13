@@ -20,6 +20,10 @@ const SCOPES: &str = "openid email profile";
 const FLOW_TIMEOUT: Duration = Duration::from_secs(240);
 
 static FLOW_RUNNING: AtomicBool = AtomicBool::new(false);
+/// Random per-flow value Google echoes back. Only a redirect carrying it is
+/// accepted, so another page or local process can't push its own token into
+/// the listener (login CSRF / token injection).
+static FLOW_STATE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
 fn client_id() -> String {
     std::env::var("MOUSE_AI_GOOGLE_CLIENT_ID")
@@ -33,12 +37,20 @@ pub fn redirect_uri() -> String {
 }
 
 pub fn build_auth_url() -> String {
+    let state = uuid::Uuid::new_v4().simple().to_string();
+    *FLOW_STATE.lock().unwrap() = state.clone();
     format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&response_type=token&redirect_uri={}&scope={}&prompt=select_account",
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&response_type=token&redirect_uri={}&scope={}&prompt=select_account&state={}",
         urlencode(&client_id()),
         urlencode(&redirect_uri()),
         urlencode(SCOPES),
+        state,
     )
+}
+
+fn state_matches(query: &str) -> bool {
+    let expected = FLOW_STATE.lock().unwrap().clone();
+    !expected.is_empty() && query_param(query, "state").is_some_and(|s| s == expected)
 }
 
 /// Blocking: serve the loopback listener until Google redirects back with an
@@ -117,6 +129,13 @@ fn accept_loop(listener: &TcpListener, deadline: Instant) -> Result<String, Stri
 
         if let Some(query) = path.strip_prefix("/finish?") {
             if let Some(token) = query_param(query, "access_token") {
+                if !state_matches(query) {
+                    // Not the redirect from the flow we started - ignore it and
+                    // keep waiting for the real one.
+                    respond_html(&mut stream, 200, &error_page("sign-in request did not match"));
+                    continue;
+                }
+                FLOW_STATE.lock().unwrap().clear();
                 respond_html(&mut stream, 200, SUCCESS_PAGE);
                 return Ok(token);
             }

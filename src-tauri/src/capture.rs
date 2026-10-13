@@ -178,6 +178,28 @@ pub fn capture_agent_full() -> Result<AgentShot, String> {
     Ok(AgentShot { data_url, origin_x: info.x, origin_y: info.y, native_width, native_height })
 }
 
+/// The meeting copilot reads code, slides and quiz text off the screen, so it
+/// gets a sharper shot than the agent's click-targeting one - small text at
+/// 1280 px is where a model starts misreading `l` vs `1`.
+const MEETING_MAX_SIDE: u32 = 1920;
+const MEETING_JPEG_QUALITY: u8 = 82;
+const THUMB_MAX_SIDE: u32 = 360;
+
+/// Screen under the cursor for the meeting copilot: (model-quality base64
+/// JPEG without the data-URL prefix, small thumbnail data URL for the UI).
+/// Mouse AI's own windows are content-protected, so they never appear in it.
+pub fn capture_meeting_screen() -> Result<(String, String), String> {
+    let (cx, cy) = crate::mouse::get_cursor_position();
+    let image = screen_at(cx, cy)?
+        .capture()
+        .map_err(|e| format!("Failed to capture screen: {}", e))?;
+    let img = to_rgba_image(image)?;
+    let thumb = encode_jpeg_downscaled(img.clone(), THUMB_MAX_SIDE, 70)?;
+    let full = encode_jpeg_downscaled(img, MEETING_MAX_SIDE, MEETING_JPEG_QUALITY)?;
+    let b64 = full.strip_prefix("data:image/jpeg;base64,").unwrap_or(&full).to_string();
+    Ok((b64, thumb))
+}
+
 // ── Adaptive glass theming ────────────────────────────────────────
 // Mirrors the browser extension's shared/adaptive-theme.js (samples the page
 // behind the panel to decide light-glass-vs-dark-glass), but there's no DOM to

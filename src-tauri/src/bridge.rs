@@ -393,7 +393,12 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
                 .to_string(),
             ));
             emit_status(app, true);
+            if paired {
+                crate::auth_sync::on_paired(app);
+            }
         }
+        Some("auth_request") => crate::auth_sync::handle_request(app, bridge().is_paired()),
+        Some("auth_offer") => crate::auth_sync::handle_offer(app, &v, bridge().is_paired()),
         Some("desktop_task") => crate::link::handle_desktop_task(&v, bridge().is_paired()),
         Some("desktop_cancel") => crate::link::handle_desktop_cancel(&v),
         Some("status_request") => crate::link::handle_status_request(&v),

@@ -14,7 +14,7 @@ mod win {
         SendInput, SetCursorPos, VkKeyScanW, INPUT, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
         KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
         MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, VK_BACK, VK_CONTROL, VK_DELETE,
-        VK_DOWN, VK_ESCAPE, VK_LEFT, VK_LWIN, VK_MENU, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
+        VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT, VK_LWIN, VK_MENU, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
     };
 
     fn send(inputs: &mut [INPUT]) {
@@ -134,6 +134,8 @@ mod win {
             "esc" | "escape" => VK_ESCAPE,
             "backspace" => VK_BACK,
             "delete" | "del" => VK_DELETE,
+            "home" => VK_HOME,
+            "end" => VK_END,
             "up" => VK_UP,
             "down" => VK_DOWN,
             "left" => VK_LEFT,

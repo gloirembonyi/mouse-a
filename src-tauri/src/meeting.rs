@@ -45,16 +45,16 @@ const TARGET_RATE: u32 = 16_000;
 /// Don't cut a chunk before this much audio - very short clips transcribe
 /// badly and burn a backend call each. Short enough that a question shows up
 /// (and can be answered) a beat after the speaker pauses.
-const MIN_CHUNK: Duration = Duration::from_secs(3);
+const MIN_CHUNK: Duration = Duration::from_millis(1_600);
 /// Always cut by this point, pause or not, so the transcript never lags far.
-const MAX_CHUNK: Duration = Duration::from_secs(9);
+const MAX_CHUNK: Duration = Duration::from_secs(6);
 /// After Whisper rate-limits us (Groq's free tier: 20 requests/min), cut less
 /// often for a while instead of falling back to the slower Gemini path.
 const MIN_CHUNK_THROTTLED: Duration = Duration::from_secs(8);
 const THROTTLE_FOR_MS: i64 = 60_000;
 static THROTTLED_UNTIL_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 /// A chunk is cut early at a pause: the trailing window must be quiet.
-const PAUSE_WINDOW_SECS: f32 = 0.45;
+const PAUSE_WINDOW_SECS: f32 = 0.32;
 /// 30 ms frames above this RMS count as voiced (normalized -1..1 samples).
 const VOICE_RMS: f32 = 0.012;
 /// A clip needs at least this much voiced audio to be worth transcribing.
@@ -775,7 +775,9 @@ async fn chunker(app: AppHandle, backend: BackendClient, stop: Arc<AtomicBool>, 
     let mut warned_silent_mic = false;
     let mut consecutive_failures = 0u32;
     loop {
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        // 120 ms ticks: a pause is noticed (and the chunk cut) almost as soon
+        // as the speaker stops, instead of up to a quarter second later.
+        tokio::time::sleep(Duration::from_millis(120)).await;
         let stopping = stop.load(Ordering::Relaxed);
         if let Some((system, mic)) = live_buffers() {
             update_noise(&mic);
@@ -849,7 +851,14 @@ Rules:\n\
 they haven't given you. If their notes don't cover something, say so in one line and suggest an honest way to answer \
 (related experience, how they would approach it, or a clarifying question).\n\
 - Write suggested replies in the user's first-person voice, natural and spoken - not an essay.\n\
-- Transcripts come from speech recognition and may contain errors or mis-attributed lines; infer intent sensibly.\n",
+- Transcripts come from speech recognition and may contain errors or mis-attributed lines; infer intent sensibly.\n\
+- Correctness beats speed. For factual, technical, math, coding or multiple-choice questions, work the problem out \
+carefully before answering and give the answer that is actually right - never a plausible guess. If you are not sure, say \
+what you are sure of and flag the uncertain part in a few words.\n\
+- Code goes in fenced code blocks with the language tag. For multiple-choice, lead with the chosen option.\n\
+- Reply in the language the conversation is happening in.\n\
+- If a [SCREEN] image is attached, read it closely (questions, code, error messages, slide text, numbers) and use it - \
+it is often the real context of what was just asked.\n",
         mode_label(mode)
     );
     if mode == "interview" || mode == "practice" {
@@ -882,6 +891,14 @@ from my background. If nothing is currently being asked of me, say so and offer 
         "assist" => "Decide what would help me most RIGHT NOW and give only that: if I was just asked something, give me the answer \
 to say (bold **Say:** line first); if a term, number or claim came up I may not know, explain it in one or two lines; if a screen is attached \
 and shows a question, problem or slide, solve or explain what's on it. Lead with the single most useful line, then at most 3 short bullets."
+            .to_string(),
+        "screen" => "Look at my screen (attached). Work out what on it needs an answer right now - a question, a coding \
+problem, a quiz, an error, a slide being discussed, a form - using the transcript for what was just asked. Then:\n\
+- Coding problem: one line on the approach, then the complete working solution in a code block, then time/space complexity.\n\
+- Question or quiz: the correct answer first (bold), then 1-3 bullets on why.\n\
+- Error or bug: the cause in one line, then the fix.\n\
+- Slide, doc or chart: the 2-3 points that matter and one smart thing I could say about it.\n\
+If nothing on screen needs answering, briefly say what is there and how it relates to the conversation."
             .to_string(),
         "insights" => "Give me a glanceable live read of the conversation, in exactly this shape and nothing else:\n\
 **Topic:** <what is being discussed right now, max 10 words>\n\
@@ -945,6 +962,11 @@ fn transcript_text(budget: usize) -> String {
     }
     lines.reverse();
     lines.join("\n")
+}
+
+/// Recent transcript for other modules (the copilot's agent handoff).
+pub fn recent_transcript(budget: usize) -> String {
+    transcript_text(budget)
 }
 
 // ── Commands ─────────────────────────────────────────────────────
@@ -1078,13 +1100,15 @@ pub async fn meeting_assist(
     action: String,
     question: Option<String>,
     include_screen: Option<bool>,
-) -> Result<String, String> {
+    request_id: Option<String>,
+) -> Result<MeetingAnswer, String> {
     let backend = state.backend.clone();
     let instruction = instruction_for(&action, question.as_deref())?;
 
     // Pull in what was *just* said before answering - this is the difference
-    // between answering the current question and the previous one.
-    if action != "practice_question" {
+    // between answering the current question and the previous one. (Insights
+    // run in the background and can wait for the next natural cut.)
+    if action != "practice_question" && action != "insights" {
         if let Err(e) = flush(&app, &backend).await {
             eprintln!("[meeting] pre-assist flush failed: {}", e);
         }
@@ -1107,31 +1131,66 @@ pub async fn meeting_assist(
         )
     })];
 
-    if include_screen.unwrap_or(false) {
-        let shot = tokio::task::spawn_blocking(crate::capture::capture_agent_full)
+    // "screen" is only useful with the screenshot, so it never depends on the toggle.
+    let mut screen_thumb = None;
+    if action == "screen" || include_screen.unwrap_or(false) {
+        let shot = tokio::task::spawn_blocking(crate::capture::capture_meeting_screen)
             .await
             .map_err(|e| format!("Task failed: {}", e))?;
-        if let Ok(shot) = shot {
-            if let Some(b64) = shot.data_url.strip_prefix("data:image/jpeg;base64,") {
+        match shot {
+            Ok((b64, thumb)) => {
                 parts.push(json!({ "text": "[SCREEN - what is on the user's screen right now, e.g. shared slides, a document or a coding question]" }));
                 parts.push(json!({ "inlineData": { "mimeType": "image/jpeg", "data": b64 } }));
+                screen_thumb = Some(thumb);
             }
+            Err(e) if action == "screen" => return Err(e),
+            Err(e) => eprintln!("[meeting] screen capture failed: {}", e),
         }
     }
 
     let contents = json!([{ "role": "user", "parts": parts }]);
-    let resp = backend
-        .agent_step(&system_prompt(&mode, &profile), contents, json!([]))
-        .await
-        .map_err(|e| friendly_assist_error(&e))?;
-    let text = response_text(&resp);
+    let system = system_prompt(&mode, &profile);
+    // Streamed when the caller can show it (request_id) and the backend
+    // supports it: the first words land in ~1 s instead of after the whole
+    // answer is written. Older backends fall back to one buffered step.
+    let streamed = match &request_id {
+        Some(id) => {
+            let emit_app = app.clone();
+            let id = id.clone();
+            backend
+                .agent_stream(&system, contents.clone(), move |delta| {
+                    let _ = emit_app.emit("meeting-answer-delta", json!({ "id": id, "delta": delta }));
+                })
+                .await
+                .map_err(|e| friendly_assist_error(&e))?
+        }
+        None => None,
+    };
+    let text = match streamed {
+        Some(text) => text.trim().to_string(),
+        None => {
+            let resp = backend
+                .agent_step(&system, contents, json!([]))
+                .await
+                .map_err(|e| friendly_assist_error(&e))?;
+            response_text(&resp)
+        }
+    };
     if text.is_empty() {
         return Err("The assistant returned an empty answer - try again.".to_string());
     }
     if action == "practice_question" {
         push_entry(&app, "coach", text.clone());
     }
-    Ok(text)
+    Ok(MeetingAnswer { text, screen: screen_thumb })
+}
+
+/// An answer, plus a thumbnail of the screen it was based on (when one was
+/// attached) so the user can see exactly what the copilot looked at.
+#[derive(Debug, Clone, Serialize)]
+pub struct MeetingAnswer {
+    pub text: String,
+    pub screen: Option<String>,
 }
 
 /// The panel shows this mid-call: one readable line, not a raw HTTP body.
@@ -1230,6 +1289,7 @@ pub fn show_copilot(app: &AppHandle) {
     let Some(w) = app.get_webview_window("copilot") else { return };
     let _ = w.set_content_protected(STEALTH.load(Ordering::Relaxed));
     let _ = w.set_always_on_top(true);
+    crate::copilot::remember_foreground();
     if !COPILOT_PLACED.swap(true, Ordering::Relaxed) {
         let (cx, cy) = crate::mouse::get_cursor_position();
         let monitor = app
@@ -1245,13 +1305,85 @@ pub fn show_copilot(app: &AppHandle) {
         }
     }
     show_no_activate(&w);
+    set_move_keys(app);
+}
+
+fn hide_copilot(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("copilot") {
+        let _ = w.hide();
+    }
+    set_move_keys(app);
+}
+
+/// Pixels per Ctrl+Alt+Arrow press (logical; scaled per monitor).
+const NUDGE_STEP: f64 = 48.0;
+
+/// Ctrl+Alt+Arrows move the bar so it can sit right where the user is looking,
+/// without ever taking focus from the call. Registered only while the bar is
+/// visible - globally grabbing those keys all the time would steal them from
+/// editors that use them (e.g. VS Code's add-cursor).
+///
+/// Runs on its own thread: show/hide is often triggered from another global
+/// shortcut's handler, and the plugin holds its shortcut table lock while a
+/// handler runs - registering from inside one would deadlock.
+fn set_move_keys(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || apply_move_keys(&app));
+}
+
+/// Reconciles with the bar's real visibility, so a quick show→hide can't
+/// leave the keys registered whichever thread runs last.
+fn apply_move_keys(app: &AppHandle) {
+    use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+    static KEYS_LOCK: Mutex<()> = Mutex::new(());
+    let _serial = KEYS_LOCK.lock().unwrap();
+    let on = app
+        .get_webview_window("copilot")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    let keys = [(Code::ArrowLeft, -1.0, 0.0), (Code::ArrowRight, 1.0, 0.0), (Code::ArrowUp, 0.0, -1.0), (Code::ArrowDown, 0.0, 1.0)];
+    let gs = app.global_shortcut();
+    for (code, dx, dy) in keys {
+        let sc = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), code);
+        let registered = gs.is_registered(sc);
+        if on && !registered {
+            let app_handle = app.clone();
+            let res = gs.on_shortcut(sc, move |_app, _sc, event| {
+                if event.state() == ShortcutState::Pressed {
+                    nudge_copilot(&app_handle, dx, dy);
+                }
+            });
+            if let Err(e) = res {
+                eprintln!("[copilot] could not register move key: {}", e);
+            }
+        } else if !on && registered {
+            let _ = gs.unregister(sc);
+        }
+    }
+}
+
+fn nudge_copilot(app: &AppHandle, dx: f64, dy: f64) {
+    let Some(w) = app.get_webview_window("copilot") else { return };
+    let Ok(pos) = w.outer_position() else { return };
+    let scale = w.scale_factor().unwrap_or(1.0);
+    let step = (NUDGE_STEP * scale).round() as i32;
+    let (mut x, mut y) = (pos.x + dx as i32 * step, pos.y + dy as i32 * step);
+    // Keep at least the pill on whichever monitor it is on.
+    if let (Ok(Some(mon)), Ok(size)) = (w.current_monitor(), w.outer_size()) {
+        let (mx, my) = (mon.position().x, mon.position().y);
+        let (mw, mh) = (mon.size().width as i32, mon.size().height as i32);
+        let pill = (60.0 * scale) as i32;
+        x = x.clamp(mx - size.width as i32 + pill * 2, mx + mw - pill * 2);
+        y = y.clamp(my, my + mh - pill);
+    }
+    let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
 /// Toggle the bar's visibility (Ctrl+Shift+\). Returns whether it is now visible.
 pub fn toggle_copilot(app: &AppHandle) -> bool {
     let Some(w) = app.get_webview_window("copilot") else { return false };
     if w.is_visible().unwrap_or(false) {
-        let _ = w.hide();
+        hide_copilot(app);
         false
     } else {
         show_copilot(app);
@@ -1266,9 +1398,7 @@ pub fn copilot_show(app: AppHandle) {
 
 #[tauri::command]
 pub fn copilot_hide(app: AppHandle) {
-    if let Some(w) = app.get_webview_window("copilot") {
-        let _ = w.hide();
-    }
+    hide_copilot(&app);
 }
 
 /// Resize the bar to fit its content. Width stays put; the top edge stays
@@ -1282,6 +1412,8 @@ pub fn copilot_resize(app: AppHandle, width: f64, height: f64) {
 
 #[tauri::command]
 pub fn copilot_focus(app: AppHandle) {
+    // Still the user's app at this point - remember it so an insert can go back to it.
+    crate::copilot::remember_foreground();
     if let Some(w) = app.get_webview_window("copilot") {
         let _ = w.set_focus();
     }

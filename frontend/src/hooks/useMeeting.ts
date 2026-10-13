@@ -11,6 +11,7 @@ import {
   meetingStop,
   meetingTranscript,
   newId,
+  onMeetingAnswerDelta,
   onMeetingLevel,
   onMeetingStatus,
   onMeetingTranscribing,
@@ -29,6 +30,12 @@ export interface AssistCard {
   text: string;
   pending: boolean;
   error?: string;
+  /** When the request went out - drives the elapsed timer while it loads. */
+  startedAt: number;
+  /** What the other side had just said when this was asked, for context. */
+  context?: string;
+  /** Thumbnail of the screen the answer was based on, when one was attached. */
+  screen?: string | null;
 }
 
 const EMPTY_PROFILE: MeetingProfile = { about: "", projects: "", session_context: "", style: "" };
@@ -44,6 +51,7 @@ export const ACTION_LABELS: Record<MeetingAction, string> = {
   notes: "Meeting notes",
   practice_question: "Next question",
   practice_feedback: "Feedback on my answer",
+  screen: "Solve my screen",
   ask: "Question",
 };
 
@@ -55,12 +63,31 @@ export const copilotBarEnabled = () => localStorage.getItem(BAR_KEY) !== "off";
 export const setCopilotBarEnabled = (on: boolean) => localStorage.setItem(BAR_KEY, on ? "on" : "off");
 export const AUTO_ANSWER_KEY = "mouse-ai-auto-answer";
 
-/** Heuristic for "the other side just asked something" - drives auto-answer. */
+const QUESTION_START =
+  /^(?:(?:so|and|okay|ok|alright|right|well|now|then|great|cool|um|uh)[,\s]+)*(?:what|what's|how|why|when|where|who|which|can you|could you|would you|will you|do you|did you|have you|are you|were you|is there|is it|tell me|walk me|talk me|describe|explain|give me|share|let's say|imagine|suppose)\b/;
+
+/** Heuristic for "the other side just asked something" - drives auto-answer.
+ *  Also checks the last sentence, since a question often follows a preamble
+ *  ("We use Kafka a lot. How would you handle backpressure"). */
 export function looksLikeQuestion(text: string) {
   const t = text.trim().toLowerCase();
   if (t.length < 8) return false;
   if (t.includes("?")) return true;
-  return /^(what|how|why|when|where|who|which|can you|could you|would you|will you|do you|did you|have you|are you|is there|tell me|walk me|describe|explain|give me an example)\b/.test(t);
+  const sentences = t.split(/(?<=[.!])\s+/);
+  return QUESTION_START.test(t) || QUESTION_START.test(sentences[sentences.length - 1] ?? "");
+}
+
+/** The other side's latest turn - consecutive "them" lines joined, since
+ *  Whisper often splits one question across two chunks - or null if the
+ *  newest line isn't theirs. */
+export function lastTheirTurn(transcript: TranscriptEntry[]): { id: number; text: string } | null {
+  const last = transcript[transcript.length - 1];
+  if (!last || last.speaker !== "them") return null;
+  const parts: string[] = [];
+  for (let i = transcript.length - 1; i >= 0 && transcript[i].speaker === "them" && parts.length < 3; i--) {
+    parts.unshift(transcript[i].text);
+  }
+  return { id: last.id, text: parts.join(" ") };
 }
 
 function errText(err: unknown) {
@@ -79,6 +106,8 @@ export function useMeeting() {
   const [includeScreen, setIncludeScreen] = useState(false);
   const includeScreenRef = useRef(includeScreen);
   includeScreenRef.current = includeScreen;
+  const transcriptRef = useRef(transcript);
+  transcriptRef.current = transcript;
   const [levels, setLevels] = useState({ mic: 0, system: 0 });
   const [transcribing, setTranscribing] = useState(false);
   const [autoAnswer, setAutoAnswerState] = useState(() => localStorage.getItem(AUTO_ANSWER_KEY) === "on");
@@ -103,7 +132,12 @@ export function useMeeting() {
     });
     const unLevel = onMeetingLevel(setLevels);
     const unBusy = onMeetingTranscribing(setTranscribing);
+    // Streamed answers: grow the pending card as the words arrive.
+    const unDelta = onMeetingAnswerDelta(({ id, delta }) =>
+      setCards((prev) => prev.map((c) => (c.id === id && c.pending ? { ...c, text: c.text + delta } : c))),
+    );
     return () => {
+      unDelta.then((fn) => fn());
       unTranscript.then((fn) => fn());
       unStatus.then((fn) => fn());
       unLevel.then((fn) => fn());
@@ -136,10 +170,12 @@ export function useMeeting() {
   const assist = useCallback(async (action: MeetingAction, question: string | null = null) => {
     const id = newId();
     const label = action === "ask" && question ? question : ACTION_LABELS[action];
-    setCards((prev) => [{ id, action, label, text: "", pending: true }, ...prev].slice(0, 30));
+    const heard = action === "suggest" || action === "assist" ? lastTheirTurn(transcriptRef.current)?.text : undefined;
+    const context = heard && heard.length > 140 ? `${heard.slice(0, 140)}…` : heard;
+    setCards((prev) => [{ id, action, label, text: "", pending: true, startedAt: Date.now(), context }, ...prev].slice(0, 30));
     try {
-      const text = await meetingAssist(action, question, includeScreenRef.current);
-      setCards((prev) => prev.map((c) => (c.id === id ? { ...c, text, pending: false } : c)));
+      const { text, screen } = await meetingAssist(action, question, includeScreenRef.current, id);
+      setCards((prev) => prev.map((c) => (c.id === id ? { ...c, text, screen, pending: false } : c)));
     } catch (err) {
       setCards((prev) => prev.map((c) => (c.id === id ? { ...c, pending: false, error: errText(err) } : c)));
     }
@@ -154,13 +190,13 @@ export function useMeeting() {
   useEffect(() => {
     // While the in-call bar is up it does the auto-answering, right over the call.
     if (!autoAnswer || !status.live || status.mode === "practice" || copilotBarEnabled()) return;
-    const last = transcript[transcript.length - 1];
-    if (!last || last.speaker !== "them" || last.id <= answeredRef.current || !looksLikeQuestion(last.text)) return;
+    const turn = lastTheirTurn(transcript);
+    if (!turn || turn.id <= answeredRef.current || !looksLikeQuestion(turn.text)) return;
     const t = setTimeout(() => {
       if (cardsRef.current.some((c) => c.pending)) return;
-      answeredRef.current = last.id;
+      answeredRef.current = turn.id;
       void assist("suggest");
-    }, 600);
+    }, 250);
     return () => clearTimeout(t);
   }, [transcript, autoAnswer, status.live, status.mode, assist]);
 

@@ -32,7 +32,7 @@ pub struct ChatResult {
     pub conversation_id: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct AuthState {
     pub signed_in: bool,
     pub user: Option<crate::backend::AuthUser>,
@@ -689,6 +689,8 @@ pub async fn start_google_signin(
         })??;
 
     let response = state.backend.google_sign_in(&token).await?;
+    // Share the new login with a paired, signed-out browser extension.
+    crate::auth_sync::offer(&app);
     Ok(AuthState {
         signed_in: response.success,
         user: response.user,
@@ -721,7 +723,9 @@ pub async fn get_auth_state(state: State<'_, AppState>) -> Result<AuthState, Str
 
 #[tauri::command]
 pub async fn sign_out(state: State<'_, AppState>) -> Result<(), String> {
-    state.backend.clear_session().await;
+    // Revoke on the server too - clearing only the local copy left the session
+    // valid for its remaining 30 days.
+    state.backend.revoke_session().await;
     *state.conversation_id.write().await = None;
     Ok(())
 }

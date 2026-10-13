@@ -2,6 +2,7 @@
 // Sets up Tauri with system tray, global shortcuts, and all plugins.
 
 mod agent;
+mod auth_sync;
 mod backend;
 mod bridge;
 mod link;
@@ -14,6 +15,7 @@ mod git_diff;
 mod hover;
 mod input;
 mod mcp;
+mod copilot;
 mod meeting;
 mod mouse;
 mod oauth;
@@ -161,6 +163,9 @@ pub fn run() {
             meeting::copilot_hide,
             meeting::copilot_resize,
             meeting::copilot_focus,
+            copilot::copilot_agent_run,
+            copilot::copilot_insert,
+            copilot::copilot_insert_cancel,
             meeting::stealth_get,
             meeting::stealth_set,
             prefs::window_prefs_get,
@@ -289,6 +294,13 @@ pub fn run() {
                     if event.state() != ShortcutState::Pressed {
                         return;
                     }
+                    // Mid-call, "look at my screen" means: answer what's on it,
+                    // right in the copilot bar over the call.
+                    if meeting::is_live() && app_handle.get_webview_window("copilot").is_some() {
+                        meeting::show_copilot(&app_handle);
+                        let _ = app_handle.emit_to("copilot", "copilot-assist", "screen");
+                        return;
+                    }
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.emit("capture-analyze", ());
                         let _ = window.show();
@@ -351,6 +363,7 @@ pub fn run() {
 
             // Keep Mouse AI out of screen shares / recordings by default.
             meeting::apply_stealth(app.handle());
+            copilot::start_foreground_watch();
 
             // ── Main Window Setup ────────────────────────────────
             prefs::apply(app.handle());

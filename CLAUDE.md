@@ -14,8 +14,9 @@ Three windows are built from `frontend/`: the main chat/IDE window (`index.html`
 always-on-top hover overlay (`overlay.html`, plain JS, see `frontend/public/overlay.js`) that pops up
 near the cursor, and the in-call copilot bar (`copilot.html`, React, `frontend/src/copilot/`) - a
 floating Cluely-style pill + glass panel (Assist / What should I say? / Follow-ups / Recap, live
-insights, auto-answer) that `meeting_start` shows over the call. Ctrl+Shift+\ toggles it; while a call is
-live, Ctrl+Shift+Enter is routed to it instead of the main window. All Mouse AI windows are excluded
+insights, auto-answer, Solve screen) that `meeting_start` shows over the call. Ctrl+Shift+\ toggles it; while a
+call is live, Ctrl+Shift+Enter (suggest) and Ctrl+Shift+S (solve what's on screen) are routed to it instead of the
+main window. Ctrl+Alt+Arrows nudge the bar - registered only while it is visible (`set_move_keys` in `meeting.rs`). All Mouse AI windows are excluded
 from screen capture by default (`WDA_EXCLUDEFROMCAPTURE` via `set_content_protected`; `stealth_set`
 in `meeting.rs` toggles it).
 
@@ -89,7 +90,10 @@ until a plain-text answer or `MAX_ITERATIONS` (40) is hit. Key details baked int
 | `mcp.rs` | MCP client: launches configured servers as stdio subprocesses, speaks JSON-RPC 2.0 (`initialize` → `tools/list` → `tools/call`). Strictly additive/fail-safe - a broken MCP server is skipped, never breaks the core agent loop |
 | `bridge.rs` | Localhost WebSocket (127.0.0.1:47821) to the Thothai browser extension - the transport for agent handoffs |
 | `link.rs` | Two-way agent link on top of the bridge: pairing code (`%APPDATA%/mouse-ai/bridge.json`), browser→desktop `desktop_task` runs (source `browser:<id>`), the shared task board (`bridge-task` events → Agents view) and the watcher that probes/fails stalled handoffs |
-| `oauth.rs` | Google OAuth loopback flow (`http://127.0.0.1:8917/callback`) for Sign in with Google |
+| `meeting.rs` | Meeting copilot: two-sided audio capture → Whisper chunks → transcript; assist actions (answers stream from the backend's `/api/agent/stream` as `meeting-answer-delta`, falling back to `/api/agent/step`); the copilot bar window, stealth, move keys |
+| `copilot.rs` | The bar's hands-on tools: "Fix it" runs `agent::run_task` under source `copilot` with transcript + active project as context; `copilot_insert` pastes (clipboard restored) or naturally types text into the last non-Mouse-AI foreground window, tracked by a 250 ms watcher |
+| `oauth.rs` | Google OAuth loopback flow (`http://127.0.0.1:8917/callback`) for Sign in with Google; a per-flow `state` must round-trip or the redirect is ignored |
+| `auth_sync.rs` | One login across desktop + extension: over a *paired* bridge, `auth_request` / `auth_offer {code}` frames pass a one-time 60 s handoff code (`/api/auth/handoff` → `/api/auth/handoff/redeem`), never a session token. Only a client without a real (non-guest) account adopts an offer |
 
 Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/config.json`.
 

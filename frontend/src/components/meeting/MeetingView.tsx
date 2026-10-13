@@ -17,6 +17,7 @@ import {
   Monitor,
   Play,
   Save,
+  ScanText,
   Sparkles,
   Square,
   Trash2,
@@ -47,6 +48,7 @@ const MODES: { id: MeetingMode; label: string; hint: string; icon: React.ReactNo
 const LIVE_ACTIONS: { action: MeetingAction; label: string; icon: React.ReactNode }[] = [
   { action: "suggest", label: "What should I say?", icon: <Sparkles size={13} /> },
   { action: "summary", label: "Summary", icon: <FileText size={13} /> },
+  { action: "screen", label: "Solve my screen", icon: <ScanText size={13} /> },
   { action: "followups", label: "Follow-ups", icon: <HelpCircle size={13} /> },
   { action: "explain", label: "Explain terms", icon: <BookOpen size={13} /> },
 ];
@@ -658,18 +660,35 @@ function AnswerCard({
           </IconButton>
         )}
       </div>
+      {card.context && (
+        <p className="line-clamp-2 border-l-2 border-accent/40 pl-2.5 text-[12px] text-text-muted" title={card.context}>
+          <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-wider">They asked</span>
+          {card.context}
+        </p>
+      )}
       {latest && !card.pending && !card.error && (card.action === "suggest" || card.action === "ask") && (
         <span className="-mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">Say this</span>
       )}
       {card.pending ? (
         <div className="flex items-center gap-2.5 py-1 text-[13px]">
           <BotAvatar kind="clover" mood="thinking" size={26} />
-          <span className="shimmer-text font-medium">Writing your answer…</span>
+          <span className="shimmer-text font-medium">
+            {card.action === "screen" ? "Reading your screen…" : "Writing your answer…"}
+          </span>
         </div>
       ) : card.error ? (
         <p className="text-[12.5px] text-danger">{card.error}</p>
       ) : (
         <div className={clsx(latest ? "text-[15px] leading-relaxed" : "text-[13px]")}>
+          {card.screen && (
+            <a href={card.screen} target="_blank" rel="noreferrer" title="The screen this answer is based on">
+              <img
+                src={card.screen}
+                alt="Captured screen"
+                className="float-right mb-2 ml-3 w-36 rounded-lg border border-border-soft shadow-sm"
+              />
+            </a>
+          )}
           <Markdown>{card.text}</Markdown>
         </div>
       )}

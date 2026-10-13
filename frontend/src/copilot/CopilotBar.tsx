@@ -9,11 +9,14 @@ import {
   Copy,
   Ellipsis,
   MessageSquareText,
+  NotebookPen,
   Play,
   RotateCw,
+  ScanText,
   Sparkles,
   Square,
   WandSparkles,
+  Wrench,
   X,
   Zap,
 } from "lucide-react";
@@ -21,7 +24,9 @@ import { emitTo } from "@tauri-apps/api/event";
 import { Markdown } from "../components/chat/Markdown";
 import { BotAvatar } from "../components/ui/BotAvatar";
 import { BrandMark } from "../components/ui/primitives";
-import { ACTION_LABELS, AUTO_ANSWER_KEY, looksLikeQuestion, useMeeting } from "../hooks/useMeeting";
+import { AgentPanel, CuesView, InsertBar } from "./CopilotTools";
+import { useCopilotAgent, useInsert } from "./copilotHooks";
+import { ACTION_LABELS, AUTO_ANSWER_KEY, lastTheirTurn, looksLikeQuestion, useMeeting, type AssistCard } from "../hooks/useMeeting";
 import {
   copilotFocus,
   copilotHide,
@@ -51,7 +56,8 @@ const INSIGHT_MIN_GAP_MS = 20_000;
 const ACTIONS: { action: MeetingAction; label: string; icon: React.ReactNode }[] = [
   { action: "assist", label: "Assist", icon: <Sparkles size={14} /> },
   { action: "suggest", label: "What should I say?", icon: <WandSparkles size={14} /> },
-  { action: "followups", label: "Follow-up questions", icon: <MessageSquareText size={14} /> },
+  { action: "screen", label: "Solve screen", icon: <ScanText size={14} /> },
+  { action: "followups", label: "Follow-ups", icon: <MessageSquareText size={14} /> },
   { action: "summary", label: "Recap", icon: <RotateCw size={14} /> },
 ];
 
@@ -59,10 +65,12 @@ const LABEL_OVERRIDES: Partial<Record<MeetingAction, string>> = { summary: "Reca
 
 /** Phases shown while an answer is on its way - mirrors the extension's orb labels. */
 const PHASES = ["Catching the last words", "Reading the room", "Thinking", "Writing"];
+const SCREEN_PHASES = ["Capturing your screen", "Reading what's on it", "Working it out", "Writing"];
 
 const LS = {
   insights: "mouse-ai-copilot-insights",
   expanded: "mouse-ai-copilot-expanded",
+  opacity: "mouse-ai-copilot-opacity",
 };
 
 export function CopilotBar() {
@@ -79,6 +87,12 @@ export function CopilotBar() {
   const [insight, setInsight] = useState<{ text: string; at: number } | null>(null);
   const [insightBusy, setInsightBusy] = useState(false);
   const [autoAnswer, setAutoAnswer] = useState(() => localStorage.getItem(AUTO_ANSWER_KEY) === "on");
+  /** "do" = the input goes to the desktop agent (files, terminal, browser) instead of a chat answer. */
+  const [doMode, setDoMode] = useState(false);
+  const [view, setView] = useState<"answers" | "cues">("answers");
+  const [opacity, setOpacity] = useState(() => Number(localStorage.getItem(LS.opacity)) || 1);
+  const agent = useCopilotAgent();
+  const ins = useInsert();
 
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -116,6 +130,7 @@ export function CopilotBar() {
   const run = useCallback(
     (action: MeetingAction, question: string | null = null) => {
       setExpanded(true);
+      setView("answers");
       setIndex(0);
       void assist(action, question);
     },
@@ -136,11 +151,11 @@ export function CopilotBar() {
   cardsRef.current = cards;
   useEffect(() => {
     if (!autoAnswer || !live || status.mode === "practice") return;
-    const last = transcript[transcript.length - 1];
-    if (!last || last.speaker !== "them" || last.id <= answeredRef.current || !looksLikeQuestion(last.text)) return;
+    const turn = lastTheirTurn(transcript);
+    if (!turn || turn.id <= answeredRef.current || !looksLikeQuestion(turn.text)) return;
     const t = setTimeout(() => {
       if (cardsRef.current.some((c) => c.pending)) return;
-      answeredRef.current = last.id;
+      answeredRef.current = turn.id;
       runRef.current("suggest");
     }, 600);
     return () => clearTimeout(t);
@@ -161,7 +176,7 @@ export function CopilotBar() {
       setInsightBusy(true);
       insightMark.current = { chars: spokenChars, at: Date.now() };
       try {
-        const text = await meetingAssist("insights", null, false);
+        const { text } = await meetingAssist("insights", null, false);
         setInsight({ text, at: Date.now() });
       } catch {
         // A missed refresh is fine - the next one catches up.
@@ -182,8 +197,18 @@ export function CopilotBar() {
     if (live && transcript.length === 0) setInsight(null);
   }, [live, transcript.length]);
 
+  const fix = (task: string) => {
+    setExpanded(true);
+    setView("answers");
+    void agent.start(task);
+  };
+
   const send = () => {
     const q = draft.trim();
+    if (doMode) {
+      setDraft("");
+      return fix(q);
+    }
     if (!q) return run("assist");
     setDraft("");
     run("ask", q);
@@ -195,7 +220,12 @@ export function CopilotBar() {
   const busy = cards.some((c) => c.pending) || insightBusy;
 
   return (
-    <div ref={rootRef} className="copilot-root" onKeyDown={(e) => e.key === "Escape" && setExpanded(false)}>
+    <div
+      ref={rootRef}
+      className="copilot-root"
+      style={{ opacity }}
+      onKeyDown={(e) => e.key === "Escape" && setExpanded(false)}
+    >
       {/* ── The pill ── */}
       <div className="cp-pill glass" data-tauri-drag-region>
         <button
@@ -217,6 +247,18 @@ export function CopilotBar() {
           {expanded ? "Hide" : "Show"}
         </button>
 
+        {ins.busy && (
+          <button type="button" className="cp-chip cp-typing" onClick={ins.cancel} title="Stop inserting">
+            <Square size={10} fill="currentColor" />
+            {ins.busy.mode === "type" ? "Typing" : "Pasting"} {ins.busy.label}…
+          </button>
+        )}
+        {agent.run?.running && (
+          <span className="cp-chip cp-agent-chip" title={agent.run.task}>
+            <Wrench size={12} />
+            Agent working…
+          </span>
+        )}
         {live ? (
           <>
             <LiveClock startedAt={status.started_at_ms} />
@@ -268,82 +310,117 @@ export function CopilotBar() {
       {/* ── The panel ── */}
       {expanded && (
         <div className="cp-panel glass" onMouseDown={() => void copilotFocus()}>
-          {(meeting.error || status.warning) && (
-            <div className="cp-warning" role="status">
-              {meeting.error || status.warning}
+          {(meeting.error || status.warning || ins.error) && (
+            <div className="cp-warning" role="status" onClick={ins.clearError}>
+              {ins.error || meeting.error || status.warning}
             </div>
           )}
 
-          <Insight
-            live={live}
-            on={insightsOn && status.mode !== "practice"}
-            insight={insight}
-            busy={insightBusy}
-            lastHeard={lastHeard ? `${lastHeard.speaker === "them" ? "Them" : "You"}: ${lastHeard.text}` : null}
-          />
-
-          {card ? (
-            <div className="cp-card">
-              <div className="cp-card-head">
-                <span className="cp-bubble">{card.action === "ask" ? card.label : LABEL_OVERRIDES[card.action] ?? ACTION_LABELS[card.action]}</span>
-                {cards.length > 1 && (
-                  <div className="cp-nav">
-                    <button type="button" disabled={index >= cards.length - 1} onClick={() => setIndex((i) => i + 1)} aria-label="Older answer">
-                      <ChevronLeft size={14} />
-                    </button>
-                    <span className="tabular-nums">
-                      {cards.length - index}/{cards.length}
-                    </span>
-                    <button type="button" disabled={index === 0} onClick={() => setIndex((i) => i - 1)} aria-label="Newer answer">
-                      <ChevronRight size={14} />
-                    </button>
-                  </div>
-                )}
-              </div>
-              {card.pending ? (
-                <Thinking />
-              ) : card.error ? (
-                <p className="cp-error">
-                  {card.error}{" "}
-                  <button type="button" onClick={() => run(card.action, card.action === "ask" ? card.label : null)}>
-                    Try again
-                  </button>
-                </p>
-              ) : (
-                <div className="cp-answer">
-                  <Markdown>{card.text}</Markdown>
-                  <CopyButton text={card.text} />
-                </div>
-              )}
-            </div>
+          {view === "cues" ? (
+            <CuesView onInsert={ins.insert} />
           ) : (
-            !insight && (
-              <p className="cp-empty">
-                {live
-                  ? "I'm listening. Pick an action, ask anything, or press Ctrl+Shift+Enter when you're put on the spot."
-                  : "Press Listen when the call starts. I hear both sides and stay out of your screen share."}
-              </p>
-            )
-          )}
+            <>
+              <AgentPanel agent={agent} onInsert={ins.insert} />
 
-          <div className="cp-actions">
-            {ACTIONS.map((a, i) => (
-              <span key={a.action} className="contents">
-                {i > 0 && <span className="cp-dot" aria-hidden />}
-                <button type="button" onClick={() => run(a.action)} disabled={cards[0]?.pending}>
-                  {a.icon}
-                  {a.label}
+              <Insight
+                live={live}
+                on={insightsOn && status.mode !== "practice"}
+                insight={insight}
+                busy={insightBusy}
+                lastHeard={lastHeard ? `${lastHeard.speaker === "them" ? "Them" : "You"}: ${lastHeard.text}` : null}
+              />
+
+              {card ? (
+                <div className="cp-card">
+                  <div className="cp-card-head">
+                    <span className="cp-bubble">{card.action === "ask" ? card.label : LABEL_OVERRIDES[card.action] ?? ACTION_LABELS[card.action]}</span>
+                    {cards.length > 1 && (
+                      <div className="cp-nav">
+                        <button type="button" disabled={index >= cards.length - 1} onClick={() => setIndex((i) => i + 1)} aria-label="Older answer">
+                          <ChevronLeft size={14} />
+                        </button>
+                        <span className="tabular-nums">
+                          {cards.length - index}/{cards.length}
+                        </span>
+                        <button type="button" disabled={index === 0} onClick={() => setIndex((i) => i - 1)} aria-label="Newer answer">
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {card.context && (
+                    <p className="cp-context" title={card.context}>
+                      <span>They asked</span>
+                      {card.context}
+                    </p>
+                  )}
+                  {card.pending && card.text ? (
+                    <div className="cp-answer is-streaming">
+                      <Markdown>{card.text}</Markdown>
+                    </div>
+                  ) : card.pending ? (
+                    <Thinking card={card} />
+                  ) : card.error ? (
+                    <p className="cp-error">
+                      {card.error}{" "}
+                      <button type="button" onClick={() => run(card.action, card.action === "ask" ? card.label : null)}>
+                        Try again
+                      </button>
+                    </p>
+                  ) : (
+                    <div className="cp-answer">
+                      {card.screen && <ScreenThumb src={card.screen} />}
+                      <Markdown>{card.text}</Markdown>
+                      <CopyButton text={card.text} />
+                      <InsertBar text={card.text} onInsert={ins.insert} />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                !insight &&
+                !agent.run && (
+                  <p className="cp-empty">
+                    {live
+                      ? "I'm listening. Ctrl+Shift+Enter when you're put on the spot, Ctrl+Shift+S to solve what's on screen, Ctrl+Alt+arrows to move me."
+                      : "Press Listen when the call starts. I hear both sides, can read your screen, and stay out of your screen share."}
+                  </p>
+                )
+              )}
+
+              <div className="cp-actions">
+                {ACTIONS.map((a, i) => (
+                  <span key={a.action} className="contents">
+                    {i > 0 && <span className="cp-dot" aria-hidden />}
+                    <button type="button" onClick={() => run(a.action)} disabled={cards[0]?.pending}>
+                      {a.icon}
+                      {a.label}
+                    </button>
+                  </span>
+                ))}
+                <span className="cp-dot" aria-hidden />
+                <button
+                  type="button"
+                  onClick={() => fix("")}
+                  disabled={agent.run?.running}
+                  title="The agent looks at your screen and project, finds the bug and fixes it - quietly, in the background"
+                >
+                  <Wrench size={14} />
+                  Fix it
                 </button>
-              </span>
-            ))}
-          </div>
+              </div>
+            </>
+          )}
 
           <div className="cp-input">
             <textarea
               ref={inputRef}
               rows={1}
               value={draft}
-              placeholder="Ask about your screen or conversation, or Ctrl ↵ for Assist"
+              placeholder={
+                doMode
+                  ? "Tell the agent what to do - find the bug, run the tests, check the docs… (files, terminal, browser)"
+                  : "Ask about your screen or conversation, or Ctrl ↵ for Assist"
+              }
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -366,6 +443,29 @@ export function CopilotBar() {
                 <Zap size={13} />
                 Smart
               </button>
+              <button
+                type="button"
+                className={clsx("cp-toggle", doMode && "is-on")}
+                onClick={() => setDoMode((v) => !v)}
+                title="Do: send your message to the agent, which can read files, run commands and use the browser"
+                aria-pressed={doMode}
+              >
+                <Wrench size={13} />
+                Do
+              </button>
+              <button
+                type="button"
+                className={clsx("cp-toggle", view === "cues" && "is-on")}
+                onClick={() => {
+                  setExpanded(true);
+                  setView((v) => (v === "cues" ? "answers" : "cues"));
+                }}
+                title="Cue cards: your private notes and code for a demo or lesson"
+                aria-pressed={view === "cues"}
+              >
+                <NotebookPen size={13} />
+                Cues
+              </button>
               <div className="relative">
                 <button type="button" className="cp-icon" onClick={() => setMenuOpen((v) => !v)} aria-label="More options">
                   <Ellipsis size={16} />
@@ -379,6 +479,11 @@ export function CopilotBar() {
                     onAutoAnswer={(v) => {
                       localStorage.setItem(AUTO_ANSWER_KEY, v ? "on" : "off");
                       setAutoAnswer(v);
+                    }}
+                    opacity={opacity}
+                    onOpacity={(v) => {
+                      localStorage.setItem(LS.opacity, String(v));
+                      setOpacity(v);
                     }}
                     insights={insightsOn}
                     onInsights={(v) => {
@@ -397,8 +502,8 @@ export function CopilotBar() {
                 type="button"
                 className="cp-send"
                 onClick={send}
-                disabled={cards[0]?.pending}
-                title={draft.trim() ? "Ask (Enter)" : "Assist (Ctrl+Enter)"}
+                disabled={doMode ? agent.run?.running : cards[0]?.pending}
+                title={doMode ? "Send to the agent (Enter)" : draft.trim() ? "Ask (Enter)" : "Assist (Ctrl+Enter)"}
                 aria-label="Send"
               >
                 <ArrowUp size={16} strokeWidth={2.4} />
@@ -443,21 +548,43 @@ function Insight({
   );
 }
 
-function Thinking() {
-  const [phase, setPhase] = useState(0);
+function Thinking({ card }: { card: AssistCard }) {
+  const phases = card.action === "screen" ? SCREEN_PHASES : PHASES;
+  const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    const t = setInterval(() => setPhase((p) => Math.min(p + 1, PHASES.length - 1)), 1400);
+    const t = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(t);
   }, []);
+  const elapsed = Math.max(0, now - card.startedAt);
+  const phase = Math.min(Math.floor(elapsed / 1400), phases.length - 1);
   return (
     <div className="cp-thinking" role="status">
-      <span className="cp-phase" key={phase}>
-        {PHASES[phase]}…
+      <span className="cp-phase-row">
+        <span className="cp-phase" key={phase}>
+          {phases[phase]}…
+        </span>
+        {elapsed > 2500 && <span className="cp-elapsed tabular-nums">{(elapsed / 1000).toFixed(0)}s</span>}
       </span>
       <span className="cp-skel" style={{ width: "92%" }} />
       <span className="cp-skel" style={{ width: "78%" }} />
       <span className="cp-skel" style={{ width: "54%" }} />
     </div>
+  );
+}
+
+/** What the copilot looked at - click to see it larger. */
+function ScreenThumb({ src }: { src: string }) {
+  const [big, setBig] = useState(false);
+  return (
+    <button
+      type="button"
+      className={clsx("cp-shot", big && "is-big")}
+      onClick={() => setBig((v) => !v)}
+      title={big ? "Shrink" : "The screen this answer is based on - click to enlarge"}
+    >
+      <img src={src} alt="Captured screen" draggable={false} />
+      {!big && <span>Screen</span>}
+    </button>
   );
 }
 
@@ -488,6 +615,8 @@ function MoreMenu(props: {
   onAutoAnswer: (v: boolean) => void;
   insights: boolean;
   onInsights: (v: boolean) => void;
+  opacity: number;
+  onOpacity: (v: number) => void;
   onOpenFull: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -503,6 +632,21 @@ function MoreMenu(props: {
       <MenuSwitch label="Hide from screen share" hint="Invisible in shares & recordings" on={props.stealth} set={props.onStealth} />
       <MenuSwitch label="Auto-answer questions" hint="Drafts a reply when you're asked" on={props.autoAnswer} set={props.onAutoAnswer} />
       <MenuSwitch label="Live insights" hint="Topic, key points, what to say next" on={props.insights} set={props.onInsights} />
+      <label className="cp-menu-item cp-menu-range">
+        <span className="flex flex-col items-start">
+          <span>Opacity</span>
+          <span className="cp-menu-hint">See the call through the bar</span>
+        </span>
+        <input
+          type="range"
+          min={0.45}
+          max={1}
+          step={0.05}
+          value={props.opacity}
+          onChange={(e) => props.onOpacity(Number(e.target.value))}
+          aria-label="Bar opacity"
+        />
+      </label>
       <button
         type="button"
         className="cp-menu-item"

@@ -276,6 +276,72 @@ impl BackendClient {
         self.current_user.read().await.clone()
     }
 
+    /// Signed in with a real account (not the anonymous per-device guest).
+    pub async fn has_account(&self) -> bool {
+        self.session_token.read().await.is_some()
+            && self.current_user.read().await.as_ref().is_some_and(|u| !u.id.starts_with("guest_"))
+    }
+
+    /// Sign out for real: revoke the session on the server (best effort - an
+    /// offline sign-out must still clear it locally), then forget it here.
+    pub async fn revoke_session(&self) {
+        if let Some(token) = self.get_session_token().await {
+            let url = format!("{}/api/auth/signout", self.base_url.read().await);
+            let _ = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", token))
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await;
+        }
+        self.clear_session().await;
+    }
+
+    /// Mint a one-time, 60-second code another of the user's own clients can
+    /// redeem for its own session (login sync over the paired bridge).
+    pub async fn create_handoff(&self) -> Result<String, String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let url = format!("{}/api/auth/handoff", self.base_url.read().await);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        if !resp.status().is_success() {
+            return Err(format!("Couldn't share the sign-in ({})", resp.status().as_u16()));
+        }
+        let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        data.get("code")
+            .and_then(|c| c.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| "Couldn't share the sign-in.".to_string())
+    }
+
+    /// Redeem a handoff code from the user's other client into a session here.
+    pub async fn redeem_handoff(&self, code: &str) -> Result<AuthResponse, String> {
+        let url = format!("{}/api/auth/handoff/redeem", self.base_url.read().await);
+        let resp = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({ "code": code }))
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Sign-in sync failed ({}): {}", status, truncate(&text, 200)));
+        }
+        let data: AuthResponse = resp.json().await.map_err(|e| format!("Failed to parse auth response: {}", e))?;
+        if let (true, Some(token), Some(user)) = (data.success, data.session_token.clone(), data.user.clone()) {
+            self.set_session(token, user).await;
+        }
+        Ok(data)
+    }
+
     pub async fn is_signed_in(&self) -> bool {
         self.session_token.read().await.is_some()
     }
@@ -523,6 +589,74 @@ impl BackendClient {
     /// `Ok(None)` means this backend can't transcribe - an older deploy without
     /// the endpoint (404) or no GROQ_API_KEY configured (503) - so the caller
     /// should fall back rather than retry.
+    /// Streamed, tool-less agent step (`/api/agent/stream`, SSE): `on_delta` gets
+    /// each chunk of text as the model writes it. `Ok(None)` = this backend has no
+    /// streaming endpoint yet (older deploy) - the caller falls back to `agent_step`.
+    pub async fn agent_stream(
+        &self,
+        system: &str,
+        contents: serde_json::Value,
+        mut on_delta: impl FnMut(&str),
+    ) -> Result<Option<String>, String> {
+        let token = self
+            .get_session_token()
+            .await
+            .ok_or("Not signed in - open the Mouse AI window and try again.")?;
+        let url = format!("{}/api/agent/stream", self.base_url.read().await);
+        let body = serde_json::json!({ "system": system, "contents": contents, "model": default_gemini_model() });
+        let mut resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Accept", "text/event-stream")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        let status = resp.status().as_u16();
+        if status == 404 {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            if status == 401 {
+                self.clear_session().await;
+                return Err("Session expired - please try again.".to_string());
+            }
+            return Err(format!("Agent step failed ({}): {}", status, truncate(&text, 300)));
+        }
+
+        // SSE: `data: {json}` lines separated by blank lines. Bytes are buffered
+        // until a full line is in, so a multi-byte character split across two
+        // network chunks is never decoded in halves.
+        let mut buf: Vec<u8> = Vec::new();
+        let mut full = String::new();
+        while let Some(chunk) = resp.chunk().await.map_err(|e| Self::friendly_network_error(&e))? {
+            buf.extend_from_slice(&chunk);
+            while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+                let line: Vec<u8> = buf.drain(..=nl).collect();
+                let line = String::from_utf8_lossy(&line);
+                let Some(payload) = line.trim().strip_prefix("data:") else { continue };
+                let Ok(evt) = serde_json::from_str::<serde_json::Value>(payload.trim()) else { continue };
+                if let Some(delta) = evt.get("delta").and_then(|d| d.as_str()) {
+                    full.push_str(delta);
+                    on_delta(delta);
+                } else if let Some(err) = evt.get("error").and_then(|e| e.as_str()) {
+                    let code = evt.get("status").and_then(|s| s.as_u64()).unwrap_or(500);
+                    return Err(format!("Agent step failed ({}): {}", code, err));
+                } else if evt.get("done").and_then(|d| d.as_bool()).unwrap_or(false) {
+                    let text = evt.get("text").and_then(|t| t.as_str()).map(str::to_string).unwrap_or(full);
+                    return Ok(Some(text));
+                }
+            }
+        }
+        if full.is_empty() {
+            Err("The AI stream ended without an answer - try again.".to_string())
+        } else {
+            Ok(Some(full))
+        }
+    }
+
     pub async fn transcribe_audio(&self, wav_b64: &str, prompt: &str) -> Result<Option<String>, String> {
         let token = self.get_session_token().await.ok_or("Not signed in")?;
         let url = format!("{}/api/meeting/transcribe", self.base_url.read().await);

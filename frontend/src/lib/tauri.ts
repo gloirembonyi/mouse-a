@@ -20,6 +20,8 @@ export const appWindow = getCurrentWindow();
 
 // ── Auth ─────────────────────────────────────────────────
 export const ensureSession = () => invoke<SessionState>("ensure_session");
+/** The login changed outside this window - e.g. adopted from the paired browser extension (auth_sync.rs). */
+export const onAuthChanged = (cb: (s: SessionState) => void) => listen<SessionState>("auth-changed", (e) => cb(e.payload));
 export const verifySession = () => invoke<SessionState>("verify_session");
 export const startGoogleSignIn = () => invoke<SessionState>("start_google_signin");
 export const signInWithToken = (accessToken: string) =>
@@ -182,7 +184,14 @@ export type MeetingAction =
   | "notes"
   | "practice_question"
   | "practice_feedback"
+  | "screen"
   | "ask";
+
+/** An answer, plus a thumbnail data URL of the screen it looked at (if any). */
+export interface MeetingAnswer {
+  text: string;
+  screen: string | null;
+}
 
 export interface MeetingProfile {
   about: string;
@@ -215,8 +224,15 @@ export const meetingTranscript = () => invoke<TranscriptEntry[]>("meeting_transc
 export const meetingAddEntry = (speaker: "them" | "me" | "note", text: string) =>
   invoke<TranscriptEntry>("meeting_add_entry", { speaker, text });
 export const meetingClear = () => invoke<void>("meeting_clear");
-export const meetingAssist = (action: MeetingAction, question: string | null = null, includeScreen = false) =>
-  invoke<string>("meeting_assist", { action, question, includeScreen });
+/** Pass `requestId` to have the answer streamed as `meeting-answer-delta` events while it is written. */
+export const meetingAssist = (
+  action: MeetingAction,
+  question: string | null = null,
+  includeScreen = false,
+  requestId: string | null = null,
+) => invoke<MeetingAnswer>("meeting_assist", { action, question, includeScreen, requestId });
+export const onMeetingAnswerDelta = (cb: (e: { id: string; delta: string }) => void) =>
+  listen<{ id: string; delta: string }>("meeting-answer-delta", (e) => cb(e.payload));
 export const meetingGetProfile = () => invoke<MeetingProfile>("meeting_get_profile");
 export const meetingSetProfile = (profile: MeetingProfile) => invoke<void>("meeting_set_profile", { profile });
 export const meetingSaveNotes = (notes: string, includeTranscript: boolean) =>
@@ -239,6 +255,14 @@ export const onOpenMeetingView = (cb: () => void) => listen("open-meeting-view",
 export const copilotHide = () => invoke<void>("copilot_hide");
 export const copilotResize = (width: number, height: number) => invoke<void>("copilot_resize", { width, height });
 export const copilotFocus = () => invoke<void>("copilot_focus");
+/** Copilot "Fix it": the full desktop agent, progress as agent-progress events with source "copilot". */
+export const COPILOT_AGENT_SOURCE = "copilot";
+export const copilotAgentRun = (task: string, project: string | null) =>
+  invoke<{ text: string }>("copilot_agent_run", { task, project });
+/** Paste ("paste") or naturally type ("type") text into the app the user was working in. */
+export const copilotInsert = (text: string, mode: "paste" | "type") =>
+  invoke<{ completed: boolean }>("copilot_insert", { text, mode });
+export const copilotInsertCancel = () => invoke<void>("copilot_insert_cancel");
 export const onCopilotAssist = (cb: (action: MeetingAction) => void) =>
   listen<MeetingAction>("copilot-assist", (e) => cb(e.payload));
 /** Whether Mouse AI's windows are hidden from screen share / recordings. */
