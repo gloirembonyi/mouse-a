@@ -1,0 +1,667 @@
+/* In-call copilot bar - dark liquid glass on the Thothai night palette.
+   The window is transparent and floats over another app, so there is no
+   page behind the glass to blur or refract (which is what liquid-glass-js
+   does with html2canvas + WebGL). The liquid-glass read comes from the
+   material itself instead: a deep tinted body, a specular rim brighter at
+   the top-left than the bottom-right, a soft lens sheen across the top and
+   an inner glow - the same cues, drawn rather than sampled. */
+
+html,
+body.copilot-body,
+body.copilot-body #root {
+  background: transparent !important;
+  overflow: hidden;
+  height: auto;
+}
+
+body.copilot-body {
+  margin: 0;
+  font-family: "Inter", "Plus Jakarta Sans", system-ui, sans-serif;
+  color: #e9f0f6;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.copilot-root {
+  --glass-ink: 15, 20, 33; /* #0f1421 */
+  --glass-ink-2: 31, 38, 56; /* #1f2638 */
+  --brand: #769fcd;
+  --brand-hi: #97b9de;
+  --brand-deep: #436391;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  width: 680px;
+  box-sizing: border-box;
+  padding: 8px 14px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.copilot-root ::selection {
+  background: rgba(118, 159, 205, 0.42);
+  color: #fff;
+}
+
+/* ── The material ── */
+.glass {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(120% 140% at 12% -20%, rgba(151, 185, 222, 0.16), transparent 52%),
+    linear-gradient(180deg, rgba(var(--glass-ink-2), 0.86), rgba(var(--glass-ink), 0.9));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 0 0 1px rgba(185, 215, 234, 0.07),
+    inset 0 10px 30px -18px rgba(185, 215, 234, 0.35),
+    0 10px 28px -10px rgba(2, 6, 14, 0.7),
+    0 2px 6px rgba(2, 6, 14, 0.35);
+}
+
+/* Specular rim: a 1px gradient ring, bright where the light hits. */
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.42),
+    rgba(185, 215, 234, 0.12) 28%,
+    rgba(118, 159, 205, 0.06) 60%,
+    rgba(151, 185, 222, 0.26)
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Lens sheen across the top third. */
+.glass::after {
+  content: "";
+  position: absolute;
+  inset: 1px 1px auto 1px;
+  height: 46%;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.glass > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* ── Pill ── */
+.cp-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 46px;
+  padding: 0 7px;
+  border-radius: 999px;
+  cursor: grab;
+  overflow: hidden;
+}
+
+.cp-avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  /* Breathes with whoever is talking. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 0 0 calc(var(--lvl, 0) * 5px) rgba(118, 159, 205, 0.28);
+  transition: box-shadow 160ms linear;
+}
+
+.cp-chip,
+.cp-icon,
+.cp-stop {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e9f0f6;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 0 0 1px rgba(185, 215, 234, 0.08);
+  transition:
+    background 160ms var(--ease-out),
+    transform 160ms var(--ease-out);
+}
+.cp-chip {
+  padding: 0 14px 0 11px;
+}
+.cp-icon {
+  width: 34px;
+  justify-content: center;
+  padding: 0;
+  font-weight: 500;
+}
+.cp-stop {
+  width: 34px;
+  justify-content: center;
+  color: #fff;
+}
+.cp-chip:hover,
+.cp-icon:hover,
+.cp-stop:hover {
+  background: rgba(255, 255, 255, 0.13);
+}
+.cp-stop:hover {
+  background: rgba(240, 96, 92, 0.85);
+}
+.cp-chip:active,
+.cp-icon:active,
+.cp-stop:active {
+  transform: scale(0.96);
+}
+.cp-chip-accent {
+  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  color: #fff;
+}
+.cp-chip-accent:hover {
+  background: linear-gradient(180deg, var(--brand-hi), var(--brand));
+}
+.cp-chip:disabled {
+  opacity: 0.6;
+}
+
+.cp-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px 0 6px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: #a9bcd0;
+}
+
+.cp-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #6f87a2;
+}
+.cp-live-dot.is-live {
+  background: #f0605c;
+  box-shadow: 0 0 0 3px rgba(240, 96, 92, 0.18);
+  animation: cp-pulse 1.8s ease-in-out infinite;
+}
+@keyframes cp-pulse {
+  50% {
+    box-shadow: 0 0 0 5px rgba(240, 96, 92, 0.05);
+  }
+}
+
+/* 2px scan along the pill's bottom edge while transcribing / thinking
+   (same cue as the extension's ghostTypingScan). */
+.cp-scan {
+  position: absolute !important;
+  left: 18px;
+  right: 18px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(118, 159, 205, 0.1);
+}
+.cp-scan::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 34%;
+  background: linear-gradient(90deg, transparent, var(--brand-hi), transparent);
+  animation: cp-scan 1.25s var(--ease-out) infinite;
+}
+@keyframes cp-scan {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+/* ── Panel ── */
+.cp-panel {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 22px;
+  padding: 16px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  user-select: text;
+  /* The one authored moment: the panel unfolds out of the pill. */
+  transform-origin: 50% 0;
+  animation: cp-unfold 420ms var(--ease-out) both;
+}
+@keyframes cp-unfold {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+    clip-path: inset(0 22% 92% 22% round 22px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    clip-path: inset(0 0 0 0 round 22px);
+    filter: none;
+  }
+}
+
+.cp-warning {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #f2b766;
+  background: rgba(242, 183, 102, 0.1);
+  border-radius: 10px;
+  padding: 7px 10px;
+}
+
+/* Live read */
+.cp-insight {
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(118, 159, 205, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(118, 159, 205, 0.14);
+}
+.cp-insight-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #97b9de;
+  margin-bottom: 4px;
+}
+.cp-insight-busy {
+  margin-left: auto;
+  font-weight: 500;
+  color: #6f87a2;
+}
+.cp-insight-body {
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  color: #c9d7e5;
+}
+.cp-insight-body p,
+.cp-insight-body ul {
+  margin: 2px 0 !important;
+}
+.cp-caption {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #a9bcd0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Answer */
+.cp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cp-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.cp-bubble {
+  max-width: 78%;
+  padding: 8px 14px;
+  border-radius: 14px 14px 4px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 4px 12px -4px rgba(67, 99, 145, 0.7);
+  order: 2;
+}
+.cp-nav {
+  order: 1;
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11.5px;
+  color: #6f87a2;
+}
+.cp-nav button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  color: #a9bcd0;
+}
+.cp-nav button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+.cp-nav button:disabled {
+  opacity: 0.3;
+}
+
+.cp-answer {
+  position: relative;
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 22px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #e9f0f6;
+  animation: cp-rise 320ms var(--ease-out) both;
+}
+@keyframes cp-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.cp-answer strong {
+  color: #fff;
+}
+.cp-copy {
+  position: absolute !important;
+  top: 0;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: #6f87a2;
+}
+.cp-copy:hover {
+  color: #e9f0f6;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.cp-answer::-webkit-scrollbar {
+  width: 6px;
+}
+.cp-answer::-webkit-scrollbar-thumb {
+  background: rgba(185, 215, 234, 0.16);
+  border-radius: 6px;
+}
+
+.cp-error {
+  margin: 0;
+  font-size: 13.5px;
+  color: #f0938f;
+}
+.cp-error button {
+  margin-left: 4px;
+  color: #97b9de;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.cp-empty {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #a9bcd0;
+}
+
+/* Loading: phase label + shimmering skeleton lines */
+.cp-thinking {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 2px 0 4px;
+}
+.cp-phase {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #97b9de;
+  animation: cp-rise 300ms var(--ease-out) both;
+}
+.cp-skel {
+  display: block;
+  height: 10px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(185, 215, 234, 0.07) 0%,
+    rgba(185, 215, 234, 0.2) 40%,
+    rgba(185, 215, 234, 0.07) 80%
+  );
+  background-size: 250% 100%;
+  animation: cp-shimmer 1.4s linear infinite;
+}
+@keyframes cp-shimmer {
+  from {
+    background-position: 125% 0;
+  }
+  to {
+    background-position: -125% 0;
+  }
+}
+
+/* Actions */
+.cp-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 2px;
+}
+.cp-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #dbe6f0;
+  transition: background 140ms var(--ease-out), color 140ms var(--ease-out);
+}
+.cp-actions button svg {
+  color: #97b9de;
+}
+.cp-actions button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.cp-actions button:disabled {
+  opacity: 0.45;
+}
+.cp-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: #6f87a2;
+}
+
+/* Input */
+.cp-input {
+  border-radius: 16px;
+  padding: 10px 10px 8px 14px;
+  background: rgba(8, 12, 22, 0.42);
+  box-shadow:
+    inset 0 0 0 1px rgba(185, 215, 234, 0.12),
+    inset 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: box-shadow 160ms var(--ease-out);
+}
+.cp-input:focus-within {
+  box-shadow:
+    inset 0 0 0 1px rgba(118, 159, 205, 0.55),
+    inset 0 2px 6px rgba(0, 0, 0, 0.25),
+    0 0 0 3px rgba(118, 159, 205, 0.14);
+}
+.cp-input textarea {
+  width: 100%;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #e9f0f6;
+  caret-color: var(--brand-hi);
+  max-height: 96px;
+  field-sizing: content;
+}
+.cp-input textarea::placeholder {
+  color: #7f97b1;
+}
+.cp-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.cp-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #a9bcd0;
+  box-shadow: inset 0 0 0 1px rgba(185, 215, 234, 0.16);
+  transition: all 160ms var(--ease-out);
+}
+.cp-toggle:hover {
+  color: #e9f0f6;
+}
+.cp-toggle.is-on {
+  color: #fff;
+  background: rgba(118, 159, 205, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(118, 159, 205, 0.6);
+}
+.cp-input-row .cp-icon {
+  height: 30px;
+  width: 30px;
+  background: transparent;
+  box-shadow: none;
+  color: #a9bcd0;
+}
+.cp-stealth {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: #6f87a2;
+}
+.cp-send {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  color: #fff;
+  background: radial-gradient(circle at 35% 28%, var(--brand-hi), var(--brand) 45%, var(--brand-deep));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 4px 12px -3px rgba(67, 99, 145, 0.8);
+  transition: transform 160ms var(--ease-out), filter 160ms var(--ease-out);
+}
+.cp-stealth + .cp-send {
+  margin-left: 8px;
+}
+.cp-send:hover:not(:disabled) {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+.cp-send:disabled {
+  opacity: 0.5;
+}
+
+/* Menu */
+.cp-menu {
+  position: absolute !important;
+  bottom: 38px;
+  left: -6px;
+  width: 290px;
+  padding: 6px;
+  border-radius: 14px;
+  z-index: 10 !important;
+  animation: cp-rise 220ms var(--ease-out) both;
+}
+.cp-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  font-size: 13.5px;
+  text-align: left;
+  color: #e9f0f6;
+}
+.cp-menu-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.cp-menu-hint {
+  font-size: 11.5px;
+  color: #6f87a2;
+}
+.cp-switch {
+  flex-shrink: 0;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  padding: 2px;
+  background: rgba(185, 215, 234, 0.18);
+  transition: background 160ms var(--ease-out);
+}
+.cp-switch span {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #fff;
+  transition: transform 200ms var(--ease-out);
+}
+.cp-switch.is-on {
+  background: var(--brand);
+}
+.cp-switch.is-on span {
+  transform: translateX(12px);
+}
+
+.copilot-root button:focus-visible,
+.copilot-root textarea:focus-visible {
+  outline: 2px solid rgba(151, 185, 222, 0.7);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copilot-root *,
+  .copilot-root *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

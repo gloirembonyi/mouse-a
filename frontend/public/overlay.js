@@ -955,7 +955,7 @@ function appSummary(p) {
   let title = (p?.context?.window_title || "").trim();
   if (JUNK_TITLE.test(title)) title = "";
   // Browsers/editors append " - Google Chrome" etc.; the app name already says that.
-  if (app && title.toLowerCase().endsWith(app.toLowerCase())) title = title.slice(0, -app.length).replace(/[\s\-–-|]+$/, "");
+  if (app && title.toLowerCase().endsWith(app.toLowerCase())) title = title.slice(0, -app.length).replace(/[\s|–—-]+$/, "");
   if (app && title) return `${app} · ${title}`;
   return app || title;
 }

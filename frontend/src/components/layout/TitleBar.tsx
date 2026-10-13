@@ -94,7 +94,7 @@ export function TitleBar({
           <Square size={11} />
         </WindowButton>
         <WindowButton
-          onClick={() => appWindow.close().catch(() => {})}
+          onClick={() => appWindow.hide().catch(() => appWindow.close().catch(() => {}))}
           title="Close (minimizes to tray - reopen from the tray icon or a shortcut)"
           danger
         >

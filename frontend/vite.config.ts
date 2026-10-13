@@ -26,12 +26,14 @@ export default defineConfig({
     target: "chrome105",
     minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
-    // Two entry points: the React-rewritten main window, and the small
-    // hover-overlay popup kept as a plain static page (see overlay.html).
+    // Three entry points: the React main window, the small hover-overlay
+    // popup kept as a plain static page (see overlay.html), and the in-call
+    // copilot bar (copilot.html, React).
     rollupOptions: {
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         overlay: fileURLToPath(new URL("./overlay.html", import.meta.url)),
+        copilot: fileURLToPath(new URL("./copilot.html", import.meta.url)),
       },
     },
   },

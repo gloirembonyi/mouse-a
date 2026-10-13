@@ -30,8 +30,8 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import { Markdown } from "../chat/Markdown";
 import { IconButton, Kbd, Switch } from "../ui/primitives";
 import { BotAvatar } from "../ui/BotAvatar";
-import { looksLikeQuestion, type AssistCard, type useMeeting } from "../../hooks/useMeeting";
-import type { MeetingAction, MeetingMode, MeetingProfile, TranscriptEntry } from "../../lib/tauri";
+import { copilotBarEnabled, looksLikeQuestion, setCopilotBarEnabled, type AssistCard, type useMeeting } from "../../hooks/useMeeting";
+import { copilotShow, type MeetingAction, type MeetingMode, type MeetingProfile, type TranscriptEntry } from "../../lib/tauri";
 
 interface MeetingViewProps {
   meeting: ReturnType<typeof useMeeting>;
@@ -536,6 +536,7 @@ function CopilotPane({
             <Monitor size={12} />
             Include screen
           </label>
+          {mode !== "practice" && <CopilotBarToggle live={status.live} />}
         </div>
       </div>
 
@@ -772,5 +773,31 @@ function ContextDrawer({
         </div>
       </div>
     </div>
+  );
+}
+
+/** The floating in-call bar (copilot window): opens over the call when a
+ *  session starts, hidden from screen share. Ctrl+Shift+\ shows/hides it. */
+function CopilotBarToggle({ live }: { live: boolean }) {
+  const [on, setOn] = useState(copilotBarEnabled);
+  return (
+    <span className="flex items-center gap-2">
+      <label className="flex cursor-pointer items-center gap-1.5" title="Float a compact copilot over your call - invisible to screen share (Ctrl+Shift+\)">
+        <Switch
+          on={on}
+          onChange={(v) => {
+            setCopilotBarEnabled(v);
+            setOn(v);
+          }}
+          label="In-call bar"
+        />
+        In-call bar
+      </label>
+      {live && on && (
+        <button onClick={() => void copilotShow()} className="text-accent underline-offset-2 hover:underline">
+          Show bar
+        </button>
+      )}
+    </span>
   );
 }

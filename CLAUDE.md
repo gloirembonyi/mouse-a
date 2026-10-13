@@ -10,9 +10,14 @@ of this codebase) which holds the Gemini API key(s) and does all model inference
 runs *tools* locally (shell commands, file I/O, mouse/keyboard control, screen capture) - the model
 itself never runs here.
 
-Two windows are built from `frontend/`: the main chat/IDE window (`index.html`, React) and a small
+Three windows are built from `frontend/`: the main chat/IDE window (`index.html`, React), a small
 always-on-top hover overlay (`overlay.html`, plain JS, see `frontend/public/overlay.js`) that pops up
-near the cursor.
+near the cursor, and the in-call copilot bar (`copilot.html`, React, `frontend/src/copilot/`) - a
+floating Cluely-style pill + glass panel (Assist / What should I say? / Follow-ups / Recap, live
+insights, auto-answer) that `meeting_start` shows over the call. Ctrl+Shift+\ toggles it; while a call is
+live, Ctrl+Shift+Enter is routed to it instead of the main window. All Mouse AI windows are excluded
+from screen capture by default (`WDA_EXCLUDEFROMCAPTURE` via `set_content_protected`; `stealth_set`
+in `meeting.rs` toggles it).
 
 ## Commands
 

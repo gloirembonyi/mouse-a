@@ -19,6 +19,7 @@ import {
   newId,
   onAiState,
   onMeetingHotkey,
+  onOpenMeetingView,
   setConversationId,
   toggleAiActive,
 } from "./lib/tauri";
@@ -82,8 +83,10 @@ export default function App() {
       setView("meeting");
       if (meetingLiveRef.current) void assistRef.current("suggest");
     });
+    const unOpen = onOpenMeetingView(() => setView("meeting"));
     return () => {
       unlisten.then((fn) => fn());
+      unOpen.then((fn) => fn());
     };
   }, [auth.status]);
 

@@ -1,7 +1,8 @@
-import { fsReadTextFile, getConversationMessages } from "./tauri";
+import { fsExtractText, fsReadDataUrl, getConversationMessages } from "./tauri";
 import type { Attachment } from "./chatTypes";
 
 const MAX_FILE_CHARS = 4000;
+const CHAT_IMAGE = /\.(png|jpe?g|webp)$/i;
 const MAX_CONVERSATION_MESSAGES = 10;
 
 export interface ResolvedAttachments {
@@ -27,8 +28,23 @@ export async function resolveAttachments(attachments: Attachment[]): Promise<Res
       continue;
     }
     if (a.kind === "file") {
+      // An image file from the editor goes to the model as the image itself.
+      if (CHAT_IMAGE.test(a.path)) {
+        if (imageDataUrl) {
+          blocks.push(`[Attached image: ${a.path} - not sent, only one image fits in a message]`);
+          continue;
+        }
+        try {
+          imageDataUrl = await fsReadDataUrl(a.path);
+          blocks.push(`[Attached image: ${a.path}]`);
+        } catch (err) {
+          blocks.push(`[Attached image: ${a.path} - could not read it: ${err instanceof Error ? err.message : String(err)}]`);
+        }
+        continue;
+      }
       try {
-        const content = await fsReadTextFile(a.path);
+        // Plain text as-is; Word/PowerPoint/spreadsheets as extracted text.
+        const content = await fsExtractText(a.path);
         const truncated = content.length > MAX_FILE_CHARS ? `${content.slice(0, MAX_FILE_CHARS)}\n… (truncated)` : content;
         blocks.push(`[Attached file: ${a.path}]\n\`\`\`\n${truncated}\n\`\`\``);
       } catch (err) {

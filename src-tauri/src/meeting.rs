@@ -37,7 +37,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 // ── Tunables ─────────────────────────────────────────────────────
 
@@ -879,6 +879,18 @@ fn instruction_for(action: &str, question: Option<&str>) -> Result<String, Strin
 Give me what to say next: first a bold **Say:** line (1-3 sentences I can say verbatim), then up to 3 bullets of supporting points or specifics \
 from my background. If nothing is currently being asked of me, say so and offer one useful contribution instead."
             .to_string(),
+        "assist" => "Decide what would help me most RIGHT NOW and give only that: if I was just asked something, give me the answer \
+to say (bold **Say:** line first); if a term, number or claim came up I may not know, explain it in one or two lines; if a screen is attached \
+and shows a question, problem or slide, solve or explain what's on it. Lead with the single most useful line, then at most 3 short bullets."
+            .to_string(),
+        "insights" => "Give me a glanceable live read of the conversation, in exactly this shape and nothing else:\n\
+**Topic:** <what is being discussed right now, max 10 words>\n\
+- <key point, number, decision or commitment just made>\n\
+- <another, only if real>\n\
+- <another, only if real>\n\
+**Next:** <the one smartest thing I could say or ask next, max 20 words>\n\
+Use at most 3 bullets, each under 15 words, only from what was actually said. If almost nothing has been said, reply with just **Topic:** Listening…"
+            .to_string(),
         "summary" => "Summarize the conversation so far in under 120 words: the topic, key points made, and anything still unresolved. \
 End with one line on where the discussion is heading."
             .to_string(),
@@ -944,6 +956,7 @@ pub async fn meeting_start(
     mode: String,
     capture_mic: bool,
     capture_system: bool,
+    show_bar: Option<bool>,
 ) -> Result<MeetingStatus, String> {
     if LIVE.lock().unwrap().is_some() {
         return Ok(current_status(None));
@@ -1002,6 +1015,9 @@ pub async fn meeting_start(
 
     let status = current_status(warning);
     let _ = app.emit("meeting-status", &status);
+    if show_bar.unwrap_or(true) {
+        show_copilot(&app);
+    }
     Ok(status)
 }
 
@@ -1104,7 +1120,10 @@ pub async fn meeting_assist(
     }
 
     let contents = json!([{ "role": "user", "parts": parts }]);
-    let resp = backend.agent_step(&system_prompt(&mode, &profile), contents, json!([])).await?;
+    let resp = backend
+        .agent_step(&system_prompt(&mode, &profile), contents, json!([]))
+        .await
+        .map_err(|e| friendly_assist_error(&e))?;
     let text = response_text(&resp);
     if text.is_empty() {
         return Err("The assistant returned an empty answer - try again.".to_string());
@@ -1113,6 +1132,21 @@ pub async fn meeting_assist(
         push_entry(&app, "coach", text.clone());
     }
     Ok(text)
+}
+
+/// The panel shows this mid-call: one readable line, not a raw HTTP body.
+fn friendly_assist_error(err: &str) -> String {
+    let lower = err.to_lowercase();
+    if lower.contains("(503)") || lower.contains("(502)") || lower.contains("(504)") || lower.contains("busy") || lower.contains("high demand") || lower.contains("overloaded") {
+        "The AI is busy right now - try again in a few seconds.".to_string()
+    } else if lower.contains("(429)") || lower.contains("rate limit") || lower.contains("quota") {
+        "Too many requests in a row - wait a few seconds and try again.".to_string()
+    } else if lower.contains("agent step failed") {
+        // Some other backend error: keep the status, drop the JSON body.
+        err.split(':').next().unwrap_or(err).replace("Agent step failed", "The AI request failed")
+    } else {
+        err.to_string()
+    }
 }
 
 #[tauri::command]
@@ -1149,6 +1183,121 @@ pub async fn meeting_save_notes(
         task.push_str(&transcript_text(7_000));
     }
     state.backend.log_agent_run(None, &task, notes).await
+}
+
+// ── In-call copilot bar ──────────────────────────────────────────
+// A small always-on-top window (`copilot`, copilot.html) that floats over
+// the call - Assist / What should I say? / Follow-ups / Recap plus live
+// insights - so the user never has to leave the meeting app. Like the other
+// Mouse AI windows it is excluded from screen capture by default
+// (WDA_EXCLUDEFROMCAPTURE), so it doesn't show up in a shared screen or a
+// recording; the user can turn that off.
+
+/// Hide Mouse AI's windows from screen share / recordings.
+static STEALTH: AtomicBool = AtomicBool::new(true);
+/// The bar is centered at the top on its first show; after that it stays
+/// wherever the user dragged it.
+static COPILOT_PLACED: AtomicBool = AtomicBool::new(false);
+
+const COPILOT_WINDOWS: [&str; 3] = ["main", "overlay", "copilot"];
+
+pub fn is_live() -> bool {
+    LIVE.lock().unwrap().is_some()
+}
+
+pub fn apply_stealth(app: &AppHandle) {
+    let on = STEALTH.load(Ordering::Relaxed);
+    for label in COPILOT_WINDOWS {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.set_content_protected(on);
+        }
+    }
+}
+
+/// Show the bar without taking focus away from the call window.
+fn show_no_activate(window: &tauri::WebviewWindow) {
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            winapi::um::winuser::ShowWindow(hwnd.0 as _, winapi::um::winuser::SW_SHOWNOACTIVATE);
+        }
+        return;
+    }
+    let _ = window.show();
+}
+
+pub fn show_copilot(app: &AppHandle) {
+    let Some(w) = app.get_webview_window("copilot") else { return };
+    let _ = w.set_content_protected(STEALTH.load(Ordering::Relaxed));
+    let _ = w.set_always_on_top(true);
+    if !COPILOT_PLACED.swap(true, Ordering::Relaxed) {
+        let (cx, cy) = crate::mouse::get_cursor_position();
+        let monitor = app
+            .monitor_from_point(cx as f64, cy as f64)
+            .ok()
+            .flatten()
+            .or_else(|| w.primary_monitor().ok().flatten());
+        if let Some(mon) = monitor {
+            let width = w.outer_size().map(|s| s.width as i32).unwrap_or(680);
+            let x = mon.position().x + (mon.size().width as i32 - width) / 2;
+            let y = mon.position().y + (12.0 * mon.scale_factor()) as i32;
+            let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+        }
+    }
+    show_no_activate(&w);
+}
+
+/// Toggle the bar's visibility (Ctrl+Shift+\). Returns whether it is now visible.
+pub fn toggle_copilot(app: &AppHandle) -> bool {
+    let Some(w) = app.get_webview_window("copilot") else { return false };
+    if w.is_visible().unwrap_or(false) {
+        let _ = w.hide();
+        false
+    } else {
+        show_copilot(app);
+        true
+    }
+}
+
+#[tauri::command]
+pub fn copilot_show(app: AppHandle) {
+    show_copilot(&app);
+}
+
+#[tauri::command]
+pub fn copilot_hide(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("copilot") {
+        let _ = w.hide();
+    }
+}
+
+/// Resize the bar to fit its content. Width stays put; the top edge stays
+/// anchored so the pill never jumps while the panel grows.
+#[tauri::command]
+pub fn copilot_resize(app: AppHandle, width: f64, height: f64) {
+    if let Some(w) = app.get_webview_window("copilot") {
+        let _ = w.set_size(tauri::LogicalSize::new(width.clamp(320.0, 960.0), height.clamp(48.0, 900.0)));
+    }
+}
+
+#[tauri::command]
+pub fn copilot_focus(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("copilot") {
+        let _ = w.set_focus();
+    }
+}
+
+#[tauri::command]
+pub fn stealth_get() -> bool {
+    STEALTH.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+pub fn stealth_set(app: AppHandle, enabled: bool) -> bool {
+    STEALTH.store(enabled, Ordering::Relaxed);
+    apply_stealth(&app);
+    let _ = app.emit("stealth-changed", enabled);
+    enabled
 }
 
 #[cfg(test)]

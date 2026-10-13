@@ -420,6 +420,21 @@ a:focus-visible {
 .doc-preview table { font-size: 13px; }
 .doc-preview img { max-width: 100%; border-radius: 10px; }
 
+/* Word documents (HTML built by src-tauri/src/documents.rs). */
+.docx-view ul { list-style: disc; padding-left: 1.5em; }
+.docx-view ol { list-style: decimal; padding-left: 1.5em; }
+.docx-view ul ul, .docx-view ol ol, .docx-view ul ol, .docx-view ol ul { margin: 2px 0; }
+.docx-view blockquote { margin: 0 0 12px; padding: 2px 0 2px 14px; border-left: 3px solid var(--mx-accent); color: var(--mx-text-secondary); font-style: italic; }
+.docx-view .docx-table { overflow-x: auto; margin: 4px 0 16px; }
+.docx-view table { border-collapse: collapse; min-width: 50%; }
+.docx-view td { border: 1px solid var(--mx-border-strong); padding: 6px 10px; vertical-align: top; }
+.docx-view tr:first-child td { background: var(--mx-bg-tertiary); font-weight: 600; }
+.docx-view td p { margin: 0; }
+.docx-view td p + p { margin-top: 6px; }
+.docx-view .docx-link { color: var(--mx-accent); text-decoration: underline; text-underline-offset: 2px; }
+.docx-view .docx-missing { display: inline-block; padding: 1px 8px; border: 1px dashed var(--mx-border-strong); border-radius: 6px; font-size: 11px; color: var(--mx-text-muted); }
+.docx-view img { display: inline-block; margin: 6px 0; }
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

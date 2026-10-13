@@ -145,7 +145,9 @@ fn search_dir(dir: &std::path::Path, needle: &str, depth: usize, visited: &mut u
 #[derive(Serialize)]
 pub struct FileInfo {
     pub size: u64,
-    /// "text" | "image" | "pdf" | "binary"
+    /// "text" | "image" | "pdf" | "binary", plus the read-only viewer kinds
+    /// "docx" | "pptx" | "sheet" | "audio" | "video". CSV/HTML/JSON stay
+    /// "text" (they're editable) - the editor picks their view by extension.
     pub kind: String,
     /// Text file uses CRLF line endings (the editor normalizes to LF, so it
     /// converts back on save instead of silently rewriting every line).
@@ -153,6 +155,9 @@ pub struct FileInfo {
 }
 
 const IMAGE_EXTS: [&str; 9] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg", "avif"];
+// Played straight from disk through the asset protocol, never via IPC.
+const AUDIO_EXTS: [&str; 9] = ["mp3", "wav", "ogg", "oga", "m4a", "flac", "aac", "opus", "weba"];
+const VIDEO_EXTS: [&str; 6] = ["mp4", "webm", "mov", "mkv", "m4v", "ogv"];
 
 #[tauri::command]
 pub fn fs_file_info(path: String) -> Result<FileInfo, String> {
@@ -167,8 +172,17 @@ pub fn fs_file_info(path: String) -> Result<FileInfo, String> {
     if IMAGE_EXTS.contains(&ext.as_str()) {
         return Ok(FileInfo { size: meta.len(), kind: "image".into(), crlf: false });
     }
-    if ext == "pdf" {
-        return Ok(FileInfo { size: meta.len(), kind: "pdf".into(), crlf: false });
+    let viewer_kind = match ext.as_str() {
+        "pdf" => Some("pdf"),
+        e if crate::documents::DOCX_EXTS.contains(&e) => Some("docx"),
+        e if crate::documents::PPTX_EXTS.contains(&e) => Some("pptx"),
+        e if crate::documents::SHEET_EXTS.contains(&e) => Some("sheet"),
+        e if AUDIO_EXTS.contains(&e) => Some("audio"),
+        e if VIDEO_EXTS.contains(&e) => Some("video"),
+        _ => None,
+    };
+    if let Some(kind) = viewer_kind {
+        return Ok(FileInfo { size: meta.len(), kind: kind.into(), crlf: false });
     }
     use std::io::Read;
     let mut head = vec![0u8; 8192];

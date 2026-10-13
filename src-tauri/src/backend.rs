@@ -11,10 +11,14 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 const DEFAULT_BACKEND_URL: &str = "https://backend-thothai.vercel.app";
-// Fail fast when the server is unreachable instead of hanging the UI.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
-// Total budget - Gemini calls with screenshots can legitimately take a while.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+// Fail fast when the server is unreachable instead of hanging the UI - but not so
+// fast that a slow DNS/TLS handshake on a weak connection (or a Vercel cold start)
+// reads as "offline".
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+// Total budget. The backend gives each request 50s across its whole key × model
+// fallback chain and answers with a clear "busy" error after that, so wait a bit
+// longer than that - cutting in earlier turned "the AI is slow" into "can't reach".
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(65);
 // A dated snapshot like "gemini-2.5-flash" WILL eventually 404 with "no longer
 // available to new users" once Google retires it (this is exactly what broke
 // the agent live) - "-latest" is Google's own alias for "whatever the current
@@ -277,7 +281,9 @@ impl BackendClient {
     }
 
     fn friendly_network_error(e: &reqwest::Error) -> String {
-        if e.is_connect() || e.is_timeout() {
+        if e.is_timeout() && !e.is_connect() {
+            "The AI timed out - Thothai's models are very busy right now. Try again in a moment.".to_string()
+        } else if e.is_connect() || e.is_timeout() {
             "Can't reach the Thothai backend. Check your internet, or set a working Backend URL in Settings.".to_string()
         } else {
             format!("Network error: {}", e)
@@ -467,14 +473,22 @@ impl BackendClient {
             "model": default_gemini_model(),
         });
 
-        let resp = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| Self::friendly_network_error(&e))?;
+        // A connect failure means the request never reached the server, so one quick
+        // retry is safe (no step is consumed twice) and rides out a network blip.
+        let send = || {
+            self.client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", token))
+                .json(&body)
+                .send()
+        };
+        let resp = match send().await {
+            Err(e) if e.is_connect() => {
+                tokio::time::sleep(Duration::from_millis(800)).await;
+                send().await.map_err(|e| Self::friendly_network_error(&e))?
+            }
+            other => other.map_err(|e| Self::friendly_network_error(&e))?,
+        };
 
         if !resp.status().is_success() {
             let status = resp.status().as_u16();

@@ -1,7 +1,7 @@
 // Typed wrappers around the Rust commands in src-tauri/src/commands.rs.
 // Keeping every invoke() call behind a named function here means a renamed
 // or reshaped Rust command only needs updating in one place.
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
@@ -101,11 +101,46 @@ export const fsSearchFiles = (root: string, query: string, limit = 30) =>
   invoke<FsEntry[]>("fs_search_files", { root, query, limit });
 export interface FileInfo {
   size: number;
-  kind: "text" | "image" | "pdf" | "binary";
+  /** CSV, HTML and JSON stay "text" (editable); the editor picks their view by extension. */
+  kind: "text" | "image" | "pdf" | "binary" | "docx" | "pptx" | "sheet" | "audio" | "video";
   crlf: boolean;
 }
 export const fsFileInfo = (path: string) => invoke<FileInfo>("fs_file_info", { path });
 export const fsReadDataUrl = (path: string) => invoke<string>("fs_read_data_url", { path });
+/** Streams a local file into <img>/<video>/<audio> through Tauri's asset
+ * protocol - no base64 round trip through IPC, so big media is fine. */
+export const assetUrl = (path: string) => convertFileSrc(path);
+/** Plain text of a document (docx/pptx/sheets/text) for chat attachments. */
+export const fsExtractText = (path: string) => invoke<string>("fs_extract_text", { path });
+
+// ── Document viewers (src-tauri/src/documents.rs) ──
+export interface DocxDoc {
+  /** Built and escaped in Rust - only simple formatting tags. */
+  html: string;
+  words: number;
+  truncated: boolean;
+}
+export interface Slide {
+  number: number;
+  title: string | null;
+  lines: { text: string; level: number }[];
+  notes: string | null;
+  images: number;
+}
+export interface SheetData {
+  sheets: string[];
+  sheet: string;
+  rows: string[][];
+  /** 1-based spreadsheet row/column of rows[0][0]. */
+  first_row: number;
+  first_col: number;
+  total_rows: number;
+  total_cols: number;
+  truncated: boolean;
+}
+export const docReadDocx = (path: string) => invoke<DocxDoc>("doc_read_docx", { path });
+export const docReadPptx = (path: string) => invoke<Slide[]>("doc_read_pptx", { path });
+export const docReadSheet = (path: string, sheet?: string) => invoke<SheetData>("doc_read_sheet", { path, sheet: sheet ?? null });
 export const fsCreateFile = (path: string) => invoke<void>("fs_create_file", { path });
 export const fsCreateDir = (path: string) => invoke<void>("fs_create_dir", { path });
 export const fsRename = (from: string, to: string) => invoke<void>("fs_rename", { from, to });
@@ -138,6 +173,8 @@ export const gitDiffFile = (repoPath: string, filePath: string) =>
 // ── Meeting & interview copilot (src-tauri/src/meeting.rs) ──
 export type MeetingMode = "meeting" | "interview" | "practice";
 export type MeetingAction =
+  | "assist"
+  | "insights"
   | "suggest"
   | "summary"
   | "followups"
@@ -170,8 +207,8 @@ export interface MeetingStatus {
   warning: string | null;
 }
 
-export const meetingStart = (mode: MeetingMode, captureMic: boolean, captureSystem: boolean) =>
-  invoke<MeetingStatus>("meeting_start", { mode, captureMic, captureSystem });
+export const meetingStart = (mode: MeetingMode, captureMic: boolean, captureSystem: boolean, showBar = true) =>
+  invoke<MeetingStatus>("meeting_start", { mode, captureMic, captureSystem, showBar });
 export const meetingStop = () => invoke<MeetingStatus>("meeting_stop");
 export const meetingStatus = () => invoke<MeetingStatus>("meeting_status");
 export const meetingTranscript = () => invoke<TranscriptEntry[]>("meeting_transcript");
@@ -193,6 +230,30 @@ export const onMeetingLevel = (cb: (l: { mic: number; system: number }) => void)
 export const onMeetingTranscribing = (cb: (busy: boolean) => void) =>
   listen<boolean>("meeting-transcribing", (e) => cb(e.payload));
 export const onMeetingHotkey = (cb: () => void) => listen("meeting-hotkey", () => cb());
+
+// ── In-call copilot bar (copilot window, meeting.rs) ──
+export const copilotShow = () => invoke<void>("copilot_show");
+export const showMainWindow = () => invoke<void>("show_main_window");
+/** The bar's "Open full copilot" → switch the main window to the meeting view. */
+export const onOpenMeetingView = (cb: () => void) => listen("open-meeting-view", () => cb());
+export const copilotHide = () => invoke<void>("copilot_hide");
+export const copilotResize = (width: number, height: number) => invoke<void>("copilot_resize", { width, height });
+export const copilotFocus = () => invoke<void>("copilot_focus");
+export const onCopilotAssist = (cb: (action: MeetingAction) => void) =>
+  listen<MeetingAction>("copilot-assist", (e) => cb(e.payload));
+/** Whether Mouse AI's windows are hidden from screen share / recordings. */
+export const stealthGet = () => invoke<boolean>("stealth_get");
+export const stealthSet = (enabled: boolean) => invoke<boolean>("stealth_set", { enabled });
+/** How Mouse AI sits on the desktop (src-tauri/src/prefs.rs). */
+export interface WindowPrefs {
+  hide_from_taskbar: boolean;
+  start_in_background: boolean;
+}
+export const windowPrefsGet = () => invoke<WindowPrefs>("window_prefs_get");
+export const windowPrefsSet = (prefs: WindowPrefs) => invoke<WindowPrefs>("window_prefs_set", { prefs });
+export const onWindowPrefs = (cb: (p: WindowPrefs) => void) => listen<WindowPrefs>("window-prefs", (e) => cb(e.payload));
+export const onStealthChanged = (cb: (enabled: boolean) => void) =>
+  listen<boolean>("stealth-changed", (e) => cb(e.payload));
 
 // ── Agent link: desktop ⇄ browser agents (src-tauri/src/link.rs) ──
 export interface LinkInfo {

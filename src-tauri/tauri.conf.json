@@ -44,11 +44,32 @@
         "minWidth": 200,
         "minHeight": 40,
         "maxWidth": 900,
-        "maxHeight": 900
+        "maxHeight": 900,
+        "contentProtected": true
+      },
+      {
+        "label": "copilot",
+        "url": "copilot.html",
+        "title": "Mouse AI Copilot",
+        "width": 680,
+        "height": 60,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false,
+        "contentProtected": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {

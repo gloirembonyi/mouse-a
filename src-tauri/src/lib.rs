@@ -7,6 +7,7 @@ mod bridge;
 mod link;
 mod capture;
 mod commands;
+mod documents;
 mod explorer;
 mod fs_browser;
 mod git_diff;
@@ -16,6 +17,7 @@ mod mcp;
 mod meeting;
 mod mouse;
 mod oauth;
+mod prefs;
 mod terminal;
 
 use commands::AppState;
@@ -128,6 +130,10 @@ pub fn run() {
             fs_browser::fs_delete,
             fs_browser::fs_reveal,
             fs_browser::fs_open_default,
+            documents::doc_read_docx,
+            documents::doc_read_pptx,
+            documents::doc_read_sheet,
+            documents::fs_extract_text,
             terminal::pty_spawn,
             terminal::pty_write,
             terminal::pty_resize,
@@ -151,14 +157,34 @@ pub fn run() {
             meeting::meeting_get_profile,
             meeting::meeting_set_profile,
             meeting::meeting_save_notes,
+            meeting::copilot_show,
+            meeting::copilot_hide,
+            meeting::copilot_resize,
+            meeting::copilot_focus,
+            meeting::stealth_get,
+            meeting::stealth_set,
+            prefs::window_prefs_get,
+            prefs::window_prefs_set,
         ])
         .setup(|app| {
             // ── System Tray ──────────────────────────────────────
             let quit = MenuItem::with_id(app, "quit", "Quit Mouse AI", true, None::<&str>)?;
             let ask = MenuItem::with_id(app, "ask", "Ask at Cursor (Ctrl+Shift+Space)", true, None::<&str>)?;
             let toggle = MenuItem::with_id(app, "toggle", "Toggle Hover Mode (Ctrl+Shift+Q)", true, None::<&str>)?;
-            let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&ask, &toggle, &show, &quit])?;
+            let show = MenuItem::with_id(app, "show", "Open Mouse AI", true, None::<&str>)?;
+            let copilot = MenuItem::with_id(app, "copilot", r"Meeting Copilot Bar (Ctrl+Shift+\)", true, None::<&str>)?;
+            let taskbar = tauri::menu::CheckMenuItem::with_id(
+                app,
+                "taskbar",
+                "Show in Taskbar",
+                true,
+                !prefs::get().hide_from_taskbar,
+                None::<&str>,
+            )?;
+            let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
+            let sep2 = tauri::menu::PredefinedMenuItem::separator(app)?;
+            let menu = Menu::with_items(app, &[&show, &ask, &toggle, &copilot, &sep, &taskbar, &sep2, &quit])?;
+            let taskbar_item = taskbar.clone();
 
             let _tray = TrayIconBuilder::new()
                 .icon(Image::from_bytes(include_bytes!("../icons/32x32.png"))?)
@@ -176,6 +202,15 @@ pub fn run() {
                     }
                     "ask" => {
                         commands::trigger_ask_at_cursor(app);
+                    }
+                    "copilot" => {
+                        meeting::toggle_copilot(app);
+                    }
+                    "taskbar" => {
+                        let mut p = prefs::get();
+                        p.hide_from_taskbar = !p.hide_from_taskbar;
+                        let _ = taskbar_item.set_checked(!p.hide_from_taskbar);
+                        let _ = prefs::update(app, p);
                     }
                     "toggle" => {
                         let app_handle = app.clone();
@@ -283,6 +318,14 @@ pub fn run() {
                     if event.state() != ShortcutState::Pressed {
                         return;
                     }
+                    // During a live call the in-call bar answers, so the
+                    // user never leaves the meeting app; otherwise fall back
+                    // to the full copilot in the main window.
+                    if meeting::is_live() && app_handle.get_webview_window("copilot").is_some() {
+                        meeting::show_copilot(&app_handle);
+                        let _ = app_handle.emit_to("copilot", "copilot-assist", "suggest");
+                        return;
+                    }
                     // Show without stealing focus from the call window.
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.show();
@@ -291,9 +334,32 @@ pub fn run() {
                 }
             }));
 
+            // Ctrl+Shift+\ - show/hide the in-call copilot bar. (Plain Ctrl+\ is
+            // taken: the main window uses it to hide the chat next to the editor.)
+            let copilot_shortcut =
+                Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Backslash);
+            let app_handle5 = app.handle().clone();
+            report("Ctrl+Shift+\\", app.global_shortcut().on_shortcut(copilot_shortcut, {
+                let app_handle = app_handle5.clone();
+                move |_app, _shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    meeting::toggle_copilot(&app_handle);
+                }
+            }));
+
+            // Keep Mouse AI out of screen shares / recordings by default.
+            meeting::apply_stealth(app.handle());
+
             // ── Main Window Setup ────────────────────────────────
+            prefs::apply(app.handle());
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_always_on_top(true);
+                // Run quietly from the tray when the user asked for that.
+                if prefs::get().start_in_background {
+                    let _ = window.hide();
+                }
                 // Start hidden - user activates via hotkey or tray
                 // Window will be shown when ready via frontend
             }

@@ -1,21 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror, { type ViewUpdate } from "@uiw/react-codemirror";
 import clsx from "clsx";
+import { Braces, Check, ChevronRight, Code, Columns2, Copy, ExternalLink, Eye, FolderSearch, Loader2, Save, Sparkles, Table2 } from "lucide-react";
 import {
-  Check,
-  ChevronRight,
-  Code,
-  Columns2,
-  Copy,
-  ExternalLink,
-  Eye,
-  FileWarning,
-  FolderSearch,
-  Loader2,
-  Save,
-  Sparkles,
-} from "lucide-react";
-import {
+  assetUrl,
   fsFileInfo,
   fsOpenDefault,
   fsReadDataUrl,
@@ -29,6 +17,12 @@ import { editorTheme } from "../../lib/editorTheme";
 import { useTheme } from "../../lib/theme";
 import { Markdown } from "../chat/Markdown";
 import { IconButton } from "../ui/primitives";
+import { EmptyNotice, ViewerSkeleton } from "./viewers/common";
+import { cannotOpenDetail, errorText, formatSize } from "./viewers/util";
+import { ImageViewer } from "./viewers/ImageViewer";
+import { MediaViewer } from "./viewers/MediaViewer";
+import { DocxViewer, PptxViewer } from "./viewers/DocumentViewers";
+import { CsvTable, WorkbookViewer } from "./viewers/Sheets";
 
 interface EditorProps {
   path: string;
@@ -52,25 +46,41 @@ const LANG_NAMES: Record<string, string> = {
   mdx: "MDX",
   json: "JSON",
   html: "HTML",
+  htm: "HTML",
   css: "CSS",
+  csv: "CSV",
+  tsv: "TSV",
+};
+
+const KIND_NAMES: Partial<Record<FileInfo["kind"], string>> = {
+  pdf: "PDF",
+  docx: "Word document",
+  pptx: "Presentation",
+  sheet: "Spreadsheet",
+  audio: "Audio",
+  video: "Video",
+  binary: "Binary",
 };
 
 const TEXT_LIMIT = 5 * 1024 * 1024;
+// Images/PDFs up to this go through IPC as a data URL; bigger ones stream
+// from disk via the asset protocol.
+const DATA_URL_LIMIT = 25 * 1024 * 1024;
+// Image types the chat accepts as an image attachment (see attachments.ts).
+const AI_IMAGE_EXTS = ["png", "jpg", "jpeg", "webp"];
 
-type MdMode = "preview" | "split" | "code";
-
-function formatSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
+/** Markdown/HTML: rendered / side by side / source. CSV: table ("preview") / raw ("code"). */
+type ViewMode = "preview" | "split" | "code";
 
 export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorProps) {
   const { theme } = useTheme();
   const [info, setInfo] = useState<FileInfo | null>(null);
   const [content, setContent] = useState("");
   const [original, setOriginal] = useState("");
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  /** Image/PDF source: a data URL, or an asset URL for big files. */
+  const [mediaSrc, setMediaSrc] = useState<string | null>(null);
+  /** Extra status-bar items reported by the active viewer (dimensions, row counts…). */
+  const [viewerStatus, setViewerStatus] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
@@ -80,8 +90,11 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
 
   const ext = (path.split(".").pop() ?? "").toLowerCase();
   const isMarkdown = ext === "md" || ext === "mdx" || ext === "markdown";
-  // Markdown opens as a readable document; switch to Split or Edit to change it.
-  const [mdMode, setMdMode] = useState<MdMode>("preview");
+  const isHtml = ext === "html" || ext === "htm" || ext === "xhtml";
+  const isCsv = ext === "csv" || ext === "tsv" || ext === "tab";
+  const hasPreview = isMarkdown || isHtml || isCsv;
+  // Markdown, HTML and CSV open rendered; switch to Split or Edit/Raw to change them.
+  const [mode, setMode] = useState<ViewMode>("preview");
   const dirty = content !== original;
   const extensions = useMemo(() => [...languageForPath(path), editorTheme(theme)], [path, theme]);
 
@@ -89,16 +102,17 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
     let cancelled = false;
     setLoading(true);
     setError(null);
-    setDataUrl(null);
-    setMdMode("preview");
+    setMediaSrc(null);
+    setViewerStatus([]);
+    setMode("preview");
     (async () => {
       try {
         const i = await fsFileInfo(path);
         if (cancelled) return;
         setInfo(i);
         if (i.kind === "image" || i.kind === "pdf") {
-          const url = await fsReadDataUrl(path);
-          if (!cancelled) setDataUrl(url);
+          const url = i.size > DATA_URL_LIMIT ? assetUrl(path) : await fsReadDataUrl(path);
+          if (!cancelled) setMediaSrc(url);
         } else if (i.kind === "text" && i.size <= TEXT_LIMIT) {
           // CodeMirror works in LF; CRLF is restored on save (see save()).
           const text = (await fsReadTextFile(path)).replace(/\r\n/g, "\n");
@@ -107,8 +121,9 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
             setOriginal(text);
           }
         }
+        // Documents, sheets and media load inside their own viewers.
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(errorText(err));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -131,7 +146,7 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
       setJustSaved(true);
       setTimeout(() => setJustSaved(false), 1400);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err));
     } finally {
       setSaving(false);
     }
@@ -162,6 +177,22 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
     .filter(Boolean);
   const lineCount = useMemo(() => content.split("\n").length, [content]);
   const isText = info?.kind === "text" && info.size <= TEXT_LIMIT;
+  const kind = info?.kind;
+  const canAskAI = isText || kind === "docx" || kind === "pptx" || kind === "sheet" || (kind === "image" && AI_IMAGE_EXTS.includes(ext));
+  const codeVisible = isText && (!hasPreview || mode !== "preview");
+  // Viewer-reported status only while that viewer is on screen.
+  const showViewerStatus = !isText || (isCsv && mode === "preview");
+
+  // Pretty-print JSON in place - an ordinary (undoable, unsaved) edit.
+  const formatJson = () => {
+    try {
+      const next = JSON.stringify(JSON.parse(content), null, 2) + (content.endsWith("\n") ? "\n" : "");
+      if (next !== content) setContent(next);
+      setError(null);
+    } catch (err) {
+      setError(`Not valid JSON - ${errorText(err)}`);
+    }
+  };
 
   const codeView = (
     <div className="min-h-0 flex-1 overflow-hidden">
@@ -182,7 +213,12 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
     </div>
   );
 
-  const previewView = (
+  const previewView = isCsv ? (
+    <CsvTable text={content} ext={ext} onStatus={setViewerStatus} />
+  ) : isHtml ? (
+    // sandbox="" = no scripts, no same-origin access, no navigation: a static render.
+    <iframe title={`Preview of ${path}`} sandbox="" srcDoc={content} className="min-h-0 w-full flex-1 border-0 bg-white" />
+  ) : (
     <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
       <article className="doc-preview mx-auto max-w-[760px] px-8 py-6 text-[14px] leading-[1.75] text-text-primary">
         {content.trim() ? <Markdown>{content}</Markdown> : <p className="text-text-muted">This file is empty.</p>}
@@ -192,40 +228,36 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
 
   let body: React.ReactNode;
   if (loading) {
-    body = (
-      <div className="flex flex-col gap-2 p-4">
-        {[60, 80, 40, 70, 55].map((w, i) => (
-          <div key={i} className="h-3 animate-pulse rounded bg-bg-hover" style={{ width: `${w}%` }} />
-        ))}
-      </div>
-    );
+    body = <ViewerSkeleton />;
   } else if (error && !info) {
-    body = (
-      <EmptyNotice
-        title="Can't open this file"
-        detail={/denied|os error 5/i.test(error) ? "Windows won't let apps read it (it's protected or in use)." : error}
-        path={path}
-      />
-    );
-  } else if (info?.kind === "image" && dataUrl) {
-    body = (
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-[repeating-conic-gradient(var(--mx-bg-tertiary)_0%_25%,transparent_0%_50%)] bg-[length:16px_16px] p-6">
-        <img src={dataUrl} alt={path} className="max-h-full max-w-full rounded-lg shadow-pop" />
-      </div>
-    );
-  } else if (info?.kind === "pdf" && dataUrl) {
-    body = <iframe title={path} src={dataUrl} className="min-h-0 w-full flex-1 border-0 bg-white" />;
+    body = <EmptyNotice title="Can't open this file" detail={cannotOpenDetail(error)} path={path} />;
+  } else if (kind === "image" && mediaSrc) {
+    body = <ImageViewer src={mediaSrc} path={path} onStatus={setViewerStatus} />;
+  } else if (kind === "pdf" && mediaSrc) {
+    body = <iframe title={path} src={mediaSrc} className="min-h-0 w-full flex-1 border-0 bg-white" />;
+  } else if (kind === "docx") {
+    body = <DocxViewer path={path} onStatus={setViewerStatus} />;
+  } else if (kind === "pptx") {
+    body = <PptxViewer path={path} onStatus={setViewerStatus} />;
+  } else if (kind === "sheet") {
+    body = <WorkbookViewer path={path} onStatus={setViewerStatus} />;
+  } else if (kind === "audio" || kind === "video") {
+    body = <MediaViewer kind={kind} path={path} onStatus={setViewerStatus} />;
   } else if (info && !isText) {
     body = (
       <EmptyNotice
-        title={info.kind === "binary" ? "Binary file" : "File too large to edit here"}
-        detail={`${formatSize(info.size)} - open it with its usual app instead.`}
+        title={info.kind === "binary" ? "No preview for this file type" : "File too large to edit here"}
+        detail={
+          info.kind === "binary"
+            ? `${formatSize(info.size)} binary file - open it with the app it belongs to.`
+            : `${formatSize(info.size)} - files over ${formatSize(TEXT_LIMIT)} open better in their usual app.`
+        }
         path={path}
       />
     );
-  } else if (isMarkdown && mdMode === "preview") {
+  } else if (hasPreview && mode === "preview") {
     body = previewView;
-  } else if (isMarkdown && mdMode === "split") {
+  } else if (hasPreview && !isCsv && mode === "split") {
     body = (
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col border-r border-border-soft">{codeView}</div>
@@ -248,12 +280,26 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
           ))}
         </div>
         <div className="flex flex-shrink-0 items-center gap-0.5">
-          {isMarkdown && isText && (
+          {hasPreview && isText && (
             <div className="mr-1 flex rounded-md bg-bg-tertiary p-0.5">
-              <ModeButton title="Preview" icon={<Eye size={12} />} active={mdMode === "preview"} onClick={() => setMdMode("preview")} />
-              <ModeButton title="Split" icon={<Columns2 size={12} />} active={mdMode === "split"} onClick={() => setMdMode("split")} />
-              <ModeButton title="Edit" icon={<Code size={12} />} active={mdMode === "code"} onClick={() => setMdMode("code")} />
+              {isCsv ? (
+                <>
+                  <ModeButton title="Table" icon={<Table2 size={12} />} active={mode === "preview"} onClick={() => setMode("preview")} />
+                  <ModeButton title="Raw text" icon={<Code size={12} />} active={mode === "code"} onClick={() => setMode("code")} />
+                </>
+              ) : (
+                <>
+                  <ModeButton title="Preview" icon={<Eye size={12} />} active={mode === "preview"} onClick={() => setMode("preview")} />
+                  <ModeButton title="Split" icon={<Columns2 size={12} />} active={mode === "split"} onClick={() => setMode("split")} />
+                  <ModeButton title="Edit" icon={<Code size={12} />} active={mode === "code"} onClick={() => setMode("code")} />
+                </>
+              )}
             </div>
+          )}
+          {isText && ext === "json" && (
+            <IconButton title="Format JSON" size="sm" onClick={formatJson}>
+              <Braces size={12} />
+            </IconButton>
           )}
           <IconButton title={copied ? "Copied" : "Copy path"} size="sm" onClick={copyPath}>
             {copied ? <Check size={12} /> : <Copy size={12} />}
@@ -264,35 +310,35 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
           <IconButton title="Open with default app" size="sm" onClick={() => fsOpenDefault(path).catch(() => {})}>
             <ExternalLink size={12} />
           </IconButton>
+          {canAskAI && (
+            <button
+              onClick={onAskAI}
+              title="Attach this file to the chat and ask about it"
+              className="ml-0.5 flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-text-secondary transition hover:bg-accent-soft hover:text-accent"
+            >
+              <Sparkles size={12} />
+              Ask AI
+            </button>
+          )}
           {isText && (
-            <>
-              <button
-                onClick={onAskAI}
-                title="Attach this file to the chat and ask about it"
-                className="ml-0.5 flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-text-secondary transition hover:bg-accent-soft hover:text-accent"
-              >
-                <Sparkles size={12} />
-                Ask AI
-              </button>
-              <button
-                onClick={save}
-                disabled={!dirty || saving}
-                title="Save (Ctrl+S)"
-                className={clsx(
-                  "flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-medium transition disabled:cursor-default",
-                  dirty ? "btn-brand" : "text-text-muted",
-                )}
-              >
-                {saving ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : dirty ? (
-                  <Save size={12} />
-                ) : (
-                  <Check size={12} className={justSaved ? "text-success" : ""} />
-                )}
-                {saving ? "Saving" : dirty ? "Save" : "Saved"}
-              </button>
-            </>
+            <button
+              onClick={save}
+              disabled={!dirty || saving}
+              title="Save (Ctrl+S)"
+              className={clsx(
+                "flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-medium transition disabled:cursor-default",
+                dirty ? "btn-brand" : "text-text-muted",
+              )}
+            >
+              {saving ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : dirty ? (
+                <Save size={12} />
+              ) : (
+                <Check size={12} className={justSaved ? "text-success" : ""} />
+              )}
+              {saving ? "Saving" : dirty ? "Save" : "Saved"}
+            </button>
           )}
         </div>
       </div>
@@ -303,7 +349,8 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
 
       <div className="flex h-6 flex-shrink-0 items-center justify-end gap-3 border-t border-border-soft bg-bg-secondary px-3 text-[10.5px] text-text-muted">
         {dirty && <span className="text-warning">Unsaved</span>}
-        {isText && (!isMarkdown || mdMode !== "preview") && (
+        {showViewerStatus && viewerStatus.map((s) => <span key={s}>{s}</span>)}
+        {codeVisible && (
           <span>
             Ln {pos.line}, Col {pos.col}
           </span>
@@ -312,36 +359,10 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
         {info?.crlf && <span>CRLF</span>}
         {info && <span>{formatSize(info.size)}</span>}
         <span>
-          {info && info.kind !== "text" ? info.kind.toUpperCase() : (LANG_NAMES[ext] ?? (ext ? ext.toUpperCase() : "Plain text"))}
+          {info && info.kind !== "text"
+            ? (KIND_NAMES[info.kind] ?? (ext ? ext.toUpperCase() : info.kind.toUpperCase()))
+            : (LANG_NAMES[ext] ?? (ext ? ext.toUpperCase() : "Plain text"))}
         </span>
-      </div>
-    </div>
-  );
-}
-
-function EmptyNotice({ title, detail, path }: { title: string; detail: string; path: string }) {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-      <FileWarning size={28} className="text-text-muted" />
-      <div>
-        <p className="text-[13px] font-medium text-text-primary">{title}</p>
-        <p className="mt-1 max-w-[320px] text-[12px] text-text-muted">{detail}</p>
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={() => fsOpenDefault(path).catch(() => {})}
-          className="btn-brand flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium"
-        >
-          <ExternalLink size={12} />
-          Open with default app
-        </button>
-        <button
-          onClick={() => fsReveal(path).catch(() => {})}
-          className="flex items-center gap-1.5 rounded-lg border border-border-default px-3 py-1.5 text-[12px] text-text-secondary transition hover:bg-bg-hover"
-        >
-          <FolderSearch size={12} />
-          Show in Explorer
-        </button>
       </div>
     </div>
   );

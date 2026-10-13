@@ -11,6 +11,7 @@ import {
   testBackend,
   withTimeout,
 } from "../../lib/tauri";
+import { DesktopSection } from "./DesktopSection";
 import { useTheme, type ThemePref } from "../../lib/theme";
 import type { User } from "../../lib/types";
 import { IconButton, Kbd } from "../ui/primitives";
@@ -29,6 +30,7 @@ const SHORTCUTS: { keys: string[]; label: string }[] = [
   { keys: ["Ctrl", "Shift", "Q"], label: "Toggle hover mode" },
   { keys: ["Ctrl", "Shift", "S"], label: "Screenshot & analyze" },
   { keys: ["Ctrl", "Shift", "Enter"], label: "Meeting copilot: what should I say?" },
+  { keys: ["Ctrl", "Shift", "\\"], label: "Show / hide the in-call copilot bar (anywhere)" },
   { keys: ["Ctrl", "N"], label: "New chat" },
   { keys: ["Ctrl", "K"], label: "Search chats" },
   { keys: ["Ctrl", "B"], label: "Toggle sidebar" },
@@ -130,6 +132,8 @@ export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPa
               </Button>
             </div>
           </Section>
+
+          <DesktopSection />
 
           <Section title="Appearance" description="Applies to the main window. The hover pill adapts to whatever is behind it.">
             <div className="grid grid-cols-3 gap-2">

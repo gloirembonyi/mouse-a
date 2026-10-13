@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification = "2"
@@ -35,6 +35,11 @@ futures-util = "0.3"
 tauri-plugin-single-instance = "2"
 # Meeting copilot audio: microphone + WASAPI loopback (system audio) capture.
 cpal = "0.15"
+# Editor document viewers: spreadsheets (xlsx/xls/ods) and the Office Open XML
+# zips behind .docx/.pptx (same zip/quick-xml versions calamine already uses).
+calamine = { version = "0.36", features = ["dates"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
+quick-xml = "0.41"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = [

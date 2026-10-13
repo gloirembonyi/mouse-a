@@ -35,6 +35,8 @@ const EMPTY_PROFILE: MeetingProfile = { about: "", projects: "", session_context
 const IDLE: MeetingStatus = { live: false, mode: "", mic: false, system: false, started_at_ms: null, warning: null };
 
 export const ACTION_LABELS: Record<MeetingAction, string> = {
+  assist: "Assist",
+  insights: "Live insights",
   suggest: "What should I say?",
   summary: "Summary so far",
   followups: "Follow-up questions",
@@ -44,6 +46,14 @@ export const ACTION_LABELS: Record<MeetingAction, string> = {
   practice_feedback: "Feedback on my answer",
   ask: "Question",
 };
+
+/** The in-call copilot bar (copilot window) is on unless the user turned it
+ *  off. localStorage is shared by every window of the app, so both the main
+ *  window and the bar read the same switch. */
+const BAR_KEY = "mouse-ai-copilot-bar";
+export const copilotBarEnabled = () => localStorage.getItem(BAR_KEY) !== "off";
+export const setCopilotBarEnabled = (on: boolean) => localStorage.setItem(BAR_KEY, on ? "on" : "off");
+export const AUTO_ANSWER_KEY = "mouse-ai-auto-answer";
 
 /** Heuristic for "the other side just asked something" - drives auto-answer. */
 export function looksLikeQuestion(text: string) {
@@ -71,9 +81,9 @@ export function useMeeting() {
   includeScreenRef.current = includeScreen;
   const [levels, setLevels] = useState({ mic: 0, system: 0 });
   const [transcribing, setTranscribing] = useState(false);
-  const [autoAnswer, setAutoAnswerState] = useState(() => localStorage.getItem("mouse-ai-auto-answer") === "on");
+  const [autoAnswer, setAutoAnswerState] = useState(() => localStorage.getItem(AUTO_ANSWER_KEY) === "on");
   const setAutoAnswer = useCallback((v: boolean) => {
-    localStorage.setItem("mouse-ai-auto-answer", v ? "on" : "off");
+    localStorage.setItem(AUTO_ANSWER_KEY, v ? "on" : "off");
     setAutoAnswerState(v);
   }, []);
 
@@ -107,7 +117,7 @@ export function useMeeting() {
     try {
       setTranscript([]);
       setCards([]);
-      setStatus(await meetingStart(mode, mic, system));
+      setStatus(await meetingStart(mode, mic, system, copilotBarEnabled()));
     } catch (err) {
       setError(errText(err));
     } finally {
@@ -142,7 +152,8 @@ export function useMeeting() {
   cardsRef.current = cards;
   const answeredRef = useRef(0);
   useEffect(() => {
-    if (!autoAnswer || !status.live || status.mode === "practice") return;
+    // While the in-call bar is up it does the auto-answering, right over the call.
+    if (!autoAnswer || !status.live || status.mode === "practice" || copilotBarEnabled()) return;
     const last = transcript[transcript.length - 1];
     if (!last || last.speaker !== "them" || last.id <= answeredRef.current || !looksLikeQuestion(last.text)) return;
     const t = setTimeout(() => {
