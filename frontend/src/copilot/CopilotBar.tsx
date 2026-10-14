@@ -75,7 +75,7 @@ const LS = {
 
 export function CopilotBar() {
   const meeting = useMeeting();
-  const { status, transcript, cards, levels, transcribing } = meeting;
+  const { status, transcript, cards, levels, transcribing, partials } = meeting;
   const live = status.live;
 
   const [expanded, setExpanded] = useState(() => localStorage.getItem(LS.expanded) !== "off");
@@ -327,7 +327,15 @@ export function CopilotBar() {
                 on={insightsOn && status.mode !== "practice"}
                 insight={insight}
                 busy={insightBusy}
-                lastHeard={lastHeard ? `${lastHeard.speaker === "them" ? "Them" : "You"}: ${lastHeard.text}` : null}
+                lastHeard={
+                  partials.them
+                    ? `Them: ${partials.them}…`
+                    : partials.me
+                      ? `You: ${partials.me}…`
+                      : lastHeard
+                        ? `${lastHeard.speaker === "them" ? "Them" : "You"}: ${lastHeard.text}`
+                        : null
+                }
               />
 
               {card ? (

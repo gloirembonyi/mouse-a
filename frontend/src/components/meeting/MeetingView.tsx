@@ -340,14 +340,15 @@ function LevelMeter({ level, active, label, icon }: { level: number; active: boo
 // ── Transcript ────────────────────────────────────────────────────
 
 function TranscriptPane({ meeting, mode }: { meeting: ReturnType<typeof useMeeting>; mode: MeetingMode }) {
-  const { status, transcript: entries, levels, transcribing } = meeting;
+  const { status, transcript: entries, levels, transcribing, partials } = meeting;
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  const hasPartial = !!(partials.them || partials.me);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
-  }, [entries.length, transcribing]);
+  }, [entries.length, transcribing, partials.them, partials.me]);
 
   return (
     <div className="flex h-full flex-col">
@@ -375,7 +376,7 @@ function TranscriptPane({ meeting, mode }: { meeting: ReturnType<typeof useMeeti
         }}
         className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pb-4"
       >
-        {entries.length === 0 && !transcribing ? (
+        {entries.length === 0 && !transcribing && !hasPartial ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
             {status.live && (
               <BotAvatar
@@ -389,7 +390,9 @@ function TranscriptPane({ meeting, mode }: { meeting: ReturnType<typeof useMeeti
               {status.live
                 ? mode === "practice"
                   ? "Press “Next question”, then answer out loud."
-                  : "Listening… lines appear a few seconds after each pause."
+                  : status.streaming
+                    ? "Listening… words appear as they are spoken."
+                    : "Listening… lines appear a few seconds after each pause."
                 : "No transcript yet."}
             </p>
           </div>
@@ -401,6 +404,16 @@ function TranscriptPane({ meeting, mode }: { meeting: ReturnType<typeof useMeeti
               onAnswer={mode === "practice" ? undefined : (text) => void meeting.assist("ask", `Help me answer this, in my own voice: "${text}"`)}
             />
           ))
+        )}
+        {(["them", "me"] as const).map((sp) =>
+          partials[sp] ? (
+            <div key={sp} className={`flex ${sp === "me" ? "justify-end" : "justify-start"}`}>
+              <div className="live-partial max-w-[85%] rounded-2xl px-3 py-2 text-[13px] text-text-muted">
+                <span className="live-partial-dot" aria-hidden />
+                <span className="live-partial-who">{sp === "me" ? "You" : "Them"}</span> {partials[sp]}
+              </div>
+            </div>
+          ) : null,
         )}
         {transcribing && (
           <div className="flex items-center gap-2 px-1 text-[12px]">

@@ -13,6 +13,7 @@ import {
   newId,
   onMeetingAnswerDelta,
   onMeetingLevel,
+  onMeetingPartial,
   onMeetingStatus,
   onMeetingTranscribing,
   onMeetingTranscript,
@@ -110,6 +111,8 @@ export function useMeeting() {
   transcriptRef.current = transcript;
   const [levels, setLevels] = useState({ mic: 0, system: 0 });
   const [transcribing, setTranscribing] = useState(false);
+  /** Words being spoken right now, per side (live transcription only). */
+  const [partials, setPartials] = useState<{ me: string; them: string }>({ me: "", them: "" });
   const [autoAnswer, setAutoAnswerState] = useState(() => localStorage.getItem(AUTO_ANSWER_KEY) === "on");
   const setAutoAnswer = useCallback((v: boolean) => {
     localStorage.setItem(AUTO_ANSWER_KEY, v ? "on" : "off");
@@ -128,8 +131,10 @@ export function useMeeting() {
       if (!s.live) {
         setLevels({ mic: 0, system: 0 });
         setTranscribing(false);
+        setPartials({ me: "", them: "" });
       }
     });
+    const unPartial = onMeetingPartial((p) => setPartials((prev) => (prev[p.speaker] === p.text ? prev : { ...prev, [p.speaker]: p.text })));
     const unLevel = onMeetingLevel(setLevels);
     const unBusy = onMeetingTranscribing(setTranscribing);
     // Streamed answers: grow the pending card as the words arrive.
@@ -137,6 +142,7 @@ export function useMeeting() {
       setCards((prev) => prev.map((c) => (c.id === id && c.pending ? { ...c, text: c.text + delta } : c))),
     );
     return () => {
+      unPartial.then((fn) => fn());
       unDelta.then((fn) => fn());
       unTranscript.then((fn) => fn());
       unStatus.then((fn) => fn());
@@ -236,6 +242,7 @@ export function useMeeting() {
     setIncludeScreen,
     levels,
     transcribing,
+    partials,
     autoAnswer,
     setAutoAnswer,
     start,

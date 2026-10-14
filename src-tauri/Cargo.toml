@@ -30,7 +30,7 @@ dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 dotenvy = "0.15"
 portable-pty = "0.9"
-tokio-tungstenite = "0.23"
+tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 tauri-plugin-single-instance = "2"
 # Meeting copilot audio: microphone + WASAPI loopback (system audio) capture.

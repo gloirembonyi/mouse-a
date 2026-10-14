@@ -444,3 +444,17 @@ a:focus-visible {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* Live transcription: the sentence being spoken right now */
+.live-partial {
+  background: color-mix(in srgb, var(--mx-bg-secondary, #1b1d23) 70%, transparent);
+  border: 1px dashed color-mix(in srgb, currentColor 25%, transparent);
+  font-style: italic;
+}
+.live-partial-who { font-style: normal; font-weight: 600; opacity: 0.8; margin-right: 2px; }
+.live-partial-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 999px; margin-right: 6px;
+  background: #22c55e; vertical-align: middle; animation: live-partial-pulse 1.2s ease-in-out infinite;
+}
+@keyframes live-partial-pulse { 0%, 100% { opacity: 0.35; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .live-partial-dot { animation: none; } }

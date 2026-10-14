@@ -18,6 +18,7 @@ mod mcp;
 mod skills;
 mod copilot;
 mod meeting;
+mod meeting_stream;
 mod mouse;
 mod oauth;
 mod prefs;

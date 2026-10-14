@@ -695,6 +695,40 @@ impl BackendClient {
         }
     }
 
+    /// Short-lived token for a direct streaming connection to the STT provider.
+    /// `Ok(None)` = this backend has no streaming provider configured (503) or is an
+    /// older deploy (404) - the caller stays on chunked Whisper.
+    pub async fn stt_token(&self) -> Result<Option<crate::meeting_stream::SttToken>, String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let url = format!("{}/api/meeting/stt-token", self.base_url.read().await);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        let status = resp.status().as_u16();
+        if status == 404 || status == 503 {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Live transcription token failed ({}): {}", status, truncate(&text, 200)));
+        }
+        let data: serde_json::Value = resp.json().await.map_err(|e| format!("Failed to parse token: {}", e))?;
+        let tok = data.get("token").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        if tok.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(crate::meeting_stream::SttToken {
+            provider: data.get("provider").and_then(|p| p.as_str()).unwrap_or("deepgram").to_string(),
+            token: tok,
+            model: data.get("model").and_then(|m| m.as_str()).unwrap_or("nova-3").to_string(),
+        }))
+    }
+
     pub async fn transcribe_audio(&self, wav_b64: &str, prompt: &str) -> Result<Option<String>, String> {
         let token = self.get_session_token().await.ok_or("Not signed in")?;
         let url = format!("{}/api/meeting/transcribe", self.base_url.read().await);

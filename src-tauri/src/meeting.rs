@@ -41,20 +41,23 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 // ── Tunables ─────────────────────────────────────────────────────
 
-const TARGET_RATE: u32 = 16_000;
+pub(crate) const TARGET_RATE: u32 = 16_000;
 /// Don't cut a chunk before this much audio - very short clips transcribe
 /// badly and burn a backend call each. Short enough that a question shows up
 /// (and can be answered) a beat after the speaker pauses.
-const MIN_CHUNK: Duration = Duration::from_millis(1_600);
+const MIN_CHUNK: Duration = Duration::from_millis(1_200);
 /// Always cut by this point, pause or not, so the transcript never lags far.
-const MAX_CHUNK: Duration = Duration::from_secs(6);
+const MAX_CHUNK: Duration = Duration::from_secs(5);
+/// Chunks in flight at once (Whisper mode). Transcription runs concurrently; the
+/// results are still appended in order (see `flush`).
+const MAX_INFLIGHT: usize = 3;
 /// After Whisper rate-limits us (Groq's free tier: 20 requests/min), cut less
 /// often for a while instead of falling back to the slower Gemini path.
 const MIN_CHUNK_THROTTLED: Duration = Duration::from_secs(8);
 const THROTTLE_FOR_MS: i64 = 60_000;
 static THROTTLED_UNTIL_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 /// A chunk is cut early at a pause: the trailing window must be quiet.
-const PAUSE_WINDOW_SECS: f32 = 0.32;
+const PAUSE_WINDOW_SECS: f32 = 0.26;
 /// 30 ms frames above this RMS count as voiced (normalized -1..1 samples).
 const VOICE_RMS: f32 = 0.012;
 /// A clip needs at least this much voiced audio to be worth transcribing.
@@ -108,12 +111,14 @@ pub struct MeetingStatus {
     pub started_at_ms: Option<i64>,
     /// Non-fatal problem to surface (a failed chunk, a missing device…).
     pub warning: Option<String>,
+    /// Live (streaming) transcription is active - words appear as they are spoken.
+    pub streaming: bool,
 }
 
 #[derive(Default)]
-struct AudioBuf {
-    samples: Vec<f32>,
-    rate: u32,
+pub(crate) struct AudioBuf {
+    pub(crate) samples: Vec<f32>,
+    pub(crate) rate: u32,
     /// Running estimate of this source's background noise (frame RMS), so
     /// speech detection adapts to the device: a quiet laptop mic and a hot
     /// USB mic need very different thresholds. 0 = not measured yet.
@@ -122,11 +127,14 @@ struct AudioBuf {
     peak_rms: f32,
 }
 
-type SharedBuf = Arc<Mutex<AudioBuf>>;
+pub(crate) type SharedBuf = Arc<Mutex<AudioBuf>>;
 
 struct LiveSession {
     mode: String,
     stop: Arc<AtomicBool>,
+    /// True while the streaming STT connection is up (meeting_stream.rs). The chunker
+    /// then leaves the audio to the stream and only reports levels.
+    streaming: Arc<AtomicBool>,
     /// Set by the chunker once its final flush is done.
     finished: Arc<AtomicBool>,
     mic: Option<SharedBuf>,
@@ -142,11 +150,25 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// warning, since the usual cause is Windows defaulting to the wrong input.
 static MIC_NAME: Mutex<String> = Mutex::new(String::new());
 
-/// Serializes drain → transcribe → append, so the background chunker and an
-/// on-demand flush (from an assist request) can never reorder the transcript.
-fn flush_lock() -> &'static tokio::sync::Mutex<()> {
+/// Draining is atomic (a chunk is one slice of each buffer), transcription runs
+/// concurrently (up to MAX_INFLIGHT chunks), and appending happens strictly in cut
+/// order: each flush takes a sequence number at drain time and waits its turn before
+/// pushing entries. One slow Whisper call no longer delays every later line.
+fn drain_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+static FLUSH_SEQ: AtomicU64 = AtomicU64::new(0);
+static FLUSH_PUBLISHED: AtomicU64 = AtomicU64::new(0);
+static INFLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+fn flush_turn() -> &'static tokio::sync::Notify {
+    static N: OnceLock<tokio::sync::Notify> = OnceLock::new();
+    N.get_or_init(tokio::sync::Notify::new)
+}
+fn reset_flush_order() {
+    FLUSH_SEQ.store(0, Ordering::Relaxed);
+    FLUSH_PUBLISHED.store(0, Ordering::Relaxed);
+    INFLIGHT.store(0, Ordering::Relaxed);
 }
 
 fn now_ms() -> i64 {
@@ -377,7 +399,7 @@ fn level(buf: &Option<SharedBuf>) -> f32 {
     ((db + 60.0) / 48.0).clamp(0.0, 1.0)
 }
 
-fn resample_linear(samples: &[f32], from: u32, to: u32) -> Vec<f32> {
+pub(crate) fn resample_linear(samples: &[f32], from: u32, to: u32) -> Vec<f32> {
     if from == to || samples.is_empty() || from == 0 {
         return samples.to_vec();
     }
@@ -702,7 +724,7 @@ fn parse_transcription(raw: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn push_entry(app: &AppHandle, speaker: &str, text: String) -> TranscriptEntry {
+pub(crate) fn push_entry(app: &AppHandle, speaker: &str, text: String) -> TranscriptEntry {
     let entry = TranscriptEntry {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         speaker: speaker.to_string(),
@@ -722,30 +744,55 @@ fn live_buffers() -> Option<(Option<SharedBuf>, Option<SharedBuf>)> {
 /// chunker on every cut and by assist actions, so "What should I say?"
 /// always sees the question that was asked a second ago.
 async fn flush(app: &AppHandle, backend: &BackendClient) -> Result<(), String> {
-    let _guard = flush_lock().lock().await;
-    let Some((system, mic)) = live_buffers() else {
-        return Ok(());
+    if is_streaming() {
+        return Ok(()); // the live stream owns the audio
+    }
+    let (them, me, seq) = {
+        let _guard = drain_lock().lock().await;
+        let Some((system, mic)) = live_buffers() else {
+            return Ok(());
+        };
+        let them = drain_clip(&system);
+        let me = drain_clip(&mic);
+        if them.is_none() && me.is_none() {
+            return Ok(());
+        }
+        (them, me, FLUSH_SEQ.fetch_add(1, Ordering::SeqCst))
     };
-    let them = drain_clip(&system);
-    let me = drain_clip(&mic);
-    if them.is_none() && me.is_none() {
-        return Ok(());
-    }
     // Lets the UI show a "transcribing…" placeholder line while Whisper works.
-    let _ = app.emit("meeting-transcribing", true);
-    let result = transcribe(backend, them, me).await;
-    let _ = app.emit("meeting-transcribing", false);
-    for (who, text) in result? {
-        push_entry(app, &who, text);
+    if INFLIGHT.fetch_add(1, Ordering::SeqCst) == 0 {
+        let _ = app.emit("meeting-transcribing", true);
     }
-    Ok(())
+    let result = transcribe(backend, them, me).await;
+    // Wait for the chunks cut before this one, so lines never reorder.
+    loop {
+        if FLUSH_PUBLISHED.load(Ordering::SeqCst) == seq {
+            break;
+        }
+        let _ = tokio::time::timeout(Duration::from_millis(500), flush_turn().notified()).await;
+    }
+    let out = match &result {
+        Ok(lines) => {
+            for (who, text) in lines {
+                push_entry(app, who, text.clone());
+            }
+            Ok(())
+        }
+        Err(e) => Err(e.clone()),
+    };
+    FLUSH_PUBLISHED.fetch_add(1, Ordering::SeqCst);
+    flush_turn().notify_waiters();
+    if INFLIGHT.fetch_sub(1, Ordering::SeqCst) == 1 {
+        let _ = app.emit("meeting-transcribing", false);
+    }
+    out
 }
 
 fn emit_status(app: &AppHandle, warning: Option<String>) {
     let _ = app.emit("meeting-status", current_status(warning));
 }
 
-fn current_status(warning: Option<String>) -> MeetingStatus {
+pub(crate) fn current_status(warning: Option<String>) -> MeetingStatus {
     let live = LIVE.lock().unwrap();
     match live.as_ref() {
         Some(s) => MeetingStatus {
@@ -755,6 +802,7 @@ fn current_status(warning: Option<String>) -> MeetingStatus {
             system: s.system.is_some(),
             started_at_ms: Some(s.started_at_ms),
             warning,
+            streaming: s.streaming.load(Ordering::Relaxed),
         },
         None => MeetingStatus {
             live: false,
@@ -763,8 +811,13 @@ fn current_status(warning: Option<String>) -> MeetingStatus {
             system: false,
             started_at_ms: None,
             warning,
+            streaming: false,
         },
     }
+}
+
+fn is_streaming() -> bool {
+    LIVE.lock().unwrap().as_ref().map(|s| s.streaming.load(Ordering::Relaxed)).unwrap_or(false)
 }
 
 /// Background chunker: waits for a natural pause (or the hard cap), then
@@ -773,7 +826,7 @@ async fn chunker(app: AppHandle, backend: BackendClient, stop: Arc<AtomicBool>, 
     let mut chunk_start = Instant::now();
     let session_start = Instant::now();
     let mut warned_silent_mic = false;
-    let mut consecutive_failures = 0u32;
+    let failures = Arc::new(std::sync::atomic::AtomicU32::new(0));
     loop {
         // 120 ms ticks: a pause is noticed (and the chunk cut) almost as soon
         // as the speaker stops, instead of up to a quarter second later.
@@ -795,9 +848,18 @@ async fn chunker(app: AppHandle, backend: BackendClient, stop: Arc<AtomicBool>, 
                 );
             }
         }
+        // Live stream up: it drains the audio itself; this loop only reports levels.
+        if is_streaming() && !stopping {
+            chunk_start = Instant::now();
+            continue;
+        }
         let elapsed = chunk_start.elapsed();
         let min_chunk = if now_ms() < THROTTLED_UNTIL_MS.load(Ordering::Relaxed) { MIN_CHUNK_THROTTLED } else { MIN_CHUNK };
         if !stopping && elapsed < min_chunk {
+            continue;
+        }
+        // Back-pressure: don't cut more than MAX_INFLIGHT chunks ahead of Whisper.
+        if !stopping && INFLIGHT.load(Ordering::SeqCst) >= MAX_INFLIGHT {
             continue;
         }
         if !stopping && elapsed < MAX_CHUNK {
@@ -812,20 +874,32 @@ async fn chunker(app: AppHandle, backend: BackendClient, stop: Arc<AtomicBool>, 
             }
         }
         chunk_start = Instant::now();
-        match flush(&app, &backend).await {
-            Ok(()) => consecutive_failures = 0,
-            Err(e) => {
-                consecutive_failures += 1;
-                eprintln!("[meeting] transcription failed: {}", e);
-                // One blip isn't worth interrupting anyone; a streak is.
-                if consecutive_failures >= 2 {
-                    emit_status(&app, Some(format!("Transcription is failing: {}", e)));
-                }
-            }
-        }
         if stopping {
+            // Last chunk: wait for it (and anything still in flight) before finishing.
+            if let Err(e) = flush(&app, &backend).await {
+                eprintln!("[meeting] final transcription failed: {}", e);
+            }
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while INFLIGHT.load(Ordering::SeqCst) > 0 && Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
             break;
         }
+        // Not awaited: the next cut can happen while this chunk is at Whisper.
+        let (app2, backend2, failures2) = (app.clone(), backend.clone(), failures.clone());
+        tauri::async_runtime::spawn(async move {
+            match flush(&app2, &backend2).await {
+                Ok(()) => failures2.store(0, Ordering::Relaxed),
+                Err(e) => {
+                    let n = failures2.fetch_add(1, Ordering::Relaxed) + 1;
+                    eprintln!("[meeting] transcription failed: {}", e);
+                    // One blip isn't worth interrupting anyone; a streak is.
+                    if n >= 2 {
+                        emit_status(&app2, Some(format!("Transcription is failing: {}", e)));
+                    }
+                }
+            }
+        });
     }
     finished.store(true, Ordering::Relaxed);
 }
@@ -1021,17 +1095,27 @@ pub async fn meeting_start(
 
     let has_audio = mic_ok || sys_ok;
     let finished = Arc::new(AtomicBool::new(!has_audio));
+    let streaming = Arc::new(AtomicBool::new(false));
+    let mic_live = if mic_ok { mic_buf } else { None };
+    let sys_live = if sys_ok { sys_buf } else { None };
+    reset_flush_order();
     *LIVE.lock().unwrap() = Some(LiveSession {
         mode,
         stop: stop.clone(),
+        streaming: streaming.clone(),
         finished: finished.clone(),
-        mic: if mic_ok { mic_buf } else { None },
-        system: if sys_ok { sys_buf } else { None },
+        mic: mic_live.clone(),
+        system: sys_live.clone(),
         started_at_ms: now_ms(),
     });
 
     if has_audio {
         let backend = state.backend.clone();
+        // Live stream first (words as they are spoken); the chunker waits behind the
+        // `streaming` flag and takes over with Whisper if the stream is unavailable.
+        tauri::async_runtime::spawn(crate::meeting_stream::run_live_stream(
+            app.clone(), backend.clone(), mic_live, sys_live, stop.clone(), streaming,
+        ));
         tauri::async_runtime::spawn(chunker(app.clone(), backend, stop, finished));
     }
 
@@ -1108,7 +1192,7 @@ pub async fn meeting_assist(
     // Pull in what was *just* said before answering - this is the difference
     // between answering the current question and the previous one. (Insights
     // run in the background and can wait for the next natural cut.)
-    if action != "practice_question" && action != "insights" {
+    if action != "practice_question" && action != "insights" && !is_streaming() {
         if let Err(e) = flush(&app, &backend).await {
             eprintln!("[meeting] pre-assist flush failed: {}", e);
         }
@@ -1121,7 +1205,15 @@ pub async fn meeting_assist(
     let mode = if mode.is_empty() { "meeting".to_string() } else { mode };
     let profile = load_profile();
     let budget = if action == "notes" { FULL_TRANSCRIPT_CHARS } else { LIVE_TRANSCRIPT_CHARS };
-    let transcript = transcript_text(budget);
+    let mut transcript = transcript_text(budget);
+    // With live transcription the sentence being spoken right now is not a line yet -
+    // include it, marked, so "What should I say?" answers the question still in progress.
+    for (who, text) in crate::meeting_stream::live_partials() {
+        if !transcript.is_empty() {
+            transcript.push('\n');
+        }
+        transcript.push_str(&format!("{} (still speaking): {}", who.to_uppercase(), text));
+    }
 
     let mut parts = vec![json!({
         "text": format!(
