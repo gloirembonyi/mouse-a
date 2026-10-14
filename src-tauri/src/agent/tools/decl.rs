@@ -9,7 +9,8 @@ use crate::agent::*;
 pub(crate) const BUILTIN_TOOL_NAMES: &[&str] = &[
     "run_command", "read_file", "write_file", "edit_file", "delete_file", "list_directory", "find_files", "search_in_files",
     "download_file", "web_search", "web_fetch", "capture_screen", "get_screen_context", "list_windows", "read_app_content",
-    "focus_window", "click", "double_click", "scroll", "type_text", "press_key", "open_url", "open_app", "wait",
+    "focus_window", "find_elements", "click_element", "set_value",
+    "click", "double_click", "scroll", "type_text", "press_key", "open_url", "open_app", "wait",
     "get_clipboard", "set_clipboard", "notify", "request_confirmation", "delegate_to_browser", "check_browser_task", "update_plan",
 ];
 
@@ -119,6 +120,46 @@ pub(crate) fn tool_declarations() -> Value {
                     "button": { "type": "string", "enum": ["left", "right"] }
                 },
                 "required": ["x", "y"]
+            }
+        },
+        {
+            "name": "find_elements",
+            "description": "List the controls of the foreground window through Windows UI Automation - buttons, text fields, checkboxes, menu items, list/tree items, tabs, links - each with an id (u1, u2…), role, name, current value, screen rectangle and what it supports (invoke/value/toggle/select/expand). query = words from the control's label/name (case-insensitive); role = button | edit | checkbox | combobox | menuitem | listitem | tab | link | text | document…; include_text=true also lists static text. Far more reliable than guessing coordinates from a screenshot: find the control, then click_element / set_value by id. Ids are valid until the window changes. Returns nothing for apps without accessibility (games, canvas apps) - use capture_screen + click there.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Text to match in the element's name/label/value (optional)." },
+                    "role": { "type": "string", "description": "Control type filter (optional)." },
+                    "limit": { "type": "integer", "description": "Max elements to return (default 40)." },
+                    "include_text": { "type": "boolean", "description": "Also list static text and panes (for reading)." }
+                }
+            }
+        },
+        {
+            "name": "click_element",
+            "description": "Click a control by id (from find_elements) or by name (+ optional role) in the foreground window. action=click (default): a real mouse click at the element's own rectangle, re-found at click time so it lands even if the window moved. action=invoke activates through accessibility (works for off-screen items); toggle = checkbox/switch; select = list/tab item; expand = menu/combo box; focus = keyboard focus only. The result includes a fresh after-screenshot - verify the effect from it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Element id from find_elements, e.g. u3." },
+                    "name": { "type": "string", "description": "The control's name/label (used when no id, or if the id is stale)." },
+                    "role": { "type": "string", "description": "Control type to disambiguate (optional)." },
+                    "action": { "type": "string", "enum": ["click", "invoke", "toggle", "select", "expand", "focus"] }
+                }
+            }
+        },
+        {
+            "name": "set_value",
+            "description": "Set a text field's content by id (from find_elements) or name - through the accessibility Value pattern (instant, exact, no keystrokes); falls back to click + select-all + paste when the field has no Value pattern. Use it for forms, search boxes, address bars and dialog fields instead of click + type_text. The result includes a fresh after-screenshot.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string" },
+                    "role": { "type": "string" },
+                    "text": { "type": "string", "description": "The full new value." }
+                },
+                "required": ["text"]
             }
         },
         {

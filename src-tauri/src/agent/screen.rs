@@ -106,7 +106,7 @@ pub(crate) fn screens_differ(a: &[u8], b: &[u8]) -> bool {
 /// taken as soon as two consecutive captures look the same, see verification_shot).
 pub(crate) fn post_action_delay_ms(tool_name: &str) -> Option<u64> {
     match tool_name {
-        "click" | "double_click" | "scroll" | "type_text" | "press_key" => Some(1500),
+        "click" | "double_click" | "scroll" | "type_text" | "press_key" | "click_element" | "set_value" => Some(1500),
         "open_url" | "open_app" | "focus_window" => Some(4000),
         // After an explicit wait the whole point is to look again.
         "wait" => Some(0),

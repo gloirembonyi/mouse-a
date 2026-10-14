@@ -141,7 +141,7 @@ impl RunContext {
             "toolNames": self.tool_names,
             // Behaviours this build implements, so the server prompt never describes a
             // result shape the client does not produce.
-            "capabilities": ["structured_run_command", "type_text_modes", "checkpoint_resume"],
+            "capabilities": ["structured_run_command", "type_text_modes", "checkpoint_resume", "element_tools"],
             "environment": self.environment,
             "clientVersion": env!("CARGO_PKG_VERSION"),
         })

@@ -4,12 +4,14 @@
 use crate::agent::*;
 
 mod computer;
+mod elements;
 mod files;
 mod shell;
 mod web;
 mod windows;
 
 pub(crate) use computer::*;
+pub(crate) use elements::*;
 pub(crate) use files::*;
 pub(crate) use shell::*;
 pub(crate) use web::*;
@@ -49,6 +51,9 @@ pub(crate) async fn execute_tool(
         "list_windows" => list_windows_tool().await,
         "focus_window" => focus_window_tool(args).await,
         "read_app_content" => read_app_content_tool().await,
+        "find_elements" => find_elements_tool(args).await,
+        "click_element" => click_element_tool(app, source, trusted, args).await,
+        "set_value" => set_value_tool(app, source, trusted, args).await,
         "click" => click_tool(app, source, trusted, args, screen).await,
         "double_click" => double_click_tool(app, source, trusted, args, screen).await,
         "scroll" => scroll_tool(app, source, trusted, args, screen).await,

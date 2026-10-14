@@ -14,7 +14,7 @@ pub(crate) fn is_effect_tool(name: &str) -> bool {
             | "delete_file"
             | "download_file"
             | "run_command"
-            | "click"
+            | "click_element" | "set_value" | "click"
             | "double_click"
             | "type_text"
             | "press_key"

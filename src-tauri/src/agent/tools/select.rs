@@ -15,6 +15,7 @@ pub(crate) const CORE_TOOLS: &[&str] = &[
     "run_command", "read_file", "write_file", "edit_file", "delete_file", "list_directory", "find_files", "search_in_files",
     "web_search", "web_fetch",
     "capture_screen", "get_screen_context", "list_windows", "focus_window", "read_app_content",
+    "find_elements", "click_element", "set_value",
     "click", "double_click", "type_text", "press_key", "scroll", "wait", "open_url", "open_app",
     "request_confirmation",
 ];

@@ -23,6 +23,7 @@ mod mouse;
 mod oauth;
 mod prefs;
 mod terminal;
+mod uia;
 
 use commands::AppState;
 use std::sync::Arc;

@@ -48,7 +48,8 @@ pub struct Query {
 #[cfg(windows)]
 mod win {
     use super::{Query, UiElement};
-    use windows::core::{Interface, BSTR, VARIANT};
+    use windows::core::{Interface, BSTR};
+    use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
@@ -409,4 +410,21 @@ pub fn act_on(_n: &str, _r: &str, _near: Option<(i32, i32)>, _a: Act) -> Result<
 #[cfg(not(windows))]
 pub fn locate(_n: &str, _r: &str, _near: Option<(i32, i32)>) -> Result<UiElement, String> {
     Err("UI Automation is only available on Windows".to_string())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    /// Needs a desktop session: lists whatever window is in the foreground.
+    #[test]
+    #[ignore]
+    fn lists_foreground_elements() {
+        let list = find_elements(&Query { text: String::new(), role: String::new(), limit: 25, include_text: true }).unwrap();
+        println!("{} element(s)", list.len());
+        for e in &list {
+            println!("{} {:10} {:?} value={:?} {}x{} at ({},{}) can={:?}", e.id, e.role, e.name, e.value, e.w, e.h, e.x, e.y, e.can);
+        }
+        assert!(!list.is_empty(), "the foreground window exposed no elements");
+    }
 }
