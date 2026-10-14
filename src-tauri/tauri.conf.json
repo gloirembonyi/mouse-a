@@ -62,13 +62,31 @@
         "visible": false,
         "focus": false,
         "contentProtected": true
+      },
+      {
+        "label": "shield",
+        "url": "shield.html",
+        "title": "Mouse AI Working",
+        "width": 460,
+        "height": 48,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false,
+        "contentProtected": true
       }
     ],
     "security": {
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       }
     }
   },

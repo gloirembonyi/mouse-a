@@ -490,6 +490,14 @@ you still have steps left. If it truly can't be done, say exactly what blocks it
             emit(app, source, "tool", label.clone());
             let repeats = progress.note_call(&name, &args);
             let is_mcp = mcp.owns(&name);
+            // Never fight the person: if they are using the mouse or keyboard right now,
+            // wait until they stop before touching the screen.
+            if matches!(
+                name.as_str(),
+                "click" | "double_click" | "scroll" | "type_text" | "press_key" | "click_element" | "set_value" | "focus_window" | "open_url" | "open_app"
+            ) {
+                crate::shield::wait_for_user_idle(app, source, 900, Duration::from_secs(120)).await;
+            }
             let mut outcome = if is_mcp {
                 match mcp.call(&name, args.clone()).await {
                     Ok(text) => ToolOutcome {

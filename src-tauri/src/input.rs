@@ -24,6 +24,7 @@ mod win {
                 inputs.as_mut_ptr(),
                 size_of::<INPUT>() as c_int,
             );
+            crate::shield::OUR_LAST_INPUT_TICK.store(winapi::um::sysinfoapi::GetTickCount64(), std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -61,6 +62,7 @@ mod win {
 
     pub fn move_and_click(x: i32, y: i32, right: bool) {
         unsafe { SetCursorPos(x, y) };
+        crate::shield::OUR_LAST_INPUT_TICK.store(unsafe { winapi::um::sysinfoapi::GetTickCount64() }, std::sync::atomic::Ordering::Relaxed);
         std::thread::sleep(std::time::Duration::from_millis(40));
         let (down, up) = if right {
             (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)
@@ -73,6 +75,7 @@ mod win {
 
     pub fn move_and_double_click(x: i32, y: i32) {
         unsafe { SetCursorPos(x, y) };
+        crate::shield::OUR_LAST_INPUT_TICK.store(unsafe { winapi::um::sysinfoapi::GetTickCount64() }, std::sync::atomic::Ordering::Relaxed);
         std::thread::sleep(std::time::Duration::from_millis(40));
         let mut inputs = [
             mouse_input(MOUSEEVENTF_LEFTDOWN),
@@ -87,6 +90,7 @@ mod win {
     /// at the given point.
     pub fn scroll(x: i32, y: i32, clicks: i32) {
         unsafe { SetCursorPos(x, y) };
+        crate::shield::OUR_LAST_INPUT_TICK.store(unsafe { winapi::um::sysinfoapi::GetTickCount64() }, std::sync::atomic::Ordering::Relaxed);
         std::thread::sleep(std::time::Duration::from_millis(30));
         let mut input = mouse_input(MOUSEEVENTF_WHEEL);
         unsafe {

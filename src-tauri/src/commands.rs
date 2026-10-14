@@ -248,10 +248,131 @@ pub async fn expand_overlay(
             width.unwrap_or(420.0),
             height.unwrap_or(360.0),
         ));
+        crate::hover::clamp_overlay_into_monitor(&app);
         let _ = overlay.show();
         let _ = overlay.set_focus();
     }
     Ok(())
+}
+
+/// What an @-mention in the Ask panel resolves to: text for the model to read
+/// and/or an image for it to look at. Resolved at send time so "@screen" is
+/// the screen as it is now, not as it was when the chip was added.
+#[derive(Serialize)]
+pub struct MentionResult {
+    pub kind: String,
+    pub label: String,
+    pub text: Option<String>,
+    pub image_data_url: Option<String>,
+}
+
+const MENTION_TEXT_CAP: usize = 12_000;
+
+fn cap_chars(s: &str, cap: usize) -> String {
+    if s.chars().count() <= cap {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(cap).collect();
+    format!("{}\n…[truncated at {} characters]", head, cap)
+}
+
+fn content_nodes_text(nodes: &[mouse::ContentNode]) -> String {
+    let mut text = String::new();
+    for n in nodes {
+        let line = [n.role.as_str(), n.name.as_str(), n.value.as_str()]
+            .iter()
+            .filter(|s| !s.trim().is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(": ");
+        if !line.trim().is_empty() {
+            text.push_str("- ");
+            text.push_str(&line);
+            text.push('\n');
+        }
+    }
+    text
+}
+
+#[tauri::command]
+pub async fn resolve_mention(
+    kind: String,
+    x: Option<i32>,
+    y: Option<i32>,
+    path: Option<String>,
+) -> Result<MentionResult, String> {
+    let (cx, cy) = match (x, y) {
+        (Some(x), Some(y)) => (x, y),
+        _ => mouse::get_cursor_position(),
+    };
+    match kind.as_str() {
+        "screen" => {
+            let img = tokio::task::spawn_blocking(capture::capture_full_screen)
+                .await
+                .map_err(|e| e.to_string())??;
+            Ok(MentionResult { kind, label: "Screen".into(), text: None, image_data_url: Some(img) })
+        }
+        "window" => {
+            let (img, text, label) = tokio::task::spawn_blocking(move || {
+                let ctx = mouse::context_at_point(cx, cy);
+                let img = capture::capture_window_or_around_point(cx, cy, 280).ok();
+                let nodes = explorer::window_rect_at(cx, cy)
+                    .map(|(x, y, w, h)| mouse::sample_window_content(x, y, w, h))
+                    .unwrap_or_default();
+                let app = ctx.process_name.trim_end_matches(".exe").to_string();
+                let label = if ctx.window_title.is_empty() { app.clone() } else { format!("{} - {}", app, ctx.window_title) };
+                let mut text = format!("[WINDOW - {}]\n", label);
+                let body = content_nodes_text(&nodes);
+                if body.is_empty() {
+                    text.push_str("(no readable accessible content; see the screenshot)\n");
+                } else {
+                    text.push_str(&body);
+                }
+                (img, text, label)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(MentionResult { kind, label, text: Some(cap_chars(&text, MENTION_TEXT_CAP)), image_data_url: img })
+        }
+        "clipboard" => {
+            let outcome = crate::agent::clipboard_text().await?;
+            Ok(MentionResult {
+                kind,
+                label: "Clipboard".into(),
+                text: Some(format!("[CLIPBOARD]\n{}", cap_chars(&outcome, MENTION_TEXT_CAP))),
+                image_data_url: None,
+            })
+        }
+        "file" => {
+            let path = path.filter(|p| !p.trim().is_empty()).ok_or("No file chosen.")?;
+            let pb = std::path::PathBuf::from(&path);
+            let name = pb.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(path.clone());
+            let ext = pb.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let is_image = matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif");
+            let data = tokio::fs::read(&pb).await.map_err(|e| format!("Could not read {}: {}", name, e))?;
+            if is_image {
+                if data.len() > 6 * 1024 * 1024 {
+                    return Err(format!("{} is too large to attach (max 6 MB).", name));
+                }
+                use base64::{engine::general_purpose::STANDARD, Engine};
+                let mime = if ext == "jpg" { "jpeg" } else { ext.as_str() };
+                let url = format!("data:image/{};base64,{}", mime, STANDARD.encode(&data));
+                return Ok(MentionResult { kind, label: name, text: None, image_data_url: Some(url) });
+            }
+            let text = String::from_utf8_lossy(&data).to_string();
+            if text.contains('\u{0}') {
+                return Err(format!("{} is a binary file; attach text, code or an image.", name));
+            }
+            Ok(MentionResult {
+                kind,
+                label: name.clone(),
+                text: Some(format!("[FILE - {}]\n{}", path, cap_chars(&text, MENTION_TEXT_CAP))),
+                image_data_url: None,
+            })
+        }
+        "web" => Ok(MentionResult { kind, label: "Web".into(), text: None, image_data_url: None }),
+        other => Err(format!("Unknown mention: {}", other)),
+    }
 }
 
 #[tauri::command]
@@ -295,16 +416,22 @@ pub async fn ask_about_hover(
     app_name: Option<String>,
     window_title: Option<String>,
     element_text: Option<String>,
+    web_search: Option<bool>,
+    extra_context: Option<String>,
+    image_data_url: Option<String>,
 ) -> Result<ChatResult, String> {
     // A failed capture (secure screens, etc.) shouldn't kill the ask -
     // the element text alone is often enough. Captures the whole window
     // under the cursor (not just a small crop) so the model actually sees
     // everything relevant, falling back to a radius crop if that fails.
-    let image_data_url =
-        tokio::task::spawn_blocking(move || capture::capture_window_or_around_point(x, y, 280))
+    // An @-mention image (screen / file) replaces the automatic capture.
+    let image_data_url = match image_data_url.filter(|s| !s.is_empty()) {
+        Some(url) => Some(url),
+        None => tokio::task::spawn_blocking(move || capture::capture_window_or_around_point(x, y, 280))
             .await
             .map_err(|e| format!("Task failed: {}", e))?
-            .ok();
+            .ok(),
+    };
 
     // Ground-truth folder contents when hovering a File Explorer window -
     // fixes "I can't see what's inside this folder" for the single most
@@ -328,6 +455,10 @@ pub async fn ask_about_hover(
         context_info.push_str("\n\n");
         context_info.push_str(&explorer::format_context(ctx));
     }
+    if let Some(extra) = extra_context.filter(|s| !s.trim().is_empty()) {
+        context_info.push_str("\n\n[ATTACHED BY THE USER]\n");
+        context_info.push_str(&extra);
+    }
 
     let prompt = match question.filter(|q| !q.trim().is_empty()) {
         Some(q) => format!(
@@ -345,7 +476,7 @@ pub async fn ask_about_hover(
         user_text: prompt,
         model: Some(crate::backend::default_gemini_model()),
         image_data_url,
-        web_search_needed: false,
+        web_search_needed: web_search.unwrap_or(false),
         conversation_id: conv_id.clone(),
         messages: vec![],
     };

@@ -154,8 +154,9 @@ fn position_overlay(app: &AppHandle, x: i32, y: i32, sample_theme: bool) {
         .map(|s| (s.width as i32, s.height as i32))
         .unwrap_or((380, 64));
 
-    let mut px = x + 16;
-    let mut py = y + 22;
+    // Close to the pointer, like an editor's inline hint - but never under it.
+    let mut px = x + 12;
+    let mut py = y + 16;
 
     if let Ok(Some(mon)) = app.monitor_from_point(x as f64, y as f64) {
         let mpos = mon.position();
@@ -194,6 +195,34 @@ fn position_overlay(app: &AppHandle, x: i32, y: i32, sample_theme: bool) {
             let _ = app.emit_to("overlay", "surface-theme", lum >= LIGHT_THEME_THRESHOLD);
         }
     });
+}
+
+/// After the overlay changes size, pull it back onto the monitor it is on. The
+/// pill is placed for a 64px-tall window; expanding to 400-700px from the lower
+/// half of the screen used to push the input row (the LAST thing in the panel)
+/// below the screen edge - "I can't see the text box".
+pub fn clamp_overlay_into_monitor(app: &AppHandle) {
+    let Some(overlay) = app.get_webview_window("overlay") else { return };
+    let (Ok(pos), Ok(size)) = (overlay.outer_position(), overlay.outer_size()) else { return };
+    let (w, h) = (size.width as i32, size.height as i32);
+    let probe = (pos.x + 24, pos.y + 24);
+    let monitor = app
+        .monitor_from_point(probe.0 as f64, probe.1 as f64)
+        .ok()
+        .flatten()
+        .or_else(|| overlay.current_monitor().ok().flatten());
+    let Some(mon) = monitor else { return };
+    let mpos = mon.position();
+    let msize = mon.size();
+    // Leave room for a bottom taskbar (Tauri's monitor size is the full monitor).
+    let taskbar = (48.0 * mon.scale_factor()) as i32;
+    let max_x = mpos.x + msize.width as i32 - w - 8;
+    let max_y = mpos.y + msize.height as i32 - h - taskbar;
+    let nx = pos.x.min(max_x).max(mpos.x + 8);
+    let ny = pos.y.min(max_y).max(mpos.y + 8);
+    if nx != pos.x || ny != pos.y {
+        let _ = overlay.set_position(tauri::PhysicalPosition::new(nx, ny));
+    }
 }
 
 /// Show the overlay near wherever the cursor currently is.

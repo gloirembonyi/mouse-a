@@ -1,0 +1,57 @@
+:root {
+  --glass: rgba(18, 22, 32, 0.82);
+  --border: rgba(255, 255, 255, 0.12);
+  --text: #eef2f8;
+  --muted: #a9b4cc;
+  --accent: #769fcd;
+  --danger: #ff6b6b;
+}
+html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+body { font: 12.5px/1.3 "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; color: var(--text); -webkit-user-select: none; user-select: none; }
+
+#bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  margin: 4px 6px;
+  padding: 0 8px 0 8px;
+  border-radius: 999px;
+  background: var(--glass);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  cursor: grab;
+}
+/* A slow light that runs along the border: "live", not loud. */
+@property --beam { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+#bar::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--beam), transparent 0deg, transparent 250deg, rgba(118, 159, 205, 0.9) 300deg, rgba(178, 140, 240, 0.8) 330deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: beam 3.2s linear infinite;
+  pointer-events: none;
+}
+@keyframes beam { to { --beam: 360deg; } }
+body[data-kind="done"] #bar::before, body[data-kind="error"] #bar::before { animation-play-state: paused; opacity: 0.4; }
+
+.bar-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; color: #fff; background: linear-gradient(180deg, #769fcd, #436391); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3); flex: 0 0 auto; }
+.bar-icon svg { width: 15px; height: 15px; }
+.bar-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; line-height: 1.2; }
+#bar-title { font-weight: 650; font-size: 12px; letter-spacing: -0.01em; }
+#bar-step { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-note { color: #ffd166; font-size: 11.5px; white-space: nowrap; }
+#bar-stop {
+  flex: 0 0 auto; height: 26px; padding: 0 12px; border-radius: 999px; border: 1px solid rgba(255, 107, 107, 0.45);
+  background: rgba(255, 107, 107, 0.14); color: #ffb3b3; font: inherit; font-weight: 600; cursor: pointer;
+}
+#bar-stop:hover { background: rgba(255, 107, 107, 0.26); color: #fff; }
+@media (prefers-reduced-motion: reduce) { #bar::before { animation: none; } }

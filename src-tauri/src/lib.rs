@@ -22,6 +22,7 @@ mod meeting_stream;
 mod mouse;
 mod oauth;
 mod prefs;
+mod shield;
 mod terminal;
 mod uia;
 
@@ -115,6 +116,7 @@ pub fn run() {
             commands::hide_overlay,
             commands::show_main_window,
             commands::ask_about_hover,
+            commands::resolve_mention,
             commands::ask_at_cursor,
             commands::get_backend_url,
             commands::set_backend_url,

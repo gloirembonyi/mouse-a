@@ -62,6 +62,15 @@ mod text;
 mod tools;
 
 pub(crate) use cancel::*;
+
+/// Plain-text clipboard contents, for the Ask panel's @clipboard mention.
+pub async fn clipboard_text() -> Result<String, String> {
+    let out = exec::clipboard_tool(None).await;
+    if out.response.get("error").is_some() {
+        return Err(out.response.get("error").and_then(|e| e.as_str()).unwrap_or("clipboard unavailable").to_string());
+    }
+    Ok(out.response.get("result").and_then(|r| r.as_str()).unwrap_or("").to_string())
+}
 pub(crate) use completion::*;
 pub(crate) use confirm::*;
 pub(crate) use drive::*;
@@ -238,7 +247,10 @@ continue from where it left off - do not redo steps that are already complete.\n
     let _ = tokio::task::spawn_blocking(|| mouse::set_own_window_no_activate("mouse ai overlay", true)).await;
 
     // Drive the loop, then always shut the MCP servers down (whatever the outcome).
+    // The working banner: visible for the whole run, gone the moment it ends.
+    crate::shield::show(app, source, task);
     let result = drive_loop(app, backend, &ctx, contents, source, task, &mut mcp, &mut screen_mapping, initial_ledger).await;
+    crate::shield::hide(app);
     mcp.shutdown().await;
     // Keep the checkpoint only when there is something to continue.
     match &result {

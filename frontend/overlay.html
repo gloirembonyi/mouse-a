@@ -17,6 +17,7 @@
       </span>
       <span class="pill-label">Ask AI</span>
       <span id="pill-context"></span>
+      <span class="pill-kbd" aria-hidden="true">↵</span>
     </button>
 
     <div id="panel" hidden>
@@ -72,8 +73,14 @@
            always fully visible the moment the agent needs a decision. -->
       <div id="confirm-host" hidden></div>
 
+      <!-- @-mention picker and the attached-context chips sit right above the input. -->
+      <div id="mention-menu" hidden></div>
+      <div id="chips" hidden></div>
       <div class="ask-row">
-        <input id="question" type="text" placeholder="Ask about what's under your mouse…" autocomplete="off" />
+        <button id="btn-mention" title="Attach context: @screen, @window, @clipboard, @file, @web" aria-label="Attach context">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>
+        </button>
+        <input id="question" type="text" placeholder="Ask anything or tell Mouse AI what to do…  @ to attach" autocomplete="off" spellcheck="false" />
         <button id="btn-analyze" title="Explain what's here" aria-label="Explain what's here">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>

@@ -10,9 +10,10 @@ of this codebase) which holds the Gemini API key(s) and does all model inference
 runs *tools* locally (shell commands, file I/O, mouse/keyboard control, screen capture) - the model
 itself never runs here.
 
-Three windows are built from `frontend/`: the main chat/IDE window (`index.html`, React), a small
+Four windows are built from `frontend/`: the main chat/IDE window (`index.html`, React), a small
 always-on-top hover overlay (`overlay.html`, plain JS, see `frontend/public/overlay.js`) that pops up
-near the cursor, and the in-call copilot bar (`copilot.html`, React, `frontend/src/copilot/`) - a
+near the cursor, the "Mouse AI is working" banner (`shield.html`, plain JS, shown by `shield.rs` for
+the length of every local agent run, with Stop), and the in-call copilot bar (`copilot.html`, React, `frontend/src/copilot/`) - a
 floating Cluely-style pill + glass panel (Assist / What should I say? / Follow-ups / Recap, live
 insights, auto-answer, Solve screen) that `meeting_start` shows over the call. Ctrl+Shift+\ toggles it; while a
 call is live, Ctrl+Shift+Enter (suggest) and Ctrl+Shift+S (solve what's on screen) are routed to it instead of the
@@ -34,7 +35,7 @@ Frontend-only (from `frontend/`):
 
 ```bash
 npm run dev                    # vite dev server on :1420 (used by tauri dev via devUrl)
-npm run build                  # tsc -b && vite build -> frontend/dist (two entry points: main, overlay)
+npm run build                  # tsc -b && vite build -> frontend/dist (entry points: main, overlay, copilot, shield)
 npm run lint                   # oxlint
 ```
 
@@ -145,7 +146,8 @@ progress (up to 120 steps / 30 min). Key details baked into these files:
 | `backend.rs` | HTTP client for the Thothai backend (auth, chat, agent step, conversation history) |
 | `mouse.rs` | Cursor position/context, accessible-element inspection under the cursor (Win32 UI Automation) |
 | `capture.rs` | Screenshot capture (full screen, region, window-or-around-point) |
-| `hover.rs` | Global hover-dwell watcher - shows the overlay's "Ask AI" pill when the mouse pauses over something |
+| `hover.rs` | Global hover-dwell watcher - shows the overlay's "Ask AI" pill when the mouse pauses over something; `clamp_overlay_into_monitor` is called by `expand_overlay` after every resize so the panel (and its input row) never grows off-screen |
+| `shield.rs` | The "working" banner window + the yield-to-user rule: `input.rs` stamps `OUR_LAST_INPUT_TICK` on every SendInput, `user_idle_ms()` compares it with `GetLastInputInfo`, and `drive.rs` calls `wait_for_user_idle` before any UI tool so the agent waits (and says so) while the person is using the mouse or keyboard instead of fighting them. BlockInput was rejected: it needs admin and locks the user out |
 | `input.rs` | Synthesized mouse/keyboard input for the agent's computer-use tools |
 | `explorer.rs` | Windows Explorer / file-context helpers used by tools |
 | `fs_browser.rs` | File-tree browsing + read/write for the IDE dock's file tree and editor |
@@ -186,11 +188,25 @@ Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/confi
   (file tree/editor, embedded terminal, git changes pane) backing onto `fs_browser.rs`, `terminal.rs`,
   and `git_diff.rs` respectively.
 - `overlay.html` + `public/overlay.js` - deliberately plain JS, not part of the React app, since it's
-  a tiny always-on-top popup and doesn't need the React build.
+  a tiny always-on-top popup and doesn't need the React build. How it behaves now:
+  - **Routing without a model call.** With the sparkle (Auto) on, `routeFor()` sends questions
+    (`?`, question words, web hints) to `ask_about_hover` - with `webSearch` when `needsWeb()` says so -
+    and instructions (task verbs) to `agent_run`. Sparkle off = ask-only. The eye button is always a
+    plain "explain what's here".
+  - **One thread.** Every ask/task is a `.turn` appended to `#agent-log`; follow-ups stack. A reopen
+    within 5 minutes continues the thread, a later one starts a fresh thread + `new_conversation`.
+  - **@-mentions.** `@screen`, `@window`, `@clipboard`, `@file`, `@web` become chips above the input and
+    resolve at send time through `resolve_mention` (commands.rs); text goes to the model as
+    `[ATTACHED BY THE USER]`, an image replaces the automatic capture.
+  - **Sizing never shrinks mid-thread** (`syncOverlaySize(max, { growOnly })`, one native resize per
+    frame, +14px for the root padding) and Rust re-clamps the window into the monitor after each resize.
+  - Each run uses source `overlay:<n>`; ✕ cancels a running task before collapsing.
+  - `renderMarkdown` keeps numbered lists together across blank lines and preserves item numbers
+    (`<li value>`); the test in the session scratchpad exercises the shapes models emit.
 
 ### Config
 
-- `src-tauri/tauri.conf.json` defines the two windows (`main`, `overlay`) and CSP.
+- `src-tauri/tauri.conf.json` defines the windows (`main`, `overlay`, `copilot`, `shield`) and CSP.
 - Env vars (loaded from `.env.local`/`.env` at the repo root or `src-tauri/`, see `load_env_files` in
   `lib.rs`): `MOUSE_AI_BACKEND_URL` (override default backend), `MOUSE_AI_GOOGLE_CLIENT_ID` (override
   OAuth client), `MOUSE_AI_GEMINI_MODEL` (passed through to the backend, doesn't add a local key),

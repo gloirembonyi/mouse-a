@@ -68,9 +68,14 @@ let autoHideTimer = null;
 // full agent task (which can now also delegate web work to the browser
 // extension), not just a one-shot question. The toggle still switches back to
 // quick "what's under my mouse" answers.
-let agentMode = true; // when on, the ask runs as a full agent task on the PC
+let agentMode = true; // when on, a request that reads as a task runs as an agent on the PC
 let agentSummary = null; // live "Thought for Xs" summary widget for the in-flight run
 let agentRunning = false; // an agent_run is in flight - the send button doubles as Stop
+let runSource = null; // "overlay:<n>" of the in-flight run; agent-progress is filtered on it
+let runSeq = 0;
+let threadTurns = 0; // turns rendered in #agent-log (the conversation thread)
+let lastCollapseAt = 0;
+const THREAD_KEEP_MS = 5 * 60 * 1000; // reopen within this and the thread continues
 
 // ── Events from Rust ───────────────────────────────────────
 window.addEventListener("DOMContentLoaded", async () => {
@@ -80,7 +85,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   await listen("surface-theme", (event) => applySurfaceTheme(!!event.payload));
   await listen("agent-progress", (event) => {
     const p = event.payload || {};
-    if (p.source !== "overlay") return;
+    if (!runSource || p.source !== runSource) return;
     renderAgentProgress(p);
   });
   setupUI();
@@ -188,39 +193,49 @@ function makeDraggableClickable(el, onClick) {
 // ── UI wiring ──────────────────────────────────────────────
 function setupUI() {
   makeDraggableClickable(pill, expand);
-  btnClose.addEventListener("click", collapse);
+  btnClose.addEventListener("click", closePanel);
   btnOpenApp.addEventListener("click", () => invoke("show_main_window").catch(() => {}));
   btnAsk.addEventListener("click", () => {
     if (agentRunning) {
       // The send button is a Stop button while an agent task runs.
       btnAsk.disabled = true;
       questionInput.placeholder = "Stopping…";
-      invoke("agent_cancel", { source: "overlay" }).catch(() => {});
+      invoke("agent_cancel", { source: runSource || "overlay" }).catch(() => {});
       return;
     }
-    ask(questionInput.value.trim() || null);
+    submit();
   });
-  btnAnalyze.addEventListener("click", () => ask(null));
+  // The eye is always "explain what's here" - a plain look, never an agent run.
+  btnAnalyze.addEventListener("click", () => askQuestion(null));
   btnAgent.addEventListener("click", toggleAgentMode);
   btnHistory.addEventListener("click", toggleHistory);
   historyNew.addEventListener("click", startNewChatFromOverlay);
+  btnMention?.addEventListener("click", () => (mentionMenu.hidden ? openMentionMenu("") : closeMentionMenu()));
   // Reflect the default agent-mode state in the button + placeholder at startup.
   btnAgent.classList.toggle("active", agentMode);
-  questionInput.placeholder = agentMode
-    ? "Tell Mouse AI what to do…"
-    : "Ask about what's under your mouse…";
+  questionInput.placeholder = placeholderFor();
 
   questionInput.addEventListener("keydown", (e) => {
+    if (!mentionMenu.hidden && handleMentionKey(e)) return;
     if (e.key === "Enter") {
       e.preventDefault();
-      ask(questionInput.value.trim() || null);
+      submit();
+    } else if (e.key === "Backspace" && !questionInput.value && chips.length) {
+      removeChip(chips.length - 1);
     }
+  });
+  questionInput.addEventListener("input", () => {
+    const m = /(^|\s)@([\w.-]*)$/.exec(questionInput.value.slice(0, questionInput.selectionStart ?? questionInput.value.length));
+    if (m) openMentionMenu(m[2]);
+    else if (!mentionMenu.hidden) closeMentionMenu();
   });
 
   document.addEventListener("keydown", (e) => {
-    // A pending confirm owns Escape (Deny) - don't collapse the panel out from
-    // under it.
-    if (e.key === "Escape" && confirmHost.hidden && !agentRunning) collapse();
+    if (e.key !== "Escape") return;
+    if (!mentionMenu.hidden) { closeMentionMenu(); return; }
+    // A pending confirm owns Escape (Deny); a running task is stopped with the
+    // button, not by dismissing the panel; a plain ask in flight just finishes.
+    if (confirmHost.hidden && !agentRunning && !busy) collapse();
   });
 
   // Manual resize handle - the window is also natively resizable from its
@@ -260,17 +275,38 @@ async function expand() {
 // the input (the content areas are sized to content + capped, not flex:1, so
 // the measured height is the real content height).
 const MIN_OVERLAY_HEIGHT = 132;
+// #root's 6px padding top+bottom plus the panel border: the window used to be
+// sized to the panel's content height alone, so the bottom ~14px - the lower
+// half of the input row - was clipped whenever nothing scrollable was visible.
+const ROOT_CHROME_PX = 14;
+let sizeRaf = 0;
 
-async function syncOverlaySize(maxHeight = 560) {
-  if (!panel || panel.hidden) return;
-  const prevHeight = panel.style.height;
-  panel.style.height = "auto";
-  const natural = panel.scrollHeight;
-  panel.style.height = prevHeight;
-  const height = Math.min(Math.max(maxHeight, MIN_OVERLAY_HEIGHT), Math.max(MIN_OVERLAY_HEIGHT, natural));
-  try {
-    await invoke("expand_overlay", { width: 480, height });
-  } catch { /* ignore */ }
+/**
+ * Size the window to the panel's content, capped. `growOnly` (progress events,
+ * follow-up turns) never makes the window smaller than it is now - so a window
+ * the user dragged bigger stays bigger, and the input never jumps off-screen.
+ * Coalesced to one native resize per frame.
+ */
+function syncOverlaySize(maxHeight = 560, { growOnly = false } = {}) {
+  if (!panel || panel.hidden) return Promise.resolve();
+  return new Promise((resolve) => {
+    cancelAnimationFrame(sizeRaf);
+    sizeRaf = requestAnimationFrame(async () => {
+      const prevHeight = panel.style.height;
+      panel.style.height = "auto";
+      const natural = panel.scrollHeight + ROOT_CHROME_PX;
+      panel.style.height = prevHeight;
+      const current = window.innerHeight;
+      const cap = Math.max(maxHeight, growOnly ? current : 0, MIN_OVERLAY_HEIGHT);
+      const height = Math.min(cap, Math.max(MIN_OVERLAY_HEIGHT, natural));
+      if (growOnly && height <= current + 2) { resolve(); return; }
+      const width = Math.max(480, growOnly ? window.innerWidth : 0);
+      try {
+        await invoke("expand_overlay", { width, height });
+      } catch { /* ignore */ }
+      resolve();
+    });
+  });
 }
 
 async function showPanel({ resize }) {
@@ -286,27 +322,51 @@ async function showPanel({ resize }) {
   panelElement.textContent = truncate(elementSummary(hover), 60);
   answerEl.hidden = true;
   answerEl.innerHTML = "";
-  agentLogEl.hidden = true;
-  agentLogEl.innerHTML = "";
   setThinking(false);
   questionInput.value = "";
+  closeMentionMenu();
+  // The thread survives a quick close/reopen (a follow-up a minute later is
+  // the normal case); after a longer gap this is a new question about
+  // something else, so start a fresh thread AND a fresh server conversation.
+  const stale = threadTurns > 0 && Date.now() - lastCollapseAt > THREAD_KEEP_MS;
+  if (stale) resetThread({ newConversation: true });
+  agentLogEl.hidden = threadTurns === 0;
 
   if (resize) {
-    await syncOverlaySize(380);
+    await syncOverlaySize(threadTurns ? answerHeight() : 380);
   }
-  questionInput.focus();
+  // The input is the whole point of opening the panel: visible, focused, cursor ready.
+  requestAnimationFrame(() => {
+    questionInput.focus();
+    questionInput.scrollIntoView?.({ block: "nearest" });
+  });
+}
+
+function resetThread({ newConversation } = {}) {
+  agentLogEl.innerHTML = "";
+  agentLogEl.hidden = true;
+  threadTurns = 0;
+  clearChips();
+  if (newConversation) invoke("new_conversation").catch(() => {});
+}
+
+/** ✕: stop a running task first, then put the panel away. */
+async function closePanel() {
+  if (agentRunning) invoke("agent_cancel", { source: runSource || "overlay" }).catch(() => {});
+  await collapse();
 }
 
 async function collapse() {
   expanded = false;
   busy = false;
+  lastCollapseAt = Date.now();
   panel.hidden = true;
   pill.hidden = true;
   toast.hidden = true;
   answerEl.innerHTML = "";
-  agentLogEl.hidden = true;
-  agentLogEl.innerHTML = "";
+  // The thread itself is kept (see showPanel) - only the transient surfaces reset.
   questionInput.value = "";
+  closeMentionMenu();
   // Reset the transient overlay surfaces so a re-expand starts clean.
   hideHistory();
   clearPinnedConfirm();
@@ -321,9 +381,14 @@ async function collapse() {
 function toggleAgentMode() {
   agentMode = !agentMode;
   btnAgent.classList.toggle("active", agentMode);
-  questionInput.placeholder = agentMode
-    ? "Tell Mouse AI what to do…"
-    : "Ask about what's under your mouse…";
+  btnAgent.title = agentMode
+    ? "Auto: questions are answered, tasks are done on your PC (click for ask-only)"
+    : "Ask only: every message is answered, nothing is done on your PC (click for auto)";
+  questionInput.placeholder = placeholderFor();
+}
+
+function placeholderFor() {
+  return agentMode ? "Ask anything or tell Mouse AI what to do…  @ to attach" : "Ask about what's under your mouse…  @ to attach";
 }
 
 // The panel only ever showed the ANSWER, never what was actually asked - easy
@@ -334,12 +399,6 @@ function questionHeaderHtml(question) {
   return `<div class="asked-question">${escapeHtml(question)}</div>`;
 }
 
-// "Worked for 4m 28s" - same run-duration line shown under a finished agent
-// task in the main window (main.js's finishAgentActivity/formatDuration).
-function durationFooterHtml(elapsedMs) {
-  return `<div class="agent-activity-footer">Worked for ${formatDuration(elapsedMs)}</div>`;
-}
-
 function formatDuration(ms) {
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -347,23 +406,95 @@ function formatDuration(ms) {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
-async function ask(question) {
-  if (!hover || busy) return;
-  if (agentMode) return runAgentTask(question);
+// ── Routing: question or task? ─────────────────────────────
+// With Auto on (the sparkle), a question gets a fast answer - with web search
+// when it needs the web - and an instruction runs as an agent on the PC. Ask-only
+// mode answers everything. There is no model call in the decision: it has to be
+// instant, and a wrong guess is one toggle away.
+const QUESTION_START = /^(what|what's|whats|why|how|how's|who|who's|whose|when|where|which|is|are|was|were|can|could|does|do|did|should|would|will|explain|summarize|summarise|translate|define|describe|tell me|compare|meaning|difference|search|look up|lookup|research|find out|google)\b/i;
+const TASK_START = /^(open|close|click|create|make|write|type|send|run|install|go to|goto|navigate|download|save|delete|remove|move|copy|paste|rename|set|turn|start|stop|play|pause|fix|build|deploy|update|upgrade|add|edit|change|fill|submit|book|order|buy|schedule|reply|email|message|organize|organise|sort|clean|format|convert|resize|launch|switch|minimize|maximize|scroll|select|drag|press|put|insert|do|help me|please)\b/i;
+const WEB_HINT = /\b(latest|current|today|tonight|yesterday|this week|news|price|prices|cost|weather|forecast|stock|score|scores|release|released|version|who is|who was|when did|when is|search|look up|lookup|google|research|find out|20[2-9]\d|how much|near me|review|reviews|best .+ (for|in|of)|vs\.?|versus|compare)\b/i;
+const HOVER_HINT = /\b(this|here|that|screen|window|page|button|error|under (my|the) (mouse|cursor)|what('s| is) (this|that|here)|selected|highlighted)\b/i;
 
-  setBusy(true);
-  questionInput.value = "";
-  setThinking(true, "shaping", "Looking at your screen…");
-  // Fully clear both panes (not just toggle `hidden`) - a stale previous
-  // answer's innerHTML sitting under a newly-visible agent-log (or vice
-  // versa) is exactly how two unrelated Q&A turns end up visually stacked.
+function routeFor(text) {
+  if (!agentMode) return "ask";
+  const t = String(text || "").trim();
+  if (!t) return "ask";
+  if (chips.some((c) => c.kind === "web")) return "ask";
+  if (TASK_START.test(t) && !/^(how|what|which|can you tell|do you know)\b/i.test(t)) return "agent";
+  if (/\?\s*$/.test(t) || QUESTION_START.test(t) || WEB_HINT.test(t)) return "ask";
+  return "agent";
+}
+
+function needsWeb(text) {
+  if (chips.some((c) => c.kind === "web")) return true;
+  const t = String(text || "");
+  // Something on screen is the subject -> the screenshot answers it, not the web.
+  if (HOVER_HINT.test(t) && !/\b(search|look up|latest|news|price)\b/i.test(t)) return false;
+  return WEB_HINT.test(t);
+}
+
+function submit() {
+  const text = questionInput.value.trim();
+  if (!text && !chips.length) return;
+  if (routeFor(text) === "agent") runAgentTask(text);
+  else askQuestion(text || null, { webSearch: needsWeb(text) });
+}
+
+// ── Thread turns ───────────────────────────────────────────
+// Every question and every task is one turn in the same scrollable thread: the
+// question chip, then the answer (or the run summary and its final answer). A
+// follow-up appends below instead of wiping what came before.
+function newTurn(question, attachments) {
   answerEl.hidden = true;
   answerEl.innerHTML = "";
-  agentLogEl.hidden = true;
-  agentLogEl.innerHTML = "";
+  hideHistory();
+  agentLogEl.hidden = false;
+  const turn = document.createElement("div");
+  turn.className = "turn";
+  const chipsHtml = attachments.length
+    ? `<div class="turn-attach">${attachments.map((a) => `<span class="turn-chip">${escapeHtml(chipIcon(a.kind))} ${escapeHtml(a.label)}</span>`).join("")}</div>`
+    : "";
+  turn.innerHTML = questionHeaderHtml(question || "What is this?") + chipsHtml;
+  agentLogEl.appendChild(turn);
+  threadTurns += 1;
+  requestAnimationFrame(() => turn.scrollIntoView({ block: "start", behavior: "smooth" }));
+  return turn;
+}
+
+/** Resolve the @-mention chips into text + an image, right now. */
+async function resolveAttachments() {
+  const out = { text: [], image: null, labels: [] };
+  for (const chip of chips) {
+    if (chip.kind === "web") { out.labels.push({ kind: "web", label: "Web" }); continue; }
+    try {
+      const r = chip.resolved || (await invoke("resolve_mention", { kind: chip.kind, x: hover?.x, y: hover?.y, path: chip.path || null }));
+      if (r.text) out.text.push(r.text);
+      if (r.image_data_url && !out.image) out.image = r.image_data_url;
+      out.labels.push({ kind: chip.kind, label: r.label || chip.label });
+    } catch (err) {
+      out.text.push(`[${chip.kind} could not be attached: ${String(err?.message || err)}]`);
+      out.labels.push({ kind: chip.kind, label: chip.label });
+    }
+  }
+  return out;
+}
+
+async function askQuestion(question, { webSearch = false } = {}) {
+  if (!hover || busy) return;
+  setBusy(true);
+  questionInput.value = "";
+  closeMentionMenu();
+  const attach = await resolveAttachments();
+  clearChips();
+  const turn = newTurn(question, attach.labels);
+  const body = document.createElement("div");
+  body.className = "turn-body";
+  turn.appendChild(body);
+  setThinking(true, "shaping", webSearch ? "Searching the web…" : attach.image ? "Reading what you attached…" : "Looking at your screen…");
+  syncOverlaySize(420, { growOnly: true });
 
   try {
-    // Watchdog: never let the panel spin forever, whatever happens below.
     const result = await withTimeout(
       invoke("ask_about_hover", {
         question,
@@ -372,68 +503,68 @@ async function ask(question) {
         appName: hover.context?.process_name || null,
         windowTitle: hover.context?.window_title || null,
         elementText: elementContextForAI(hover) || null,
+        webSearch,
+        extraContext: attach.text.join("\n\n") || null,
+        imageDataUrl: attach.image,
       }),
-      55000
+      webSearch ? 90000 : 55000
     );
-    answerEl.innerHTML =
-      questionHeaderHtml(question) +
-      `<div class="answer-body">${renderMarkdown(result.text || "(no answer)")}</div>` +
-      answerActionsHtml();
+    body.innerHTML = `<div class="answer-body">${renderMarkdown(result.text || "(no answer)")}</div>` + answerActionsHtml();
   } catch (err) {
-    answerEl.innerHTML = questionHeaderHtml(question) + `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
+    body.innerHTML = `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
   } finally {
     setThinking(false);
-    answerEl.hidden = false;
     setBusy(false);
     questionInput.value = "";
     questionInput.focus();
-    // Grow (or shrink) the window to fit whatever came back - answer or error.
-    await syncOverlaySize(520);
+    requestAnimationFrame(() => turn.scrollIntoView({ block: "start", behavior: "smooth" }));
+    await syncOverlaySize(answerHeight(), { growOnly: true });
   }
 }
 
 // Full agent task, reporting live activity into the overlay and the final
-// answer in the same panel the user asked from.
+// answer in the same thread the user asked from.
 async function runAgentTask(task) {
+  if (!hover || busy) return;
   if (!task) {
-    answerEl.hidden = false;
-    answerEl.innerHTML = `<div class="error-box">Type what you'd like me to do first.</div>`;
+    questionInput.placeholder = "Type what you'd like me to do first…";
+    questionInput.focus();
     return;
   }
   agentRunning = true;
+  const mySource = `overlay:${++runSeq}`;
+  runSource = mySource;
   setBusy(true);
   setWorkingIndicator(true);
   hideHistory();
   clearPinnedConfirm();
   questionInput.value = "";
+  closeMentionMenu();
   setThinking(false);
-  // Fully clear both panes - see the matching comment in ask() above.
-  answerEl.hidden = true;
-  answerEl.innerHTML = "";
-  agentLogEl.hidden = false;
-  agentLogEl.innerHTML = questionHeaderHtml(task);
+  const attach = await resolveAttachments();
+  clearChips();
+  const turn = newTurn(task, attach.labels);
   agentSummary = createAgentSummary();
-  agentLogEl.appendChild(agentSummary.root);
-  agentLogEl.scrollTop = 0;
-  await syncOverlaySize(480);
+  turn.appendChild(agentSummary.root);
+  await syncOverlaySize(480, { growOnly: true });
 
+  const fullTask = attach.text.length ? `${task}\n\n[ATTACHED BY THE USER]\n${attach.text.join("\n\n")}` : task;
   try {
     const result = await invoke("agent_run", {
-      task,
+      task: fullTask,
       x: hover.x,
       y: hover.y,
-      source: "overlay",
+      source: mySource,
       autonomous: true,
+      imageDataUrl: attach.image,
     });
     finishAgentSummary(true);
-    // The final answer joins the SAME scrollable log the collapsed "Thought
-    // for Xs" recap lives in (Cursor-style) - it doesn't replace it. Only the
-    // plain (non-agent) ask() path uses the separate #answer element.
-    appendFinalAnswer(`<div class="answer-body">${renderMarkdown(result.text || "(done)")}</div>` + answerActionsHtml());
+    appendFinalAnswer(`<div class="answer-body">${renderMarkdown(result.text || "(done)")}</div>` + answerActionsHtml(), turn);
   } catch (err) {
     finishAgentSummary(false);
-    appendFinalAnswer(`<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`);
+    appendFinalAnswer(`<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`, turn);
   } finally {
+    if (runSource === mySource) runSource = null;
     agentRunning = false;
     setWorkingIndicator(false);
     clearPinnedConfirm();
@@ -442,7 +573,7 @@ async function runAgentTask(task) {
     questionInput.focus();
     // Size to the answer (up to ~75% of the screen) so it's readable
     // without dragging the window bigger.
-    await syncOverlaySize(answerHeight());
+    await syncOverlaySize(answerHeight(), { growOnly: true });
   }
 }
 
@@ -577,15 +708,13 @@ function renderTranscript(title, messages) {
 }
 
 async function startNewChatFromOverlay() {
-  try { await invoke("new_conversation"); } catch { /* ignore */ }
   hideHistory();
   btnHistory.classList.remove("active");
   answerEl.hidden = true;
   answerEl.innerHTML = "";
-  agentLogEl.hidden = true;
-  agentLogEl.innerHTML = "";
+  resetThread({ newConversation: true });
   questionInput.focus();
-  await syncOverlaySize(480);
+  await syncOverlaySize(380);
 }
 
 // "3m ago" / "2h ago" / "5d ago" from an ISO timestamp; falls back to the raw
@@ -663,7 +792,7 @@ function createAgentSummary() {
     const currentlyExpanded = !body.hidden;
     state.userCollapsed = currentlyExpanded;
     applyExpanded();
-    syncOverlaySize(480);
+    syncOverlaySize(480, { growOnly: true });
   });
 
   if (typeof window.GhostOrb !== "undefined" && window.GhostOrb.isAvailable()) {
@@ -698,11 +827,11 @@ function finishAgentSummary(success) {
 // for Xs" summary, inside the same scrollable log - then scrolls down so the
 // answer is what's actually in view, not left scrolled up at the old step
 // log's position.
-function appendFinalAnswer(html) {
+function appendFinalAnswer(html, turn) {
   const wrap = document.createElement("div");
   wrap.className = "agent-final-answer";
   wrap.innerHTML = html;
-  agentLogEl.appendChild(wrap);
+  (turn || agentLogEl).appendChild(wrap);
   requestAnimationFrame(() => {
     agentLogEl.scrollTop = agentLogEl.scrollHeight;
   });
@@ -734,7 +863,7 @@ function renderAgentProgress(p) {
   }
   agentSummary.body.scrollTop = agentSummary.body.scrollHeight;
   agentLogEl.scrollTop = agentLogEl.scrollHeight;
-  syncOverlaySize(480);
+  syncOverlaySize(480, { growOnly: true });
 }
 
 // A rollup ("Explored 12 files, 3 searches +367 -14") isn't a timeline entry
@@ -811,7 +940,7 @@ function showPinnedConfirm(p) {
   };
   document.addEventListener("keydown", confirmKeyHandler, true);
 
-  syncOverlaySize(480);
+  syncOverlaySize(480, { growOnly: true });
 }
 
 function clearPinnedConfirm() {
@@ -863,7 +992,7 @@ function buildConfirmPrompt(p) {
     setTimeout(() => {
       clearPinnedConfirm();
       if (agentRunning) workingIndicator.hidden = false;
-      syncOverlaySize(480);
+      syncOverlaySize(480, { growOnly: true });
     }, 900);
   };
 
@@ -930,13 +1059,7 @@ function setBusy(state) {
   // "Working…" duration just duplicates it on screen. Lock the field instead
   // so it visibly reads as busy rather than as an editable, stale question.
   questionInput.readOnly = state;
-  questionInput.placeholder = state
-    ? agentRunning
-      ? "Working… (⏹ to stop)"
-      : "Working…"
-    : agentMode
-      ? "Tell Mouse AI what to do…"
-      : "Ask about what's under your mouse…";
+  questionInput.placeholder = state ? (agentRunning ? "Working… (⏹ to stop)" : "Working…") : placeholderFor();
 }
 
 // ── Helpers ────────────────────────────────────────────────
@@ -1089,37 +1212,62 @@ function renderMarkdown(text) {
       out.push(`<blockquote>${renderMarkdown(quote.join("\n"))}</blockquote>`);
       continue;
     }
-    // Lists (unordered/ordered, one level of nesting by indent)
-    const li = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line);
+    // Lists: ordered/unordered, one level of nesting by indent. A blank line between
+    // items does NOT end the list (models write "1. …\n\n2. …" constantly - that used to
+    // produce three separate lists, every one numbered "1."), and an item's own number
+    // is kept (<li value>), so "3." stays "3." even after a paragraph in between.
+    const LI = /^(\s*)([-*+]|(\d+)[.)])\s+(.*)$/;
+    const li = LI.exec(line);
     if (li) {
       flushPara();
-      const ordered = /\d/.test(li[2]);
+      const ordered = li[3] !== undefined;
       const items = [];
       while (i < lines.length) {
-        const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
+        const m = LI.exec(lines[i]);
         if (m) {
-          items.push({ indent: m[1].length, text: m[3] });
+          items.push({ indent: m[1].length, ordered: m[3] !== undefined, num: m[3] ? Number(m[3]) : null, text: m[4], extra: [] });
           i++;
         } else if (lines[i].trim() && /^\s{2,}/.test(lines[i]) && items.length) {
-          items[items.length - 1].text += " " + lines[i].trim(); // wrapped continuation line
+          // Indented continuation (a wrapped line or a "Path: …" detail line): part of
+          // the item, on its own line.
+          items[items.length - 1].extra.push(lines[i].trim());
           i++;
+        } else if (!lines[i].trim() && items.length) {
+          // Blank line: keep going only if the next non-blank line is still a list item.
+          let j = i + 1;
+          while (j < lines.length && !lines[j].trim()) j++;
+          if (j < lines.length && LI.test(lines[j])) { i = j; continue; }
+          break;
         } else break;
       }
       const base = items[0].indent;
-      let html = ordered ? "<ol>" : "<ul>";
-      let nested = false;
+      const itemHtml = (it) => renderInlineRich(it.text) + it.extra.map((l) => "<br>" + renderInlineRich(l)).join("");
+      const openTag = (o) => (o ? "<ol>" : "<ul>");
+      const closeTag = (o) => (o ? "</ol>" : "</ul>");
+      let html = openTag(ordered);
+      let nested = null; // ordered flag of the open nested list, or null
+      let openLi = false;
       for (const it of items) {
-        if (it.indent > base + 1 && !nested) {
-          html = html.replace(/<\/li>$/, "") + "<ul>";
-          nested = true;
-        } else if (it.indent <= base + 1 && nested) {
-          html += "</ul></li>";
-          nested = false;
+        const isNested = it.indent > base + 1;
+        if (isNested && nested === null) {
+          nested = it.ordered;
+          html += openTag(nested);
+        } else if (!isNested && nested !== null) {
+          html += closeTag(nested) + "</li>";
+          nested = null;
+          openLi = false;
         }
-        html += `<li>${renderInlineRich(it.text)}</li>`;
+        if (isNested) {
+          html += `<li${it.ordered && it.num ? ` value="${it.num}"` : ""}>${itemHtml(it)}</li>`;
+        } else {
+          if (openLi) html += "</li>";
+          html += `<li${it.ordered && it.num ? ` value="${it.num}"` : ""}>${itemHtml(it)}`;
+          openLi = true;
+        }
       }
-      if (nested) html += "</ul></li>";
-      out.push(html + (ordered ? "</ol>" : "</ul>"));
+      if (nested !== null) html += closeTag(nested);
+      if (openLi) html += "</li>";
+      out.push(html + closeTag(ordered));
       continue;
     }
     para.push(trimmed);
@@ -1177,4 +1325,133 @@ function renderInlineMarkdown(text) {
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
   return html;
+}
+
+// ── @-mentions ─────────────────────────────────────────────
+// Type "@" (or press the @ button) to attach context the way you would in an
+// editor: the screen, the window under the cursor, the clipboard, a file, or
+// "search the web". Chips sit above the input; they resolve when you send, so
+// "@screen" is the screen as it is at that moment.
+const btnMention = document.getElementById("btn-mention");
+const chipsEl = document.getElementById("chips");
+const mentionMenu = document.getElementById("mention-menu");
+const chips = []; // { kind, label, path?, resolved? }
+let mentionIndex = 0;
+let mentionFilter = "";
+
+const MENTIONS = [
+  { kind: "screen", label: "Screen", hint: "Screenshot of the whole screen", icon: "📷" },
+  { kind: "window", label: "Window", hint: "The window under your cursor - its text and a screenshot", icon: "🪟" },
+  { kind: "clipboard", label: "Clipboard", hint: "What you last copied", icon: "📋" },
+  { kind: "file", label: "File…", hint: "A file from your PC (text, code or an image)", icon: "📄" },
+  { kind: "web", label: "Web", hint: "Search the web for this", icon: "🌐" },
+];
+
+function chipIcon(kind) {
+  return MENTIONS.find((m) => m.kind === kind)?.icon || "•";
+}
+
+function renderChips() {
+  chipsEl.innerHTML = "";
+  chipsEl.hidden = chips.length === 0;
+  chips.forEach((c, idx) => {
+    const el = document.createElement("span");
+    el.className = `chip chip-${c.kind}`;
+    el.innerHTML = `<span class="chip-ic">${escapeHtml(chipIcon(c.kind))}</span><span class="chip-label">${escapeHtml(c.label)}</span><button type="button" class="chip-x" title="Remove" aria-label="Remove">×</button>`;
+    el.querySelector(".chip-x").addEventListener("click", () => removeChip(idx));
+    chipsEl.appendChild(el);
+  });
+  syncOverlaySize(480, { growOnly: true });
+}
+
+function addChip(chip) {
+  if (chip.kind !== "file" && chips.some((c) => c.kind === chip.kind)) return;
+  chips.push(chip);
+  renderChips();
+}
+
+function removeChip(idx) {
+  chips.splice(idx, 1);
+  renderChips();
+  questionInput.focus();
+}
+
+function clearChips() {
+  chips.length = 0;
+  renderChips();
+}
+
+function visibleMentions() {
+  const f = mentionFilter.toLowerCase();
+  return MENTIONS.filter((m) => !f || m.kind.startsWith(f) || m.label.toLowerCase().startsWith(f));
+}
+
+function openMentionMenu(filter) {
+  mentionFilter = filter || "";
+  const items = visibleMentions();
+  if (!items.length) { closeMentionMenu(); return; }
+  mentionIndex = Math.min(mentionIndex, items.length - 1);
+  mentionMenu.innerHTML = items
+    .map((m, i) => `<button type="button" class="mention-item${i === mentionIndex ? " is-active" : ""}" data-kind="${m.kind}"><span class="mention-ic">${m.icon}</span><span class="mention-text"><span class="mention-label">@${escapeHtml(m.kind)}</span><span class="mention-hint">${escapeHtml(m.hint)}</span></span></button>`)
+    .join("");
+  mentionMenu.querySelectorAll(".mention-item").forEach((b) => {
+    b.addEventListener("mousedown", (e) => e.preventDefault()); // keep the input focused
+    b.addEventListener("click", () => pickMention(b.dataset.kind));
+  });
+  mentionMenu.hidden = false;
+  syncOverlaySize(480, { growOnly: true });
+}
+
+function closeMentionMenu() {
+  if (!mentionMenu) return;
+  mentionMenu.hidden = true;
+  mentionMenu.innerHTML = "";
+  mentionIndex = 0;
+  mentionFilter = "";
+}
+
+function handleMentionKey(e) {
+  const items = visibleMentions();
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    mentionIndex = (mentionIndex + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+    openMentionMenu(mentionFilter);
+    return true;
+  }
+  if (e.key === "Enter" || e.key === "Tab") {
+    e.preventDefault();
+    pickMention(items[mentionIndex]?.kind);
+    return true;
+  }
+  return false;
+}
+
+async function pickMention(kind) {
+  if (!kind) return;
+  // Drop the "@partial" token the user was typing.
+  const caret = questionInput.selectionStart ?? questionInput.value.length;
+  const before = questionInput.value.slice(0, caret).replace(/(^|\s)@[\w.-]*$/, "$1");
+  questionInput.value = before + questionInput.value.slice(caret);
+  closeMentionMenu();
+  questionInput.focus();
+  if (kind === "file") {
+    try {
+      const open = window.__TAURI__?.dialog?.open;
+      if (!open) throw new Error("File picker unavailable");
+      const picked = await open({ multiple: false, title: "Attach a file" });
+      const path = Array.isArray(picked) ? picked[0] : picked;
+      if (!path) return;
+      const name = String(path).split(/[\\/]/).pop();
+      const chip = { kind: "file", label: name, path: String(path) };
+      // Read it now so a bad pick (binary, too large) is reported immediately.
+      chip.resolved = await invoke("resolve_mention", { kind: "file", path: chip.path });
+      addChip(chip);
+    } catch (err) {
+      questionInput.placeholder = friendlyError(err);
+      setTimeout(() => (questionInput.placeholder = placeholderFor()), 2500);
+    }
+    return;
+  }
+  const m = MENTIONS.find((x) => x.kind === kind);
+  addChip({ kind, label: m?.label || kind });
 }
