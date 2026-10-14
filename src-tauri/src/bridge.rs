@@ -406,6 +406,20 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
         Some("ping") => {
             let _ = tx.send(Message::Text(json!({ "v": 1, "type": "pong" }).to_string()));
         }
+        // "Show in folder" next to a file path in the extension: open Explorer on it.
+        // Paired connections only; it only ever opens a folder view, never runs a file.
+        Some("reveal_path") => {
+            let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
+            let result = if bridge().is_paired() {
+                crate::fs_browser::reveal_path(path)
+            } else {
+                Err("This browser isn't paired with Mouse AI.".to_string())
+            };
+            let _ = tx.send(Message::Text(
+                json!({ "v": 1, "type": "reveal_result", "id": id, "ok": result.is_ok(), "error": result.err() }).to_string(),
+            ));
+        }
         Some("progress") => {
             let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
             let kind = v.get("kind").and_then(|x| x.as_str()).unwrap_or("tool");

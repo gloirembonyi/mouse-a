@@ -525,6 +525,7 @@ impl BackendClient {
         system: &str,
         contents: serde_json::Value,
         tools: serde_json::Value,
+        thinking_budget: Option<u32>,
     ) -> Result<serde_json::Value, String> {
         let token = self
             .get_session_token()
@@ -532,12 +533,17 @@ impl BackendClient {
             .ok_or("Not signed in - open the Mouse AI window and try again.")?;
         let url = format!("{}/api/agent/step", self.base_url.read().await);
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "system": system,
             "contents": contents,
             "tools": tools,
             "model": default_gemini_model(),
         });
+        // A short reasoning pass on the steps that decide the run (first plan,
+        // recovery, final check); routine steps stay fast. Older backends ignore it.
+        if let Some(b) = thinking_budget {
+            body["thinkingBudget"] = serde_json::json!(b);
+        }
 
         // A connect failure means the request never reached the server, so one quick
         // retry is safe (no step is consumed twice) and rides out a network blip.

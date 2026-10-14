@@ -225,11 +225,12 @@ pub async fn set_mcp_servers(state: State<'_, AppState>, json: String) -> Result
     } else {
         serde_json::from_str(trimmed).map_err(|e| format!("Invalid JSON: {}", e))?
     };
-    if !value.is_array() {
-        return Err("MCP servers must be a JSON array.".to_string());
-    }
+    // Also accepts the {"mcpServers": {...}} block copied from Claude Desktop / Cursor /
+    // an MCP server's README, normalized to our array form.
+    let value = crate::mcp::normalize_config(value)?;
+    let count = value.as_array().map(|a| a.len()).unwrap_or(0);
     state.backend.set_mcp_servers(value).await;
-    Ok("Saved.".to_string())
+    Ok(format!("Saved {} server(s).", count))
 }
 
 // ── Overlay Commands ─────────────────────────────────────────────

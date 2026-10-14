@@ -15,6 +15,7 @@ mod git_diff;
 mod hover;
 mod input;
 mod mcp;
+mod skills;
 mod copilot;
 mod meeting;
 mod mouse;

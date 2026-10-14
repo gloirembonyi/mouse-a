@@ -70,6 +70,8 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
 const MAX_COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_TOOL_OUTPUT: usize = 6000;
 const MAX_FILE_READ: usize = 20_000;
+/// Thinking tokens for planning / recovery / verification steps (0 elsewhere).
+const PLANNING_THINKING_BUDGET: u32 = 1024;
 
 // ── Agent scratch space ──────────────────────────────────────────
 // Root cause of files like `yt_search.py` turning up inside the app's own
@@ -114,16 +116,89 @@ fn reset_scratch_dir() {
     let _ = std::fs::create_dir_all(&dir);
 }
 
-/// Absolute paths are used as-is (the model explicitly means a real location
-/// - the user's project, Desktop, wherever). A relative path resolves inside
-/// the private scratch dir instead of the process's actual cwd.
-fn resolve_agent_path(raw: &str) -> std::path::PathBuf {
-    let p = std::path::Path::new(raw);
-    if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        agent_scratch_dir().join(p)
+/// The user's real known folders (Desktop/Documents/Downloads… - dirs uses
+/// SHGetKnownFolderPath, so OneDrive-redirected folders resolve correctly).
+fn known_folder(name: &str) -> Option<std::path::PathBuf> {
+    match name.to_ascii_lowercase().as_str() {
+        "~" | "home" | "$home" => dirs::home_dir(),
+        "desktop" => dirs::desktop_dir(),
+        "documents" | "my documents" => dirs::document_dir(),
+        "downloads" => dirs::download_dir(),
+        "pictures" => dirs::picture_dir(),
+        "music" => dirs::audio_dir(),
+        "videos" => dirs::video_dir(),
+        _ => None,
     }
+}
+
+/// Expand `%VAR%`, `$env:VAR` and `$HOME` the way the model writes them - a file
+/// tool would otherwise create a folder literally named "%USERPROFILE%".
+fn expand_env_vars(raw: &str) -> String {
+    let mut s = raw.to_string();
+    for _ in 0..8 {
+        let Some(start) = s.find('%') else { break };
+        let Some(len) = s[start + 1..].find('%') else { break };
+        let name = &s[start + 1..start + 1 + len];
+        match std::env::var(name) {
+            Ok(val) if !name.is_empty() => s = format!("{}{}{}", &s[..start], val, &s[start + 2 + len..]),
+            _ => break,
+        }
+    }
+    while let Some(start) = s.to_ascii_lowercase().find("$env:") {
+        let rest = &s[start + 5..];
+        let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(rest.len());
+        let name = &rest[..end];
+        let val = std::env::var(name).unwrap_or_default();
+        if name.is_empty() || val.is_empty() {
+            break;
+        }
+        s = format!("{}{}{}", &s[..start], val, &rest[end..]);
+    }
+    if let Some(rest) = s.strip_prefix("$HOME") {
+        if let Some(home) = dirs::home_dir() {
+            s = format!("{}{}", home.display(), rest);
+        }
+    }
+    s
+}
+
+/// Where a path the model wrote actually points.
+///  - `~\x`, `%USERPROFILE%\x`, `$env:USERPROFILE\x` → the real home folder;
+///  - `Desktop\x`, `Documents\x`, `Downloads\x`… → the real known folder;
+///  - `C:\Users\me\Desktop\x` when that folder doesn't exist but the real Desktop is
+///    elsewhere (OneDrive) → the real one, instead of creating a phantom folder the
+///    user never sees;
+///  - any other relative path → the private scratch folder (never the app's cwd).
+fn resolve_agent_path(raw: &str) -> std::path::PathBuf {
+    use std::path::{Component, Path, PathBuf};
+    let expanded = expand_env_vars(raw.trim().trim_matches('"'));
+    let p = Path::new(&expanded);
+
+    let mut comps = p.components();
+    if let Some(Component::Normal(first)) = comps.clone().next() {
+        let first = first.to_string_lossy().to_string();
+        if let Some(base) = known_folder(&first) {
+            comps.next();
+            return base.join(comps.as_path());
+        }
+    }
+    if p.is_absolute() {
+        if let Some(home) = dirs::home_dir() {
+            if let Ok(rest) = p.strip_prefix(&home) {
+                let mut rc = rest.components();
+                if let Some(Component::Normal(first)) = rc.next() {
+                    let first = first.to_string_lossy().to_string();
+                    if let Some(real) = known_folder(&first) {
+                        if real != home.join(&first) && !home.join(&first).exists() {
+                            return real.join(rc.as_path());
+                        }
+                    }
+                }
+            }
+        }
+        return p.to_path_buf();
+    }
+    agent_scratch_dir().join(PathBuf::from(p))
 }
 
 /// Emitted to the UI so the user sees each step the agent takes.
@@ -288,13 +363,19 @@ fn system_prompt(autonomous: bool) -> String {
         "FILES & PROJECTS",
         "- If the task starts with \"[Project folder: X]\", X is the project: pass it as run_command's cwd and",
         "  build ABSOLUTE paths under it for every file tool. Relative paths go to a private scratch folder.",
+        "- The user's folders: use the exact paths in [ENVIRONMENT] (or Desktop\\x, Documents\\x, Downloads\\x,",
+        "  ~\\x - they resolve to the real folders, OneDrive included). Never guess C:\\Users\\<name>\\...",
+        "- Every file you create or change for the user: give its exact absolute path in your final answer.",
+        "- Long files: write_file the first part, then write_file with append=true for the rest.",
+        "- A document/report/docs the user will read: create_document (a real Word .docx), not a .txt/.md.",
         "- Find code with search_in_files (contents) / find_files (names); read_file before edit_file; change",
         "  existing files with edit_file (exact unique snippet); write_file only for new files or full rewrites.",
         "- Scratch vs. real: throwaway files (helper scripts, dumps) use relative paths and get delete_file'd",
         "  before you finish. Only write to real locations when the user wants the file kept there.",
         "",
         "TERMINAL",
-        "- run_command runs PowerShell (use PowerShell syntax). Use cwd instead of cd. Output ends with",
+        "- run_command runs Windows PowerShell 5.1: no && or || (use ';' and $LASTEXITCODE), quote paths with",
+        "  spaces, call a quoted exe with & \"C:\\path\\x.exe\". Use cwd instead of cd. Output ends with",
         "  [exit code N] when the command failed - read the error and fix the cause; don't re-run it unchanged.",
         "- Slow but finite (install/build/test): pass timeout_seconds (up to 300; default 45).",
         "- Servers/watchers/anything indefinite: background=true. It returns a log file path - read_file that",
@@ -305,6 +386,7 @@ fn system_prompt(autonomous: bool) -> String {
         "  with different keywords instead of repeating it.",
         "- Doing things on a website: delegate_to_browser with a self-contained instruction (site/URL and what",
         "  done looks like). Use background=true + check_browser_task to run web and local work in parallel.",
+        "  The browser can't read the PC: put any file contents, values or text it must use in `context`.",
         "- Only if no extension is connected: list_windows/focus_window to reuse an open browser (else",
         "  open_url with an exact URL - never invent one), wait for the page to load, then click/type as below.",
         "",
@@ -371,15 +453,19 @@ fn tool_declarations() -> Value {
         },
         {
             "name": "read_file",
-            "description": "Read a UTF-8 text file from disk and return its contents. A relative path resolves inside your private scratch folder - pass an absolute path for a real file the user cares about.",
-            "parameters": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }
+            "description": "Read a file and return its text: plain text/code (UTF-8 or UTF-16), and Word/PowerPoint/Excel documents. Long files: page through them with offset/limit (line numbers). Paths: absolute, or Desktop\\…, Documents\\…, Downloads\\…, ~\\… for the user's real folders; any other relative path is your private scratch folder.",
+            "parameters": { "type": "object", "properties": { "path": { "type": "string" }, "offset": { "type": "integer", "description": "First line to return (0-based)" }, "limit": { "type": "integer", "description": "How many lines to return" } }, "required": ["path"] }
         },
         {
             "name": "write_file",
             "description": "Create or overwrite a text file on disk. Only use this when the task genuinely needs a persisted file - never as a substitute for a tool that already exists (e.g. don't write a script to do what web_search/web_fetch/run_command can do directly). A relative path resolves inside your private scratch folder (fine for your own working files - delete_file it once you're done, unless the user actually wants it kept); pass an absolute path - the user's project, Desktop, wherever they mean - for anything they should end up seeing.",
             "parameters": {
                 "type": "object",
-                "properties": { "path": { "type": "string" }, "content": { "type": "string" } },
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute path, or Desktop\\…, Documents\\…, Downloads\\…, ~\\… for the user's real folders" },
+                    "content": { "type": "string" },
+                    "append": { "type": "boolean", "description": "Add to the end instead of replacing - write a long file in several parts" }
+                },
                 "required": ["path", "content"]
             }
         },
@@ -582,6 +668,7 @@ fn tool_declarations() -> Value {
                 "properties": {
                     "instruction": { "type": "string", "description": "A clear, self-contained description of what to do on the web, including the target site/URL and what 'done' looks like." },
                     "url": { "type": "string", "description": "Optional starting URL for the browser to open first." },
+                    "context": { "type": "string", "description": "Optional data the browser agent should work from: file contents, values, names, text to type or post. The browser can't read the PC, so pass anything it needs here." },
                     "background": { "type": "boolean", "description": "If true, return a task_id immediately instead of waiting; collect the result later with check_browser_task." }
                 },
                 "required": ["instruction"]
@@ -786,22 +873,45 @@ fn extract_diff_marker(log: &str) -> (String, Option<(u32, u32)>) {
 /// through (this is the user's own PC, acting on their own request).
 fn is_destructive(command: &str) -> Option<&'static str> {
     let c = command.to_lowercase();
-    let patterns = [
-        ("format ", "disk format"),
-        ("remove-item c:\\", "recursive delete of a system drive"),
-        ("rd /s", "recursive directory wipe"),
-        ("rmdir /s", "recursive directory wipe"),
-        ("del /s /q c:\\", "recursive delete of a system drive"),
-        ("rm -rf /", "recursive root delete"),
-        ("rm -rf ~", "recursive home delete"),
-        ("stop-computer", "shutting down the machine"),
-        ("shutdown", "shutting down the machine"),
-        ("restart-computer", "restarting the machine"),
-        ("cipher /w", "disk wipe"),
-        ("diskpart", "disk partitioning"),
-        ("mkfs", "filesystem format"),
-    ];
-    patterns.iter().find(|(p, _)| c.contains(p)).map(|(_, label)| *label)
+    // Words, not substrings: "format " used to block `Get-Date -Format 'yyyy'` and
+    // `npm run format`, and "shutdown" any text mentioning the word.
+    let words: Vec<&str> = c
+        .split(|ch: char| ch.is_whitespace() || ch == ';' || ch == '|' || ch == '&' || ch == '(' || ch == ')')
+        .filter(|w| !w.is_empty())
+        .collect();
+    let follows = |cmd: &str, pred: &dyn Fn(&str) -> bool| {
+        words.windows(2).any(|w| w[0] == cmd && pred(w[1]))
+    };
+    let is_drive_root = |w: &str| {
+        let w = w.trim_matches(|ch| ch == '"' || ch == '\'');
+        w.len() <= 3 && w.as_bytes().first().map(|b| b.is_ascii_alphabetic()).unwrap_or(false) && w.get(1..2) == Some(":")
+    };
+    if follows("format", &|w: &str| is_drive_root(w)) {
+        return Some("disk format");
+    }
+    if words.iter().any(|w| matches!(*w, "stop-computer" | "restart-computer" | "diskpart" | "mkfs"))
+        || follows("shutdown", &|w: &str| w.starts_with('/') || w.starts_with('-'))
+        || follows("shutdown.exe", &|w: &str| w.starts_with('/') || w.starts_with('-'))
+    {
+        return Some("shutting down / repartitioning the machine");
+    }
+    if c.contains("cipher /w") {
+        return Some("disk wipe");
+    }
+    // Wiping a whole drive, Windows, or the user's home - not a folder inside a project.
+    let wipes_root = |target: &str| {
+        let t = target.trim_matches(|ch| ch == '"' || ch == '\'').trim_end_matches(['\\', '/']);
+        is_drive_root(t) || t.ends_with(":\\windows") || t == "~" || t == "$home" || t == "$env:userprofile" || t == "/"
+    };
+    for (i, w) in words.iter().enumerate() {
+        let recursive_rm = matches!(*w, "rd" | "rmdir" | "remove-item" | "rm" | "del" | "ri");
+        if recursive_rm {
+            if words[i + 1..].iter().take(6).any(|t| wipes_root(t)) {
+                return Some("recursive delete of a drive, Windows, or your home folder");
+            }
+        }
+    }
+    None
 }
 
 /// Build the initial context block describing what's on screen right now, so
@@ -836,7 +946,26 @@ fn initial_context_block(cx: i32, cy: i32) -> String {
         block.push_str("\n\n");
         block.push_str(&explorer::format_context(&ectx));
     }
+    block.push_str("\n\n");
+    block.push_str(&environment_block());
     block
+}
+
+/// The facts the model used to guess: who the user is, where their folders really
+/// are (OneDrive can move Desktop/Documents), and which shell run_command uses.
+fn environment_block() -> String {
+    let show = |p: Option<std::path::PathBuf>| p.map(|p| p.display().to_string()).unwrap_or_else(|| "(unknown)".into());
+    format!(
+        "[ENVIRONMENT]\nUser: {}\nHome: {}\nDesktop: {}\nDocuments: {}\nDownloads: {}\nToday: {}\n\
+Shell for run_command: Windows PowerShell 5.1 - no && or ||; separate commands with ';' and test native \
+commands with $LASTEXITCODE. Paths with spaces must be quoted; run a quoted exe with & \"C:\\path\\tool.exe\".",
+        std::env::var("USERNAME").unwrap_or_default(),
+        show(dirs::home_dir()),
+        show(dirs::desktop_dir()),
+        show(dirs::document_dir()),
+        show(dirs::download_dir()),
+        chrono::Local::now().format("%A %Y-%m-%d %H:%M"),
+    )
 }
 
 /// Keep only the most recent `keep` screenshots in the conversation, replacing
@@ -921,6 +1050,7 @@ pub async fn run_task(
 
     // Built-in tools, plus any tools exposed by configured MCP servers.
     let mut tool_defs = tool_declarations().as_array().cloned().unwrap_or_default();
+    tool_defs.extend(crate::skills::tool_declarations());
     let mcp_configs: Vec<mcp::McpServerConfig> =
         serde_json::from_value(backend.get_mcp_servers().await).unwrap_or_default();
     if !mcp_configs.is_empty() {
@@ -952,7 +1082,7 @@ pub async fn run_task(
         None => context_block,
     };
     let mut first_parts = vec![json!({
-        "text": format!("{}\n\n[TASK]\n{}", context_block, task)
+        "text": format!("{}\n\n{}\n\n[TASK]\n{}", context_block, crate::skills::catalog_text(), task)
     })];
     if let Some(shot) = &initial_shot {
         if let Some(img) = image_part(&shot.data_url) {
@@ -1084,11 +1214,12 @@ async fn agent_step_with_retry(
     tools: &Value,
     source: &str,
     ledger: &Ledger,
+    thinking: Option<u32>,
 ) -> Result<Value, String> {
     let mut attempt = 0usize;
     let mut compacted_for_size = false;
     loop {
-        match backend.agent_step(system, Value::Array(contents.clone()), tools.clone()).await {
+        match backend.agent_step(system, Value::Array(contents.clone()), tools.clone(), thinking).await {
             Ok(v) => return Ok(v),
             Err(e) => {
                 if is_payload_too_large(&e) && !compacted_for_size {
@@ -1327,7 +1458,28 @@ fn is_effect_tool(name: &str) -> bool {
             | "set_clipboard"
             | "delegate_to_browser"
             | "check_browser_task"
+            | "create_document"
     )
+}
+
+/// run_command calls that only look (list, read, status) - they don't change anything.
+fn is_read_only_command(name: &str, args: &Value) -> bool {
+    if name != "run_command" {
+        return false;
+    }
+    let cmd = args.get("command").and_then(|c| c.as_str()).unwrap_or("").trim().to_lowercase();
+    let first = cmd.split(|c: char| c.is_whitespace() || c == ';' || c == '|').next().unwrap_or("");
+    let looks = [
+        "get-childitem", "gci", "ls", "dir", "get-content", "gc", "cat", "type", "test-path", "get-item",
+        "select-string", "get-command", "where.exe", "where", "get-process", "get-date", "echo", "write-output",
+        "resolve-path", "get-location", "pwd", "whoami", "hostname", "systeminfo",
+    ];
+    if looks.contains(&first) {
+        return true;
+    }
+    ["git status", "git log", "git diff", "git show", "git branch", "node -v", "node --version", "npm -v", "python --version", "py --version"]
+        .iter()
+        .any(|p| cmd.starts_with(p))
 }
 
 /// Tools whose value is the information they return (new info = progress).
@@ -1372,6 +1524,9 @@ fn tool_failed(name: &str, response: &Value) -> bool {
         return true;
     }
     if name == "run_command" {
+        if let Some(code) = response.get("exit_code").and_then(|c| c.as_i64()) {
+            return code != 0;
+        }
         if let Some(out) = response.get("output").and_then(|o| o.as_str()) {
             let tail = out.trim_end();
             if let Some(idx) = tail.rfind("[exit code ") {
@@ -1395,6 +1550,15 @@ fn recovery_hint(name: &str, error: &str) -> Option<&'static str> {
         || e.contains("commandnotfoundexception")
     {
         return Some("That program isn't installed or isn't on PATH. Check with `Get-Command <name>` / `where.exe <name>`, call it by its full path, or use an alternative (npx <tool>, py -m <module>, a winget install if the user wants it).");
+    }
+    if e.contains("is not a valid statement separator") || (e.contains("unexpected token") && e.contains("&&")) {
+        return Some("This is Windows PowerShell 5.1: '&&' and '||' don't exist. Use ';' between commands, and check a native command with `if ($LASTEXITCODE -ne 0) { ... }`.");
+    }
+    if e.contains("unexpected token") || e.contains("missing closing") || e.contains("missing terminator") {
+        return Some("PowerShell syntax error. Quote paths with spaces, run an exe at a quoted path with the call operator (& \"C:\\path with spaces\\tool.exe\" args), escape $ inside double quotes (or use single quotes), and use PowerShell - not cmd or bash - syntax.");
+    }
+    if e.contains("os error 206") || e.contains("filename or extension is too long") {
+        return Some("The command line is too long. write_file the content (or a .ps1 script) first, then run that file.");
     }
     if e.contains("timed out") {
         return Some("It ran past the timeout. For a slow-but-finite command pass a larger timeout_seconds (max 300); for servers/watchers use background=true and read_file the log it writes. It may have partly run - check the current state before re-running.");
@@ -1879,7 +2043,7 @@ answers the user asked for. Be specific and brief.",
         ),
     );
     prune_old_images(contents, 1);
-    let text = match agent_step_with_retry(app, backend, system, contents, tools, source, ledger).await {
+    let text = match agent_step_with_retry(app, backend, system, contents, tools, source, ledger, None).await {
         Ok(step) => step
             .get("parts")
             .and_then(|p| p.as_array())
@@ -1934,6 +2098,7 @@ async fn drive_loop(
     let mut budget = BASE_BUDGET;
     let mut empty_response_count: usize = 0;
     let mut completion_reviews: usize = 0;
+    let mut think_next = false;
     let mut last_round_failed = false;
     let mut consecutive_errors: usize = 0;
     let mut last_failed_call: Option<String> = None;
@@ -1982,7 +2147,14 @@ async fn drive_loop(
         ledger.steps = iteration;
 
         prune_old_images(&mut contents, KEEP_IMAGES);
-        let step = match agent_step_with_retry(app, backend, system, &mut contents, tools, source, &ledger).await {
+        // Think on the steps that decide the run: the first plan, recovering from
+        // repeated failures or a stall, and the check before finishing.
+        let think = iteration == 1
+            || think_next
+            || consecutive_errors >= 2
+            || progress.stall_steps >= STALL_WARN_STEPS;
+        think_next = false;
+        let step = match agent_step_with_retry(app, backend, system, &mut contents, tools, source, &ledger, think.then_some(PLANNING_THINKING_BUDGET)).await {
             Ok(step) => step,
             Err(e) => {
                 if cancel_requested(source) {
@@ -2070,6 +2242,7 @@ a tool if you need more information, or give a plain-text final answer if the ta
             let concerns = completion_concerns(&assistant_text, &ledger, task, last_round_failed);
             if !concerns.is_empty() && completion_reviews < MAX_COMPLETION_REVIEWS && iteration + 1 < budget {
                 completion_reviews += 1;
+                think_next = true;
                 flush_phase(app, source, &mut phase);
                 emit(app, source, "thinking", "Checking the result before finishing…");
                 let mut note = String::from("[SYSTEM] Completion check before you finish.\n");
@@ -2195,7 +2368,9 @@ Repeating it won't work - change something real or take a different route.",
                 consecutive_errors = 0;
                 repeated_failures = 0;
                 last_failed_call = None;
-                if is_effect_tool(&name) || is_mcp {
+                // A read-only command (Get-ChildItem, git status, dir…) is an
+                // observation, not evidence that anything was done.
+                if (is_effect_tool(&name) && !is_read_only_command(&name, &args)) || is_mcp {
                     ledger.effects += 1;
                 }
                 if progress.observe_result(&name, &args, &outcome.response, is_mcp) {
@@ -2356,6 +2531,8 @@ fn tool_label(name: &str, args: &Value) -> String {
             truncate(args.get("instruction").and_then(|c| c.as_str()).unwrap_or(""), 70)
         ),
         "check_browser_task" => "Collecting browser result".to_string(),
+        "use_skill" => format!("Using the {} playbook", args.get("name").and_then(|c| c.as_str()).unwrap_or("")),
+        "create_document" => format!("Creating {}", args.get("path").and_then(|c| c.as_str()).unwrap_or("a Word document")),
         other => other.to_string(),
     }
 }
@@ -2370,8 +2547,13 @@ async fn execute_tool(
     trusted: &mut HashSet<String>,
 ) -> ToolOutcome {
     match name {
-        "run_command" => run_command_tool(args).await,
+        "run_command" => run_command_tool(source, args).await,
         "read_file" => read_file_tool(args),
+        "use_skill" => match crate::skills::use_skill(args) {
+            Ok(text) => ToolOutcome::text(text),
+            Err(e) => ToolOutcome::err(e),
+        },
+        "create_document" => create_document_tool(args),
         "write_file" => write_file_tool(args),
         "edit_file" => edit_file_tool(args),
         "search_in_files" => search_in_files_tool(args).await,
@@ -2463,7 +2645,7 @@ isn't visible, the action did NOT work. Base any next click/scroll coordinates o
     }
 }
 
-async fn run_command_tool(args: &Value) -> ToolOutcome {
+async fn run_command_tool(source: &str, args: &Value) -> ToolOutcome {
     let command = args.get("command").and_then(|c| c.as_str()).unwrap_or("").trim().to_string();
     if command.is_empty() {
         return ToolOutcome::err("no command provided");
@@ -2483,7 +2665,8 @@ async fn run_command_tool(args: &Value) -> ToolOutcome {
         .get("cwd")
         .and_then(|c| c.as_str())
         .filter(|c| !c.trim().is_empty())
-        .map(|c| c.to_string())
+        // Same resolution as the file tools: ~, %VAR%, Documents\… and friends.
+        .map(|c| resolve_agent_path(c).to_string_lossy().into_owned())
         .unwrap_or_else(|| agent_scratch_dir().to_string_lossy().into_owned());
     let cwd = Some(cwd);
     let timeout = args
@@ -2493,25 +2676,72 @@ async fn run_command_tool(args: &Value) -> ToolOutcome {
         .map(|d| d.clamp(Duration::from_secs(1), MAX_COMMAND_TIMEOUT))
         .unwrap_or(COMMAND_TIMEOUT);
     let cmd = command.clone();
+    let src = source.to_string();
 
-    let result = tokio::task::spawn_blocking(move || run_powershell(&cmd, background, cwd.as_deref(), timeout)).await;
+    let result = tokio::task::spawn_blocking(move || {
+        run_powershell_cancellable(&cmd, background, cwd.as_deref(), timeout, &|| cancel_pending(&src))
+    })
+    .await;
     match result {
-        Ok(Ok(out)) => ToolOutcome {
-            response: json!({ "output": truncate(&out, MAX_TOOL_OUTPUT) }),
-            image_data_url: None,
-            log: if background { format!("started in background: {}", command) } else { truncate(&out, 300) },
-        },
+        Ok(Ok(out)) => {
+            let exit_code = exit_code_of(&out);
+            ToolOutcome {
+                // Head + tail, never head-only: the error and the [exit code N] marker
+                // live at the END of a failing build's output, and cutting them used
+                // to make a failed command look like a success.
+                response: json!({ "output": clip_middle(&out, MAX_TOOL_OUTPUT), "exit_code": exit_code }),
+                image_data_url: None,
+                log: if background { format!("started in background: {}", command) } else { truncate(&out, 300) },
+            }
+        }
         Ok(Err(e)) => ToolOutcome::err(e),
         Err(e) => ToolOutcome::err(format!("task failed: {}", e)),
     }
 }
 
-/// UTF-8 in/out and no progress bars: PowerShell otherwise emits output in
-/// the console's OEM code page (garbling non-English text) and progress
-/// records that are pure noise in a captured log.
+/// `[exit code N]` at the end of run_powershell's output → N (0 when absent).
+fn exit_code_of(out: &str) -> i64 {
+    let tail = out.trim_end();
+    if !tail.ends_with(']') {
+        return 0;
+    }
+    tail.rfind("[exit code ")
+        .and_then(|i| tail[i + 11..tail.len() - 1].trim().parse::<i64>().ok())
+        .unwrap_or(0)
+}
+
+/// Keep the start and (mostly) the end of long output. Command output reads
+/// top-down, but the verdict - the error, the failing test, the exit code - is
+/// at the bottom.
+fn clip_middle(s: &str, max: usize) -> String {
+    let total = s.chars().count();
+    if total <= max {
+        return s.to_string();
+    }
+    let head_n = max / 4;
+    let tail_n = max - head_n;
+    let head: String = s.chars().take(head_n).collect();
+    let tail: String = s.chars().skip(total - tail_n).collect();
+    format!("{}\n…[{} chars omitted from the middle]…\n{}", head, total - head_n - tail_n, tail)
+}
+
+/// The shell prelude every agent command runs inside.
+///  - UTF-8 WITHOUT a BOM in and out (the BOM variant leaked U+FEFF into output),
+///    and `>`/Out-File/Set-Content default to UTF-8 instead of 5.1's UTF-16, so
+///    read_file can read what the command wrote.
+///  - PATH re-read from the registry: something installed earlier in the run
+///    (winget install node) is usable without restarting the app.
+///  - The command runs in a script block, and the process exits with the real
+///    status: the last native exit code, or 1 if the last cmdlet failed. Before,
+///    `npm run build; Write-Output done` exited 0 and the failure was invisible.
 fn powershell_prelude(command: &str) -> String {
     format!(
-        "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8; $ProgressPreference='SilentlyContinue'; {}",
+        "$ProgressPreference='SilentlyContinue'; $ErrorActionPreference='Continue'; \
+$__u = New-Object System.Text.UTF8Encoding $false; [Console]::OutputEncoding=$__u; $OutputEncoding=$__u; \
+$PSDefaultParameterValues['Out-File:Encoding']='utf8'; $PSDefaultParameterValues['Set-Content:Encoding']='utf8'; \
+$PSDefaultParameterValues['Add-Content:Encoding']='utf8'; \
+try {{ $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User') }} catch {{}}; \
+$global:LASTEXITCODE = 0; & {{\n{}\n}}; if ($LASTEXITCODE) {{ exit $LASTEXITCODE }} elseif (-not $?) {{ exit 1 }}",
         command
     )
 }
@@ -2519,6 +2749,14 @@ fn powershell_prelude(command: &str) -> String {
 fn hidden_powershell(command: &str) -> std::process::Command {
     let mut cmd = std::process::Command::new("powershell");
     cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &powershell_prelude(command)]);
+    // No hidden prompts that would sit until the timeout: git asking for a
+    // password, npx asking "Ok to proceed?", Python crashing on non-ASCII output.
+    cmd.env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never")
+        .env("npm_config_yes", "true")
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("NO_COLOR", "1");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -2527,7 +2765,18 @@ fn hidden_powershell(command: &str) -> std::process::Command {
     cmd
 }
 
+#[cfg(test)]
 fn run_powershell(command: &str, background: bool, cwd: Option<&str>, timeout: Duration) -> Result<String, String> {
+    run_powershell_cancellable(command, background, cwd, timeout, &|| false)
+}
+
+fn run_powershell_cancellable(
+    command: &str,
+    background: bool,
+    cwd: Option<&str>,
+    timeout: Duration,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<String, String> {
     use std::process::Stdio;
 
     if let Some(dir) = cwd {
@@ -2538,9 +2787,11 @@ fn run_powershell(command: &str, background: bool, cwd: Option<&str>, timeout: D
 
     if background {
         // Detached, but its output goes to a log file the agent can read_file
-        // later (e.g. to see whether a dev server actually started).
-        let log = agent_scratch_dir().join(format!("bg-{}.log", uuid::Uuid::new_v4().simple()));
-        let _ = std::fs::create_dir_all(agent_scratch_dir());
+        // later (e.g. to see whether a dev server actually started). Logs live
+        // outside the scratch folder so the next run's cleanup can't wipe them.
+        let log_dir = std::env::temp_dir().join("mouse-ai-agent-logs");
+        let _ = std::fs::create_dir_all(&log_dir);
+        let log = log_dir.join(format!("bg-{}.log", uuid::Uuid::new_v4().simple()));
         let file = std::fs::File::create(&log).map_err(|e| format!("couldn't create log: {}", e))?;
         let err_file = file.try_clone().map_err(|e| e.to_string())?;
         let mut cmd = hidden_powershell(command);
@@ -2550,9 +2801,12 @@ fn run_powershell(command: &str, background: bool, cwd: Option<&str>, timeout: D
         }
         let child = cmd.spawn().map_err(|e| format!("failed to start: {}", e))?;
         return Ok(format!(
-            "Started in the background (pid {}). Output is being written to {} - read_file it to check progress.",
+            "Started in the background (pid {}). Output is being written to {} - read_file it to check progress. \
+Stop it later with: Stop-Process -Id {} (or taskkill /T /F /PID {} for its whole process tree).",
             child.id(),
-            log.display()
+            log.display(),
+            child.id(),
+            child.id()
         ));
     }
 
@@ -2564,7 +2818,7 @@ fn run_powershell(command: &str, background: bool, cwd: Option<&str>, timeout: D
     let child = spawn_cmd.spawn().map_err(|e| format!("failed to start: {}", e))?;
 
     // Enforce a wall-clock timeout so one hung command can't stall the agent.
-    let (status, stdout, stderr, timed_out) = wait_with_timeout(child, timeout)?;
+    let (status, stdout, stderr, ended) = wait_with_timeout(child, timeout, cancelled)?;
     let mut combined = String::new();
     if !stdout.trim().is_empty() {
         combined.push_str(stdout.trim_end());
@@ -2576,12 +2830,16 @@ fn run_powershell(command: &str, background: bool, cwd: Option<&str>, timeout: D
         combined.push_str("[stderr] ");
         combined.push_str(stderr.trim_end());
     }
-    if timed_out {
-        return Err(format!(
-            "command timed out after {}s (pass a longer timeout_seconds for a slow-but-finite command, or background=true for a long-running/indefinite one). Output so far:\n{}",
-            timeout.as_secs(),
-            if combined.is_empty() { "(none)".to_string() } else { truncate(&combined, 4000) }
-        ));
+    match ended {
+        WaitEnd::Cancelled => return Err("Stopped at your request (the command and its child processes were ended).".to_string()),
+        WaitEnd::TimedOut => {
+            return Err(format!(
+                "command timed out after {}s and was ended (with its child processes). Pass a longer timeout_seconds for a slow-but-finite command, or background=true for a long-running/indefinite one. Output so far:\n{}",
+                timeout.as_secs(),
+                if combined.is_empty() { "(none)".to_string() } else { clip_middle(&combined, 4000) }
+            ))
+        }
+        WaitEnd::Exited => {}
     }
     if combined.is_empty() {
         combined.push_str("(command completed with no output)");
@@ -2594,44 +2852,106 @@ fn run_powershell(command: &str, background: bool, cwd: Option<&str>, timeout: D
     Ok(combined)
 }
 
+enum WaitEnd {
+    Exited,
+    TimedOut,
+    Cancelled,
+}
+
+/// End a process AND everything it started. Killing only powershell.exe left
+/// npm/node/git children holding the output pipes open, and the agent then hung
+/// forever waiting for EOF.
+fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .creation_flags(0x0800_0000)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// Waits for the child while DRAINING its pipes on background threads.
 /// Reading only after exit (the old way) deadlocks as soon as a command
 /// prints more than the pipe buffer (npm install, builds, big listings):
-/// the child blocks writing, never exits, and "times out".
+/// the child blocks writing, never exits, and "times out". The drains are
+/// collected with a deadline, so a grandchild that inherited a pipe can't
+/// block the agent after the command itself has finished.
 fn wait_with_timeout(
     mut child: std::process::Child,
     timeout: Duration,
-) -> Result<(Option<std::process::ExitStatus>, String, String, bool), String> {
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Option<std::process::ExitStatus>, String, String, WaitEnd), String> {
     use std::io::Read;
     use std::time::Instant;
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
         std::thread::spawn(move || {
             let mut buf = Vec::new();
             if let Some(mut p) = pipe {
                 let _ = p.read_to_end(&mut buf);
             }
-            String::from_utf8_lossy(&buf).into_owned()
-        })
+            let _ = tx.send(String::from_utf8_lossy(&buf).into_owned());
+        });
+        rx
     };
-    let out_t = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let err_t = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let out_rx = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let err_rx = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
 
     let start = Instant::now();
-    let (status, timed_out) = loop {
+    let (status, ended) = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break (Some(status), false),
+            Ok(Some(status)) => break (Some(status), WaitEnd::Exited),
+            Ok(None) if cancelled() => {
+                kill_tree(&mut child);
+                break (None, WaitEnd::Cancelled);
+            }
             Ok(None) if start.elapsed() >= timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break (None, true);
+                kill_tree(&mut child);
+                break (None, WaitEnd::TimedOut);
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(60)),
             Err(e) => return Err(format!("wait failed: {}", e)),
         }
     };
-    let stdout = out_t.join().unwrap_or_default();
-    let stderr = err_t.join().unwrap_or_default();
-    Ok((status, stdout, stderr, timed_out))
+    let grace = Duration::from_secs(3);
+    let held = "(output stream still held open by a background child process)";
+    let stdout = out_rx.recv_timeout(grace).unwrap_or_else(|_| held.to_string());
+    let stderr = err_rx.recv_timeout(Duration::from_millis(500)).unwrap_or_default();
+    Ok((status, stdout, stderr, ended))
+}
+
+/// Decode file bytes the way Windows tools actually write them: UTF-8 (with or
+/// without BOM) or UTF-16 LE/BE (PowerShell 5.1's `>` and Out-File default) -
+/// read_to_string used to fail on the latter with "stream did not contain valid UTF-8".
+fn decode_text(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return String::from_utf8_lossy(&bytes[3..]).into_owned();
+    }
+    let utf16 = |le: bool, b: &[u8]| {
+        let units: Vec<u16> = b
+            .chunks_exact(2)
+            .map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) })
+            .collect();
+        String::from_utf16_lossy(&units)
+    };
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        return utf16(true, &bytes[2..]);
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        return utf16(false, &bytes[2..]);
+    }
+    // BOM-less UTF-16LE: every other byte zero in the opening stretch.
+    let probe = &bytes[..bytes.len().min(400)];
+    if probe.len() >= 4 && probe.iter().skip(1).step_by(2).all(|b| *b == 0) {
+        return utf16(true, bytes);
+    }
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn read_file_tool(args: &Value) -> ToolOutcome {
@@ -2640,19 +2960,75 @@ fn read_file_tool(args: &Value) -> ToolOutcome {
         return ToolOutcome::err("no path provided");
     }
     let path = resolve_agent_path(raw);
-    match std::fs::read_to_string(&path) {
-        Ok(content) => ToolOutcome {
-            response: json!({ "content": truncate(&content, MAX_FILE_READ) }),
-            image_data_url: None,
-            log: format!("read {} ({} bytes)", path.display(), content.len()),
-        },
-        Err(e) => ToolOutcome::err(format!("could not read {}: {}", path.display(), e)),
+    let shown = path.display().to_string();
+    let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+
+    // Office documents and spreadsheets: their text, not a UTF-8 error.
+    let text = if ["docx", "docm", "pptx", "xlsx", "xlsm", "xls", "ods", "csv"].contains(&ext.as_str()) && ext != "csv" {
+        match crate::documents::extract_text(&shown) {
+            Ok(t) => t,
+            Err(e) => return ToolOutcome::err(format!("could not read {}: {}", shown, e)),
+        }
+    } else {
+        match std::fs::metadata(&path) {
+            Ok(m) if m.is_dir() => return ToolOutcome::err(format!("{} is a folder - use list_directory.", shown)),
+            Ok(m) if m.len() > 20 * 1024 * 1024 => {
+                return ToolOutcome::err(format!("{} is {} MB - too large to read whole; use search_in_files or a command (Select-String / Get-Content -TotalCount).", shown, m.len() / (1024 * 1024)))
+            }
+            Err(e) => return ToolOutcome::err(format!("could not read {}: {}", shown, e)),
+            _ => {}
+        }
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                if bytes.iter().take(8192).filter(|b| **b == 0).count() > 0 && !looks_utf16(&bytes) {
+                    return ToolOutcome::err(format!("{} is a binary file (no text to read).", shown));
+                }
+                decode_text(&bytes)
+            }
+            Err(e) => return ToolOutcome::err(format!("could not read {}: {}", shown, e)),
+        }
+    };
+
+    // Paging by line, so a long file can be read in parts instead of being cut at 20K chars.
+    let lines: Vec<&str> = text.lines().collect();
+    let total_lines = lines.len();
+    let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let limit = args.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize);
+    let paged = offset > 0 || limit.is_some();
+    let body = if paged {
+        let end = limit.map(|l| (offset + l).min(total_lines)).unwrap_or(total_lines);
+        lines.get(offset.min(total_lines)..end).map(|s| s.join("\n")).unwrap_or_default()
+    } else {
+        text.clone()
+    };
+    let truncated = body.chars().count() > MAX_FILE_READ;
+    let mut response = json!({
+        "path": shown,
+        "content": truncate(&body, MAX_FILE_READ),
+        "total_lines": total_lines,
+    });
+    if paged {
+        response["start_line"] = json!(offset + 1);
     }
+    if truncated {
+        response["note"] = json!("Content was cut. Read the rest with offset/limit (line numbers).");
+    }
+    ToolOutcome {
+        response,
+        image_data_url: None,
+        log: format!("Read {} ({} lines)", shown, total_lines),
+    }
+}
+
+fn looks_utf16(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF])
+        || (bytes.len() >= 4 && bytes[..bytes.len().min(400)].iter().skip(1).step_by(2).all(|b| *b == 0))
 }
 
 fn write_file_tool(args: &Value) -> ToolOutcome {
     let raw = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
     let content = args.get("content").and_then(|c| c.as_str()).unwrap_or("");
+    let append = args.get("append").and_then(|a| a.as_bool()).unwrap_or(false);
     if raw.is_empty() {
         return ToolOutcome::err("no path provided");
     }
@@ -2660,25 +3036,95 @@ fn write_file_tool(args: &Value) -> ToolOutcome {
     // Captured before the write so the activity log's "+N -M" stat reflects
     // what actually changed - None (file didn't exist yet) means every line
     // of the new content counts as added.
-    let old_content = std::fs::read_to_string(&path).ok();
+    let old_content = std::fs::read(&path).ok().map(|b| decode_text(&b));
+    let existed = old_content.is_some();
+    let mut created_dir = None;
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if !parent.exists() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                return ToolOutcome::err(format!("could not create folder {}: {}", parent.display(), e));
+            }
+            created_dir = Some(parent.display().to_string());
+        }
     }
-    match std::fs::write(&path, content) {
+    let result = if append {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut f| f.write_all(content.as_bytes()))
+    } else {
+        std::fs::write(&path, content)
+    };
+    match result {
         Ok(()) => {
-            let scratch_note = if path.starts_with(agent_scratch_dir()) {
-                " (private scratch file - delete_file it once you're done with it, unless the user asked to keep it)"
+            // Verify on disk rather than trusting the call: the model reports what
+            // THIS says, so it must describe the file that is really there.
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let scratch = path.starts_with(agent_scratch_dir());
+            let action = if append { "Appended to" } else if existed { "Overwrote" } else { "Created" };
+            let mut msg = format!("{} {} - now {} bytes on disk.", action, path.display(), size);
+            if let Some(dir) = &created_dir {
+                msg.push_str(&format!(" (Created the folder {}.)", dir));
+            }
+            if scratch {
+                msg.push_str(" This is your private scratch folder (deleted after the run) - write to an absolute path the user can see if they should keep it.");
             } else {
-                ""
-            };
-            let msg = format!("Wrote {} ({} bytes).{}", path.display(), content.len(), scratch_note);
-            let mut log = msg.clone();
-            if let Some((added, removed)) = line_diff_stats(old_content.as_deref().unwrap_or(""), content) {
+                msg.push_str(" Tell the user this exact path.");
+            }
+            let mut log = format!("{} {} ({} bytes)", action, path.display(), size);
+            let new_content = if append { format!("{}{}", old_content.as_deref().unwrap_or(""), content) } else { content.to_string() };
+            if let Some((added, removed)) = line_diff_stats(old_content.as_deref().unwrap_or(""), &new_content) {
                 log.push_str(&format!("\u{1}DIFF {} {}", added, removed));
             }
-            ToolOutcome { response: json!({ "result": msg }), image_data_url: None, log }
+            ToolOutcome {
+                response: json!({ "result": msg, "path": path.display().to_string(), "bytes": size, "created": !existed }),
+                image_data_url: None,
+                log,
+            }
         }
         Err(e) => ToolOutcome::err(format!("could not write {}: {}", path.display(), e)),
+    }
+}
+
+/// Markdown → a real Word .docx at the resolved path (see skills::create_docx).
+fn create_document_tool(args: &Value) -> ToolOutcome {
+    let raw = args.get("path").and_then(|p| p.as_str()).unwrap_or("").trim();
+    let markdown = args.get("markdown").and_then(|m| m.as_str()).unwrap_or("");
+    if raw.is_empty() || markdown.trim().is_empty() {
+        return ToolOutcome::err("create_document needs a path and the markdown content");
+    }
+    let mut path = resolve_agent_path(raw);
+    if path.extension().map(|e| !e.eq_ignore_ascii_case("docx")).unwrap_or(true) {
+        path.set_extension("docx");
+    }
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return ToolOutcome::err(format!("could not create folder {}: {}", parent.display(), e));
+        }
+    }
+    let bytes = match crate::skills::create_docx(markdown) {
+        Ok(b) => b,
+        Err(e) => return ToolOutcome::err(format!("could not build the document: {}", e)),
+    };
+    let existed = path.exists();
+    match std::fs::write(&path, &bytes) {
+        Ok(()) => {
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let msg = format!(
+                "{} Word document {} ({} bytes on disk). Tell the user this exact path.",
+                if existed { "Overwrote" } else { "Created" },
+                path.display(),
+                size
+            );
+            ToolOutcome {
+                response: json!({ "result": msg, "path": path.display().to_string(), "bytes": size }),
+                image_data_url: None,
+                log: format!("Created {} ({} bytes)", path.display(), size),
+            }
+        }
+        Err(e) => ToolOutcome::err(format!("could not write {}: {} (is it open in Word?)", path.display(), e)),
     }
 }
 
@@ -3350,6 +3796,13 @@ async fn delegate_to_browser_tool(source: &str, args: &Value) -> ToolOutcome {
             options["url"] = json!(url.trim());
         }
     }
+    // Shared data for the browser side (file contents, values) - it can't read the PC.
+    if let Some(ctx) = args.get("context").and_then(|v| v.as_str()) {
+        let ctx: String = ctx.trim().chars().take(20000).collect();
+        if !ctx.is_empty() {
+            options["context"] = json!(ctx);
+        }
+    }
 
     let b = crate::bridge::bridge();
     if background {
@@ -3808,6 +4261,67 @@ mod run_command_tests {
     fn reports_nonzero_exit_code() {
         let out = run_powershell("Write-Output 'oops'; exit 3", false, None, Duration::from_secs(30)).unwrap();
         assert!(out.contains("[exit code 3]"), "{}", out);
+    }
+
+    /// A failing native command followed by more output used to exit 0.
+    #[test]
+    fn failure_before_last_statement_is_reported() {
+        let out = run_powershell("cmd /c exit 4; Write-Output 'after'", false, None, Duration::from_secs(30)).unwrap();
+        assert!(out.contains("[exit code 4]"), "{}", out);
+        assert_eq!(exit_code_of(&out), 4);
+    }
+
+    /// A timeout must end the child processes too, and return promptly.
+    #[test]
+    fn timeout_kills_the_process_tree() {
+        let started = std::time::Instant::now();
+        let err = run_powershell("Start-Process -NoNewWindow -Wait ping -ArgumentList '-n','30','127.0.0.1'", false, None, Duration::from_secs(2))
+            .unwrap_err();
+        assert!(err.contains("timed out"), "{}", err);
+        assert!(started.elapsed() < Duration::from_secs(12), "took {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn cancel_stops_a_running_command() {
+        let started = std::time::Instant::now();
+        let cancel_at = started + Duration::from_millis(800);
+        let err = run_powershell_cancellable("Start-Sleep -Seconds 20", false, None, Duration::from_secs(60), &|| std::time::Instant::now() > cancel_at)
+            .unwrap_err();
+        assert!(err.contains("Stopped"), "{}", err);
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn clip_keeps_the_tail() {
+        let long = format!("{}\nFATAL: build failed\n[exit code 2]", "x".repeat(20_000));
+        let clipped = clip_middle(&long, 6000);
+        assert!(clipped.contains("FATAL: build failed") && clipped.ends_with("[exit code 2]"));
+    }
+
+    #[test]
+    fn paths_resolve_to_real_folders() {
+        let docs = dirs::document_dir().unwrap();
+        assert_eq!(resolve_agent_path("Documents\\notes.md"), docs.join("notes.md"));
+        assert_eq!(resolve_agent_path("~"), dirs::home_dir().unwrap());
+        let via_env = resolve_agent_path("%USERPROFILE%\\x.txt");
+        assert!(via_env.is_absolute() && !via_env.to_string_lossy().contains('%'), "{:?}", via_env);
+        assert!(resolve_agent_path("helper.py").starts_with(agent_scratch_dir()));
+    }
+
+    #[test]
+    fn destructive_filter_blocks_wipes_not_everyday_commands() {
+        for ok in [
+            "Get-Date -Format 'yyyy-MM-dd'",
+            "npm run format",
+            "rd /s /q node_modules",
+            "Remove-Item -Recurse -Force .\\dist",
+            "Write-Output 'shutdown later'",
+        ] {
+            assert!(is_destructive(ok).is_none(), "wrongly blocked: {}", ok);
+        }
+        for bad in ["format C:", "Remove-Item -Recurse -Force C:\\", "rd /s /q C:\\", "shutdown /s /t 0", "Stop-Computer", "rm -rf ~"] {
+            assert!(is_destructive(bad).is_some(), "not blocked: {}", bad);
+        }
     }
 
     #[test]

@@ -194,14 +194,14 @@ export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPa
 
           <Section
             title="MCP servers"
-            description="Advanced. A JSON array of stdio MCP servers whose tools are added to the agent: name, command, args, optional env."
+            description={'Connect other apps to the agent. Paste a "mcpServers" block from Claude Desktop, Cursor or a server\'s README, or a JSON array. Local servers use command + args (npx/uvx work); remote ones use url + optional headers. Add "disabled": true to switch one off.'}
           >
             <textarea
               value={mcpJson}
               onChange={(e) => setMcpJson(e.target.value)}
-              rows={6}
+              rows={8}
               spellCheck={false}
-              placeholder={`[\n  { "name": "filesystem", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/you"] }\n]`}
+              placeholder={`{\n  "mcpServers": {\n    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/you/Documents"] },\n    "github": { "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer <token>" } }\n  }\n}`}
               className="w-full rounded-lg border border-border-default bg-bg-primary px-3 py-2 font-mono text-[12px] outline-none focus:border-border-focus"
             />
             <div>

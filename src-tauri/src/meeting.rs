@@ -484,7 +484,7 @@ async fn transcribe_gemini(
         parts.push(json!({ "inlineData": { "mimeType": "audio/wav", "data": STANDARD.encode(wav) } }));
     }
     let contents = json!([{ "role": "user", "parts": parts }]);
-    let resp = backend.agent_step(TRANSCRIBE_SYSTEM, contents, json!([])).await?;
+    let resp = backend.agent_step(TRANSCRIBE_SYSTEM, contents, json!([]), None).await?;
     Ok(parse_transcription(&response_text(&resp)))
 }
 
@@ -1170,7 +1170,7 @@ pub async fn meeting_assist(
         Some(text) => text.trim().to_string(),
         None => {
             let resp = backend
-                .agent_step(&system, contents, json!([]))
+                .agent_step(&system, contents, json!([]), None)
                 .await
                 .map_err(|e| friendly_assist_error(&e))?;
             response_text(&resp)

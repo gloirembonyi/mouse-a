@@ -913,7 +913,7 @@ fn cap_text(mut s: String) -> String {
     s
 }
 
-fn extract_text(path: &str) -> Result<String, String> {
+pub(crate) fn extract_text(path: &str) -> Result<String, String> {
     let ext = ext_of(path);
     if DOCX_EXTS.contains(&ext.as_str()) {
         let blocks = docx_blocks(&mut open_zip(path)?, false)?;

@@ -295,11 +295,46 @@ else {{ [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, 'OnlyErrorDial
 /// Shows the item selected in File Explorer.
 #[tauri::command]
 pub fn fs_reveal(path: String) -> Result<(), String> {
-    std::process::Command::new("explorer.exe")
-        .arg(format!("/select,{}", path))
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    reveal_path(&path)
+}
+
+/// Open the file manager on `path` (selecting it when it's a file). Shared by the UI
+/// command and the browser bridge ("Show in folder" next to a path in the extension).
+/// Only ever selects/opens a folder view - it never launches the file itself.
+pub fn reveal_path(path: &str) -> Result<(), String> {
+    let raw = path.trim().trim_matches('"');
+    let expanded = if let Some(rest) = raw.strip_prefix("~") {
+        format!("{}{}", std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_default(), rest)
+    } else {
+        raw.replace("%USERPROFILE%", &std::env::var("USERPROFILE").unwrap_or_default())
+    };
+    let p = std::path::Path::new(&expanded);
+    if !p.is_absolute() {
+        return Err(format!("Not an absolute path: {}", raw));
+    }
+    if !p.exists() {
+        return Err(format!("Nothing exists at {}", expanded));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("explorer.exe");
+        // explorer parses its own command line: the path must be quoted INSIDE the
+        // /select, argument. std's quoting wraps the whole argument instead, which
+        // breaks on any path with a space ("mouse ai desktop") - hence raw_arg.
+        if p.is_dir() {
+            cmd.raw_arg(format!("\"{}\"", expanded));
+        } else {
+            cmd.raw_arg(format!("/select,\"{}\"", expanded));
+        }
+        cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let target = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        std::process::Command::new(opener).arg(target).spawn().map(|_| ()).map_err(|e| e.to_string())
+    }
 }
 
 /// Opens with the default app (PDFs, Office docs, images…).

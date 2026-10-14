@@ -284,6 +284,14 @@ pub fn handle_desktop_task(v: &Value, paired: bool) {
         .and_then(|c| c.as_str())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+    // What the browser agent knows that this job needs: the page it is on, the text to
+    // write, values it found. Older extensions don't send it.
+    let context = v
+        .get("options")
+        .and_then(|o| o.get("context"))
+        .and_then(|c| c.as_str())
+        .map(|s| s.trim().chars().take(12000).collect::<String>())
+        .filter(|s| !s.is_empty());
 
     task_started(&id, "from_browser", &task, "queued");
     bridge().send_json(json!({ "v": 1, "type": "desktop_accepted", "id": id }));
@@ -299,6 +307,9 @@ Do the PC-side part (terminal, files, folders, apps), then answer with a concise
         );
         if let Some(dir) = &cwd {
             prompt.push_str(&format!("[Working folder: {} - use absolute paths under it.]\n\n", dir));
+        }
+        if let Some(ctx) = &context {
+            prompt.push_str(&format!("[Context from the browser agent - use it as the data for this task]\n{}\n\n", ctx));
         }
         prompt.push_str(&task);
 
