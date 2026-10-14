@@ -1,12 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import clsx from "clsx";
 
-// The aura: one fluid iridescent wash (teal -> electric blue -> violet -> magenta) that
-// circles every character. Its speed and brightness ARE the state - a slow drift at
-// rest, a quicker swirl while thinking, a bright spin while working, a breath in time
-// with the voice while listening (index.css, .bot-aura).
-const IRIS = ["#36e3c9", "#4f8bff", "#9b6cff", "#ec4ad7", "#36e3c9"];
-
 // Eyes follow the pointer by a few percent - the small thing that makes a character
 // feel present. One document listener for every avatar, rAF-throttled.
 const gazeTargets = new Set<HTMLElement>();
@@ -27,14 +21,40 @@ function applyGaze() {
     el.style.setProperty("--bot-ey", `${(dy * 3).toFixed(2)}%`);
   }
 }
+// Idle behaviour: when the pointer has been still, glance somewhere and come back, or
+// double-blink - so a character that is just sitting there still feels alive.
+let lastPointerAt = 0;
+let glanceTimer: number | undefined;
+function scheduleGlance() {
+  window.clearTimeout(glanceTimer);
+  glanceTimer = window.setTimeout(() => {
+    const idleFor = Date.now() - lastPointerAt;
+    for (const el of gazeTargets) {
+      if (idleFor < 2500 || el.classList.contains("bot-sleeping")) continue;
+      if (Math.random() < 0.6) {
+        el.style.setProperty("--bot-ex", `${(Math.random() * 8 - 4).toFixed(2)}%`);
+        el.style.setProperty("--bot-ey", `${(Math.random() * 5 - 3).toFixed(2)}%`);
+        window.setTimeout(() => {
+          if (Date.now() - lastPointerAt > 2000) { el.style.setProperty("--bot-ex", "0%"); el.style.setProperty("--bot-ey", "0%"); }
+        }, 700 + Math.random() * 900);
+      } else {
+        const eyes = el.querySelector<SVGGElement>(".bot-eyes");
+        if (eyes) { eyes.style.animation = "bot-blink .35s 2"; window.setTimeout(() => { eyes.style.animation = ""; }, 800); }
+      }
+    }
+    scheduleGlance();
+  }, 2800 + Math.random() * 4200);
+}
 function bindGaze() {
   if (gazeBound || typeof document === "undefined") return;
   gazeBound = true;
+  scheduleGlance();
   document.addEventListener(
     "pointermove",
     (e) => {
       gazeX = e.clientX;
       gazeY = e.clientY;
+      lastPointerAt = Date.now();
       if (!gazeRaf) gazeRaf = requestAnimationFrame(applyGaze);
     },
     { passive: true, capture: true },
@@ -123,15 +143,36 @@ function Eyes({ mood, kind }: { mood: BotMood; kind: BotKind }) {
       </g>
     );
   }
-  const r = mood === "listening" ? 6.4 : 5.6;
+  // Eyes carry the emotion: wide when listening, narrowed and set when working, lifted
+  // when thinking (they also drift up-left via bot-look), plain otherwise.
+  const r = mood === "listening" ? 6.6 : mood === "working" ? 4.9 : 5.6;
+  const rx = r * (mood === "working" ? 1 : 0.82);
+  const ey = mood === "thinking" ? y - 1.5 : y;
   return (
-    <g className="bot-eyes" fill={ink}>
-      <ellipse cx="40" cy={y} rx={r * 0.82} ry={r} />
-      <ellipse cx="60" cy={y} rx={r * 0.82} ry={r} />
-      <circle cx={40 + 1.6} cy={y - 2} r="1.4" fill="#fff" opacity="0.85" />
-      <circle cx={60 + 1.6} cy={y - 2} r="1.4" fill="#fff" opacity="0.85" />
-    </g>
+    <>
+      <g className="bot-eyes" fill={ink}>
+        <ellipse cx="40" cy={ey} rx={rx} ry={r} />
+        <ellipse cx="60" cy={ey} rx={rx} ry={r} />
+        <circle cx={40 + 1.6} cy={ey - 2} r="1.4" fill="#fff" opacity="0.85" />
+        <circle cx={60 + 1.6} cy={ey - 2} r="1.4" fill="#fff" opacity="0.85" />
+      </g>
+      <Mouth mood={mood} ink={ink} y={y} />
+    </>
   );
+}
+
+// A mouth only when there is a feeling to show; at rest the character stays the logo.
+function Mouth({ mood, ink, y }: { mood: BotMood; ink: string; y: number }) {
+  const common = { fill: "none", stroke: ink, strokeWidth: 2.6, strokeLinecap: "round" as const, opacity: 0.78 };
+  const my = y + 13;
+  switch (mood) {
+    case "listening": return <path className="bot-mouth" d={`M45 ${my} q5 3 10 0`} {...common} />;
+    case "working": return <path className="bot-mouth" d={`M45.5 ${my + 0.5} h9`} {...common} />;
+    case "thinking": return <circle className="bot-mouth" cx="51" cy={my + 1} r="2.1" {...common} />;
+    case "happy": return <path className="bot-mouth" d={`M43 ${my - 1} q7 7 14 0`} {...common} strokeWidth={2.8} />;
+    case "error": return <path className="bot-mouth" d={`M43 ${my + 1} q3.5 -3 7 0 t7 0`} {...common} />;
+    default: return null;
+  }
 }
 
 export function BotAvatar({
@@ -184,34 +225,12 @@ export function BotAvatar({
             <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.2" xChannelSelector="R" yChannelSelector="G" />
           </filter>
           <filter id={`shadow-${uid}`} x="-30%" y="-30%" width="160%" height="170%">
-            <feDropShadow dx="0" dy="4" stdDeviation="4" floodColor={c.dark} floodOpacity="0.35" />
+            <feDropShadow dx="0" dy="2" stdDeviation="2.5" floodColor={c.dark} floodOpacity="0.2" />
           </filter>
-          <linearGradient id={`iris-${uid}`} gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
-            {IRIS.map((col, i) => (
-              <stop key={i} offset={`${(i / (IRIS.length - 1)) * 100}%`} stopColor={col} />
-            ))}
-          </linearGradient>
-          {fuzzy && (
-            <filter id={`blur-${uid}`} x="-40%" y="-40%" width="180%" height="180%">
-              <feGaussianBlur stdDeviation="3.5" />
-            </filter>
-          )}
         </defs>
-        <g className="bot-aura" style={{ pointerEvents: "none" }}>
-          {fuzzy && (
-            <circle cx="50" cy="55" r="43" fill="none" stroke={`url(#iris-${uid})`} strokeWidth="9" opacity="0.45" filter={`url(#blur-${uid})`} />
-          )}
-          <circle
-            cx="50"
-            cy="55"
-            r="43"
-            fill="none"
-            stroke={`url(#iris-${uid})`}
-            strokeWidth={fuzzy ? 3.2 : 4}
-            strokeLinecap="round"
-            strokeDasharray={fuzzy ? "210 60" : "240 30"}
-          />
-        </g>
+        {/* A grounded shadow, outside the body group: it stays on the floor and shrinks
+            as the body lifts, instead of jumping with it. */}
+        <ellipse className="bot-ground" cx="50" cy={kind === "ghost" ? 90 : 92} rx="22" ry="4.5" fill={c.dark} opacity="0.22" />
         <g className="bot-body" filter={`url(#shadow-${uid})`}>
           <g filter={fuzzy ? `url(#felt-${uid})` : undefined}>
             <Body kind={kind} fill={`url(#shade-${uid})`} />

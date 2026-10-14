@@ -1,13 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <defs>
-    <linearGradient id="iris" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
-      <stop offset="0%" stop-color="#36e3c9"/><stop offset="33%" stop-color="#4f8bff"/><stop offset="66%" stop-color="#9b6cff"/><stop offset="100%" stop-color="#ec4ad7"/>
-    </linearGradient>
     <radialGradient id="shade" cx="36%" cy="30%" r="75%">
       <stop offset="0%" stop-color="#ffffff"/><stop offset="45%" stop-color="#dfe5f2"/><stop offset="100%" stop-color="#a9b4cc"/>
     </radialGradient>
   </defs>
-  <circle cx="50" cy="55" r="43" fill="none" stroke="url(#iris)" stroke-width="4" stroke-linecap="round" stroke-dasharray="240 30"/>
+  <ellipse cx="50" cy="90" rx="22" ry="4.5" fill="#1d2440" opacity=".16"/>
   <path fill="url(#shade)" stroke="#1d2440" stroke-opacity=".32" stroke-width="1.6" stroke-linejoin="round" d="M22 50c0-18 12.5-32 28-32s28 14 28 32v30c0 2.5-2.6 3.8-4.6 2.3l-4.3-3.3a3 3 0 0 0-3.6 0l-5.4 4a3 3 0 0 1-3.6 0l-5.4-4a3 3 0 0 0-3.6 0l-5.4 4a3 3 0 0 1-3.6 0l-5.4-4a3 3 0 0 0-3.6 0l-4.3 3.3c-2 1.5-4.6.2-4.6-2.3z"/>
   <ellipse cx="38" cy="30" rx="10" ry="6" fill="#fff" opacity=".5" transform="rotate(-25 38 30)"/>
   <g fill="#1d2440"><ellipse cx="40" cy="47" rx="4.6" ry="5.6"/><ellipse cx="60" cy="47" rx="4.6" ry="5.6"/></g>

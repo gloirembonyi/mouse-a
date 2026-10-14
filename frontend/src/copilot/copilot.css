@@ -112,42 +112,21 @@ body.copilot-body {
   overflow: hidden;
 }
 
-@property --cp-iris {
-  syntax: "<angle>";
-  initial-value: 0deg;
-  inherits: false;
-}
 .cp-avatar {
-  position: relative;
   display: grid;
   place-items: center;
   width: 36px;
   height: 36px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.06);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  /* Breathes with whoever is talking: a soft glow that widens with the voice level,
+     never a hard ring. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 0 calc(6px + var(--lvl, 0) * 16px) calc(var(--lvl, 0) * 3px) rgba(118, 159, 205, calc(0.18 + var(--lvl, 0) * 0.35));
+  transition: box-shadow 140ms linear;
 }
-/* The iridescent ring breathes with whoever is talking (--lvl) and spins while busy. */
-.cp-avatar::before {
-  content: "";
-  position: absolute;
-  inset: calc(-2px - var(--lvl, 0) * 5px);
-  border-radius: inherit;
-  padding: calc(1.5px + var(--lvl, 0) * 2px);
-  background: conic-gradient(from var(--cp-iris), #36e3c9, #4f8bff, #9b6cff, #ec4ad7, #36e3c9);
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  opacity: calc(0.45 + var(--lvl, 0) * 0.55);
-  animation: cp-iris 12s linear infinite;
-  transition: inset 120ms linear, padding 120ms linear, opacity 160ms linear;
-  pointer-events: none;
-}
-.cp-pill.is-busy .cp-avatar::before { animation-duration: 2.4s; }
-@keyframes cp-iris { to { --cp-iris: 360deg; } }
-@media (prefers-reduced-motion: reduce) { .cp-avatar::before { animation: none; } }
+.cp-pill.is-busy .cp-avatar { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 0 14px 2px rgba(118, 159, 205, 0.45); }
 
 .cp-chip,
 .cp-icon,
