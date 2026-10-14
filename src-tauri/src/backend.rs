@@ -170,6 +170,16 @@ pub struct BackendClient {
     mcp_servers: Arc<RwLock<serde_json::Value>>,
 }
 
+/// Inputs of one agent step (see `BackendClient::agent_step_with_profile`).
+pub struct AgentStepRequest<'a> {
+    pub system: &'a str,
+    pub contents: serde_json::Value,
+    pub tools: serde_json::Value,
+    pub thinking_budget: Option<u32>,
+    pub profile: Option<&'a str>,
+    pub prompt_context: Option<serde_json::Value>,
+}
+
 impl BackendClient {
     pub fn new(base_url: Option<String>) -> Self {
         let client = Client::builder()
@@ -519,7 +529,7 @@ impl BackendClient {
 
     /// One agent decision step. Sends the running gemini-format `contents` and
     /// the tool catalog; returns Gemini's raw candidate `parts` (assistant text
-    /// and/or functionCalls).
+    /// and/or functionCalls). Tool-less callers (meeting copilot) use this plain form.
     pub async fn agent_step(
         &self,
         system: &str,
@@ -527,6 +537,22 @@ impl BackendClient {
         tools: serde_json::Value,
         thinking_budget: Option<u32>,
     ) -> Result<serde_json::Value, String> {
+        self.agent_step_with_profile(AgentStepRequest {
+            system,
+            contents,
+            tools,
+            thinking_budget,
+            profile: None,
+            prompt_context: None,
+        })
+        .await
+    }
+
+    /// The agent loop's step: names the backend's prompt profile ("desktop") and sends
+    /// the facts the profile renders (tool names, capabilities, environment). The reply
+    /// carries `promptVersion` when the server prompt was used and `modelUsed`. An older
+    /// backend ignores the extra keys and uses `system` (the local fallback) as-is.
+    pub async fn agent_step_with_profile(&self, req: AgentStepRequest<'_>) -> Result<serde_json::Value, String> {
         let token = self
             .get_session_token()
             .await
@@ -534,14 +560,20 @@ impl BackendClient {
         let url = format!("{}/api/agent/step", self.base_url.read().await);
 
         let mut body = serde_json::json!({
-            "system": system,
-            "contents": contents,
-            "tools": tools,
+            "system": req.system,
+            "contents": req.contents,
+            "tools": req.tools,
             "model": default_gemini_model(),
         });
+        if let Some(profile) = req.profile {
+            body["profile"] = serde_json::json!(profile);
+        }
+        if let Some(ctx) = req.prompt_context {
+            body["promptContext"] = ctx;
+        }
         // A short reasoning pass on the steps that decide the run (first plan,
         // recovery, final check); routine steps stay fast. Older backends ignore it.
-        if let Some(b) = thinking_budget {
+        if let Some(b) = req.thinking_budget {
             body["thinkingBudget"] = serde_json::json!(b);
         }
 

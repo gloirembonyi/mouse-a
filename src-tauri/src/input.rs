@@ -125,6 +125,46 @@ mod win {
         }
     }
 
+    /// Keystroke typing for the agent: newlines press Enter and tabs press Tab (a
+    /// Unicode U+000A keypress inserts nothing in most apps), and ordinary runs go
+    /// out in batches of up to 32 code units per SendInput call with one short pause
+    /// per batch - about 30x faster than one unit + 3 ms each, which made a 2000-char
+    /// paste take six seconds.
+    pub fn type_text_keys(text: &str) {
+        let mut batch: Vec<INPUT> = Vec::with_capacity(64);
+        let flush = |batch: &mut Vec<INPUT>| {
+            if batch.is_empty() {
+                return;
+            }
+            send(batch);
+            batch.clear();
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        };
+        for ch in text.chars() {
+            match ch {
+                '\r' => continue,
+                '\n' | '\t' => {
+                    flush(&mut batch);
+                    let vk = if ch == '\n' { VK_RETURN } else { VK_TAB } as u16;
+                    let mut keys = [key_input(vk, 0), key_input(vk, KEYEVENTF_KEYUP)];
+                    send(&mut keys);
+                    std::thread::sleep(std::time::Duration::from_millis(12));
+                }
+                _ => {
+                    let mut buf = [0u16; 2];
+                    for unit in ch.encode_utf16(&mut buf).iter() {
+                        batch.push(unicode_input(*unit, false));
+                        batch.push(unicode_input(*unit, true));
+                    }
+                    if batch.len() >= 64 {
+                        flush(&mut batch);
+                    }
+                }
+            }
+        }
+        flush(&mut batch);
+    }
+
     /// Map a friendly key name to a Win32 virtual-key code. Returns None for
     /// single printable characters (handled via VkKeyScanW by the caller).
     fn named_vk(name: &str) -> Option<i32> {
@@ -144,6 +184,12 @@ mod win {
             "alt" => VK_MENU,
             "shift" => VK_SHIFT,
             "win" | "super" | "meta" => VK_LWIN,
+            "space" => 0x20,
+            "insert" | "ins" => 0x2D,
+            "pageup" | "pgup" => 0x21,
+            "pagedown" | "pgdn" => 0x22,
+            "f1" => 0x70, "f2" => 0x71, "f3" => 0x72, "f4" => 0x73, "f5" => 0x74, "f6" => 0x75,
+            "f7" => 0x76, "f8" => 0x77, "f9" => 0x78, "f10" => 0x79, "f11" => 0x7A, "f12" => 0x7B,
             _ => return None,
         };
         Some(vk)
@@ -207,6 +253,31 @@ pub fn type_text(text: &str) {
     win::type_text(text);
 }
 
+/// Agent typing: batched keystrokes, `\n` = Enter, `\t` = Tab. See `win::type_text_keys`.
+#[cfg(windows)]
+pub fn type_text_keys(text: &str) {
+    win::type_text_keys(text);
+}
+
+/// Put `text` on the clipboard, press Ctrl+V into the focused app, then restore what
+/// was on the clipboard (text only - a non-text clipboard is left as the pasted text,
+/// which the caller reports). Moved here from copilot.rs so the agent's type_text can
+/// paste code without the auto-indent/auto-close corruption of per-key typing.
+#[cfg(windows)]
+pub fn paste_via_clipboard(text: &str) -> Result<(), String> {
+    let mut cb = arboard::Clipboard::new().map_err(|e| format!("Clipboard unavailable: {}", e))?;
+    let previous = cb.get_text().ok();
+    cb.set_text(text.to_string()).map_err(|e| format!("Clipboard unavailable: {}", e))?;
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    press_combo("ctrl+v")?;
+    // Give the target app time to read the clipboard before restoring it.
+    std::thread::sleep(std::time::Duration::from_millis(450));
+    if let Some(prev) = previous {
+        let _ = cb.set_text(prev);
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 pub fn press_combo(combo: &str) -> Result<(), String> {
     win::press_combo(combo)
@@ -220,6 +291,12 @@ pub fn double_click(_x: i32, _y: i32) {}
 pub fn scroll(_x: i32, _y: i32, _clicks: i32) {}
 #[cfg(not(windows))]
 pub fn type_text(_text: &str) {}
+#[cfg(not(windows))]
+pub fn type_text_keys(_text: &str) {}
+#[cfg(not(windows))]
+pub fn paste_via_clipboard(_text: &str) -> Result<(), String> {
+    Err("computer-use input is only supported on Windows".to_string())
+}
 #[cfg(not(windows))]
 pub fn press_combo(_combo: &str) -> Result<(), String> {
     Err("computer-use input is only supported on Windows".to_string())

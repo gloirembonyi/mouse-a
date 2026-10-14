@@ -187,18 +187,9 @@ fn may_continue(target: isize) -> bool {
 }
 
 fn paste(text: &str) -> Result<(), String> {
-    let mut cb = arboard::Clipboard::new().map_err(|e| format!("Clipboard unavailable: {}", e))?;
-    let previous = cb.get_text().ok();
-    cb.set_text(text.to_string()).map_err(|e| format!("Clipboard unavailable: {}", e))?;
-    std::thread::sleep(Duration::from_millis(60));
-    crate::input::press_combo("ctrl+v")?;
-    // Give the target app time to read the clipboard before restoring it, so
-    // the user's own clipboard isn't clobbered by the copilot.
-    std::thread::sleep(Duration::from_millis(450));
-    if let Some(prev) = previous {
-        let _ = cb.set_text(prev);
-    }
-    Ok(())
+    // Shared with the agent's type_text paste mode (input.rs): clipboard set, Ctrl+V,
+    // clipboard restored so the user's own clipboard isn't clobbered.
+    crate::input::paste_via_clipboard(text)
 }
 
 /// Types like a person: per-character jitter, and line by line so editors'
