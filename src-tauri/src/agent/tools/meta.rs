@@ -74,7 +74,21 @@ pub(crate) fn is_loop_exempt(name: &str) -> bool {
 
 /// The text a tool reported (error message, command output or result).
 pub(crate) fn response_text(response: &Value) -> String {
-    for key in ["error", "output", "result"] {
+    if let Some(v) = response.get("error") {
+        return v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string());
+    }
+    // run_command: stderr carries the verdict, stdout the detail.
+    if response.get("stdout").is_some() || response.get("stderr").is_some() {
+        let stderr = response.get("stderr").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let stdout = response.get("stdout").and_then(|v| v.as_str()).unwrap_or("").trim();
+        return match (stderr.is_empty(), stdout.is_empty()) {
+            (false, false) => format!("{}\n{}", stderr, stdout),
+            (false, true) => stderr.to_string(),
+            (true, false) => stdout.to_string(),
+            (true, true) => "(no output)".to_string(),
+        };
+    }
+    for key in ["output", "result"] {
         if let Some(v) = response.get(key) {
             return v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string());
         }
@@ -89,6 +103,13 @@ pub(crate) fn tool_failed(name: &str, response: &Value) -> bool {
         return true;
     }
     if name == "run_command" {
+        // Structured result: `ok` is false on a non-zero exit or a timeout.
+        if let Some(ok) = response.get("ok").and_then(|v| v.as_bool()) {
+            return !ok;
+        }
+        if response.get("started").and_then(|v| v.as_bool()) == Some(true) {
+            return false;
+        }
         if let Some(code) = response.get("exit_code").and_then(|c| c.as_i64()) {
             return code != 0;
         }

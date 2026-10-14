@@ -130,7 +130,8 @@ pub(crate) async fn click_tool(
     let hwnd = tokio::task::spawn_blocking(move || mouse::target_hwnd_at_point(x, y)).await.unwrap_or(0);
     remember_target_window(hwnd, &target.window_title);
     let right = args.get("button").and_then(|b| b.as_str()).map(|b| b.eq_ignore_ascii_case("right")).unwrap_or(false);
-    input::click(x, y, right);
+    // SendInput sleeps between events; keep that off the async runtime.
+    let _ = tokio::task::spawn_blocking(move || input::click(x, y, right)).await;
     ToolOutcome::text(format!("Clicked {} at ({}, {}).", if right { "right" } else { "left" }, x, y))
 }
 
@@ -154,7 +155,7 @@ pub(crate) async fn double_click_tool(
     }
     let hwnd = tokio::task::spawn_blocking(move || mouse::target_hwnd_at_point(x, y)).await.unwrap_or(0);
     remember_target_window(hwnd, &target.window_title);
-    input::double_click(x, y);
+    let _ = tokio::task::spawn_blocking(move || input::double_click(x, y)).await;
     ToolOutcome::text(format!("Double-clicked ({}, {}).", x, y))
 }
 
@@ -180,7 +181,7 @@ pub(crate) async fn scroll_tool(
     if let Err(e) = guard_target_app(app, source, trusted, &target.process_name, &target.window_title).await {
         return ToolOutcome::err(e);
     }
-    input::scroll(x, y, amount as i32);
+    let _ = tokio::task::spawn_blocking(move || input::scroll(x, y, amount as i32)).await;
     ToolOutcome::text(format!("Scrolled {} at ({}, {}).", amount, x, y))
 }
 
@@ -204,11 +205,40 @@ pub(crate) async fn foreground_context_async() -> mouse::CursorContext {
         })
 }
 
+/// Does this text look like code? Per-key typing into an editor auto-indents and
+/// auto-closes brackets, which mangles code; paste does not.
+pub(crate) fn looks_like_code(text: &str) -> bool {
+    let t = text.trim();
+    if t.contains("{\n") || t.contains("};") || t.contains("=>") || t.contains("</") || t.contains("\n    ") || t.contains("\n\t") {
+        return true;
+    }
+    let first = t.lines().next().unwrap_or("").trim_start();
+    ["def ", "fn ", "import ", "#include", "const ", "let ", "function ", "class ", "SELECT ", "select ", "<?", "#!", "using ", "package "]
+        .iter()
+        .any(|p| first.starts_with(p))
+}
+
+/// The focused app's accessible text, flattened - for checking that typed text landed.
+pub(crate) async fn app_content_text() -> String {
+    tokio::task::spawn_blocking(|| {
+        mouse::foreground_window_rect()
+            .map(|(x, y, w, h)| mouse::sample_window_content(x, y, w, h))
+            .unwrap_or_default()
+            .iter()
+            .map(|n| format!("{} {}", n.name, n.value))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
+    .await
+    .unwrap_or_default()
+}
+
 pub(crate) async fn type_text_tool(app: &AppHandle, source: &str, trusted: &mut HashSet<String>, args: &Value) -> ToolOutcome {
     let text = args.get("text").and_then(|t| t.as_str()).unwrap_or("");
     if text.is_empty() {
         return ToolOutcome::err("no text provided");
     }
+    let mode = args.get("mode").and_then(|m| m.as_str()).unwrap_or("auto").to_lowercase();
     let focus_note = match ensure_target_focused().await {
         Ok(note) => note,
         Err(rejected) => return *rejected,
@@ -217,11 +247,61 @@ pub(crate) async fn type_text_tool(app: &AppHandle, source: &str, trusted: &mut 
     if let Err(e) = guard_target_app(app, source, trusted, &fg.process_name, &fg.window_title).await {
         return ToolOutcome::err(e);
     }
-    input::type_text(text);
-    match focus_note {
-        Some(note) => ToolOutcome::text(format!("Typed {} characters ({}).", text.chars().count(), note)),
-        None => ToolOutcome::text(format!("Typed {} characters.", text.chars().count())),
+    // auto: paste multi-line / long / code text (editors would auto-indent and
+    // auto-close it under per-key typing); keystrokes for short text and for
+    // terminals, which do not reliably honour Ctrl+V.
+    let kind = classify_process(&fg.process_name);
+    let use_paste = match mode.as_str() {
+        "paste" => true,
+        "type" | "keys" | "keystrokes" => false,
+        _ => kind != "terminal" && (text.contains('\n') || text.chars().count() > 80 || looks_like_code(text)),
+    };
+    let owned = text.to_string();
+    let typed_via = if use_paste {
+        match tokio::task::spawn_blocking({ let t = owned.clone(); move || input::paste_via_clipboard(&t) }).await {
+            Ok(Ok(())) => "paste",
+            Ok(Err(e)) => {
+                // Clipboard unavailable: keystrokes still work, just slower.
+                let _ = tokio::task::spawn_blocking({ let t = owned.clone(); move || input::type_text_keys(&t) }).await;
+                let _ = e;
+                "keystrokes (clipboard unavailable)"
+            }
+            Err(e) => return ToolOutcome::err(format!("typing task failed: {}", e)),
+        }
+    } else {
+        if let Err(e) = tokio::task::spawn_blocking({ let t = owned.clone(); move || input::type_text_keys(&t) }).await {
+            return ToolOutcome::err(format!("typing task failed: {}", e));
+        }
+        "keystrokes"
+    };
+    let count = text.chars().count();
+    let mut resp = json!({
+        "result": match &focus_note {
+            Some(note) => format!("Typed {} characters via {} ({}).", count, typed_via, note),
+            None => format!("Typed {} characters via {}.", count, typed_via),
+        },
+        "mode": typed_via,
+    });
+    // Best-effort verification where the app exposes its text (editors, Office,
+    // browsers): is the first typed line now in the accessible content? Never an
+    // error - the screenshot that follows is the other witness.
+    if matches!(kind, "editor" | "office" | "browser") {
+        let needle: String = text
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .map(|l| l.trim().chars().take(40).collect())
+            .unwrap_or_default();
+        if needle.len() >= 3 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let content = app_content_text().await;
+            let found = content.to_lowercase().contains(&needle.to_lowercase());
+            resp["verified"] = json!(found);
+            if !found {
+                resp["note"] = json!("The typed text was not found in the app's accessible content - check the screenshot before relying on it (some apps do not expose their text).");
+            }
+        }
     }
+    ToolOutcome { response: resp, image_data_url: None, log: format!("typed {} chars via {}", count, typed_via) }
 }
 
 pub(crate) async fn press_key_tool(app: &AppHandle, source: &str, trusted: &mut HashSet<String>, args: &Value) -> ToolOutcome {
@@ -237,11 +317,24 @@ pub(crate) async fn press_key_tool(app: &AppHandle, source: &str, trusted: &mut 
     if let Err(e) = guard_target_app(app, source, trusted, &fg.process_name, &fg.window_title).await {
         return ToolOutcome::err(e);
     }
-    match input::press_combo(keys) {
-        Ok(()) => match focus_note {
+    // "ctrl+a, delete" presses a sequence of combos with a short gap between them.
+    let combos: Vec<String> = keys.split(',').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect();
+    let pressed = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        for (i, combo) in combos.iter().enumerate() {
+            if i > 0 {
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            input::press_combo(combo)?;
+        }
+        Ok(())
+    })
+    .await;
+    match pressed {
+        Ok(Ok(())) => match focus_note {
             Some(note) => ToolOutcome::text(format!("Pressed {} ({}).", keys, note)),
             None => ToolOutcome::text(format!("Pressed {}.", keys)),
         },
-        Err(e) => ToolOutcome::err(e),
+        Ok(Err(e)) => ToolOutcome::err(e),
+        Err(e) => ToolOutcome::err(format!("key task failed: {}", e)),
     }
 }

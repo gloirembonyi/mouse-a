@@ -102,22 +102,44 @@ pub(crate) fn screens_differ(a: &[u8], b: &[u8]) -> bool {
 
 /// Settle delay before the verification shot: instant for input synthesis,
 /// longer for actions that open/switch windows or load pages.
+/// The CAP on how long to wait for the screen to settle after an action (the shot is
+/// taken as soon as two consecutive captures look the same, see verification_shot).
 pub(crate) fn post_action_delay_ms(tool_name: &str) -> Option<u64> {
     match tool_name {
-        "click" | "double_click" | "scroll" | "type_text" | "press_key" => Some(900),
-        "open_url" | "open_app" | "focus_window" => Some(2000),
+        "click" | "double_click" | "scroll" | "type_text" | "press_key" => Some(1500),
+        "open_url" | "open_app" | "focus_window" => Some(4000),
         // After an explicit wait the whole point is to look again.
         "wait" => Some(0),
         _ => None,
     }
 }
 
-/// Capture the screen for verification and refresh the coordinate mapping.
-pub(crate) async fn verification_shot(screen: &mut Option<ScreenMapping>, delay_ms: u64) -> Option<String> {
-    if delay_ms > 0 {
-        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+/// Capture the screen for verification once it has settled, and refresh the coordinate
+/// mapping. A fixed 900 ms used to be both too long for an instant toggle and too short
+/// for a page load: now the first capture comes after 250 ms and the shot is kept as
+/// soon as two captures 300 ms apart look alike (48x32 thumbnails), bounded by `cap_ms`.
+pub(crate) async fn verification_shot(screen: &mut Option<ScreenMapping>, cap_ms: u64) -> Option<String> {
+    let capture = || async { tokio::task::spawn_blocking(capture::capture_agent_full).await.ok()?.ok() };
+    if cap_ms == 0 {
+        let shot = capture().await?;
+        *screen = Some(ScreenMapping::from_shot(&shot));
+        return Some(shot.data_url);
     }
-    let shot = tokio::task::spawn_blocking(capture::capture_agent_full).await.ok()?.ok()?;
+    let started = std::time::Instant::now();
+    tokio::time::sleep(Duration::from_millis(250.min(cap_ms))).await;
+    let mut shot = capture().await?;
+    let mut thumb = screen_thumbnail(&shot.data_url);
+    while started.elapsed().as_millis() as u64 + 300 < cap_ms {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let next = capture().await?;
+        let next_thumb = screen_thumbnail(&next.data_url);
+        let settled = matches!((&thumb, &next_thumb), (Some(a), Some(b)) if !screens_differ(a, b));
+        shot = next;
+        thumb = next_thumb;
+        if settled {
+            break;
+        }
+    }
     *screen = Some(ScreenMapping::from_shot(&shot));
     Some(shot.data_url)
 }

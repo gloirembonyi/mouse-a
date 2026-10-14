@@ -10,11 +10,29 @@ pub(crate) const LEDGER_FACTS_KEEP: usize = 12;
 
 pub(crate) const LEDGER_NOTES_MAX: usize = 3000;
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct LogEntry {
     pub(crate) n: usize,
     pub(crate) what: String,
     pub(crate) ok: bool,
     pub(crate) note: Option<String>,
+}
+
+/// Plain-data copy of the ledger, persisted after every round (agent/checkpoint.rs) so
+/// "continue" after a stop, a crash or a restart picks up the plan, notes and data
+/// instead of starting over. The transcript itself is never persisted: replaying old
+/// model parts (with their thoughtSignatures) is what 400s, and a digest is enough.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub(crate) struct LedgerSnapshot {
+    pub(crate) plan: Vec<String>,
+    pub(crate) done_when: String,
+    pub(crate) plan_done: usize,
+    pub(crate) notes: String,
+    pub(crate) log: Vec<LogEntry>,
+    pub(crate) facts: Vec<String>,
+    pub(crate) steps: usize,
+    pub(crate) effects: usize,
+    pub(crate) errors: usize,
 }
 
 #[derive(Default)]
@@ -33,9 +51,38 @@ pub(crate) struct Ledger {
     /// Successful state-changing tool calls - the evidence a "done" claim needs.
     pub(crate) effects: usize,
     pub(crate) errors: usize,
+    /// Steps an earlier, interrupted attempt took (0 for a fresh run).
+    pub(crate) resumed_from_step: usize,
 }
 
 impl Ledger {
+    pub(crate) fn snapshot(&self) -> LedgerSnapshot {
+        LedgerSnapshot {
+            plan: self.plan.clone(),
+            done_when: self.done_when.clone(),
+            plan_done: self.plan_done,
+            notes: clip(&self.notes, 2000),
+            log: self.log.iter().rev().take(20).cloned().collect::<Vec<_>>().into_iter().rev().collect(),
+            facts: self.facts.iter().cloned().collect(),
+            steps: self.steps + self.resumed_from_step,
+            effects: self.effects,
+            errors: self.errors,
+        }
+    }
+
+    pub(crate) fn from_snapshot(s: &LedgerSnapshot) -> Ledger {
+        Ledger {
+            plan: s.plan.clone(),
+            done_when: s.done_when.clone(),
+            plan_done: s.plan_done.min(s.plan.len()),
+            notes: s.notes.clone(),
+            log: s.log.iter().cloned().collect(),
+            facts: s.facts.iter().cloned().collect(),
+            resumed_from_step: s.steps,
+            ..Ledger::default()
+        }
+    }
+
     /// Applies an `update_plan` call. Returns true if it marked more steps done.
     pub(crate) fn apply_plan_update(&mut self, args: &Value) -> bool {
         let before = self.plan_done;
@@ -123,6 +170,9 @@ impl Ledger {
     /// Human/model-readable digest of the run so far.
     pub(crate) fn digest(&self, max_log: usize) -> String {
         let mut out: Vec<String> = Vec::new();
+        if self.resumed_from_step > 0 {
+            out.push(format!("Resumed after {} earlier steps (this run's step count starts again).", self.resumed_from_step));
+        }
         if !self.plan.is_empty() {
             out.push(format!("Plan:\n{}", self.plan_lines().join("\n")));
         }

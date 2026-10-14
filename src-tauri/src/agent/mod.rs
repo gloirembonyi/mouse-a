@@ -46,6 +46,7 @@ pub(crate) use tauri::{AppHandle, Emitter};
 pub(crate) use tokio::sync::oneshot;
 
 mod cancel;
+mod checkpoint;
 mod completion;
 mod confirm;
 mod drive;
@@ -110,6 +111,34 @@ pub async fn run_task(
     *LAST_TARGET_WINDOW.lock().unwrap() = None;
     let system = system_prompt(autonomous);
 
+    // "continue" (or the same task again) after a stop/crash resumes from the saved
+    // ledger: the original task is kept, anything added after the continue phrase is
+    // appended, and the first turn carries a digest of what already happened.
+    checkpoint::sweep();
+    let resume = checkpoint::load_for_resume(source, task);
+    let effective_task: String = match &resume {
+        Some((cp, Some(extra))) => format!("{}\n\n[Added when resuming] {}", cp.task, extra),
+        Some((cp, None)) => cp.task.clone(),
+        None => task.to_string(),
+    };
+    let task = effective_task.as_str();
+    let initial_ledger = match &resume {
+        Some((cp, _)) => Ledger::from_snapshot(&cp.ledger),
+        None => Ledger::default(),
+    };
+    let resume_block = resume.as_ref().map(|(cp, _)| {
+        format!(
+            "\n\n[RESUMING] An earlier attempt at this task was interrupted after {} steps. Its record is below. \
+The screen and files may have changed since: re-observe first (capture_screen / read_file / list_directory), then \
+continue from where it left off - do not redo steps that are already complete.\n\n{}",
+            cp.ledger.steps,
+            initial_ledger.digest(30)
+        )
+    });
+    if resume.is_some() {
+        emit(app, source, "thinking", "Resuming the earlier run from its checkpoint");
+    }
+
     // Recent turns from the SAME conversation the chat view and the overlay's
     // plain-ask both share (AppState.conversation_id) - without this, an
     // agent task kicked off from a hover-ask has no idea what was just
@@ -146,7 +175,18 @@ pub async fn run_task(
     for d in mcp.tool_declarations() {
         tool_defs.push(d);
     }
+    let tool_names: Vec<String> = tool_defs
+        .iter()
+        .filter_map(|d| d.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+        .collect();
     let tools = json!(tool_defs);
+    let ctx = crate::agent::RunContext {
+        system: system.clone(),
+        tools,
+        tool_names,
+        autonomous,
+        environment: environment_block(),
+    };
 
     // First user turn: the task + a snapshot of the current screen (text context
     // and an initial screenshot) so the model starts grounded in "this".
@@ -165,7 +205,7 @@ pub async fn run_task(
         None => context_block,
     };
     let mut first_parts = vec![json!({
-        "text": format!("{}\n\n{}\n\n[TASK]\n{}", context_block, crate::skills::catalog_text(), task)
+        "text": format!("{}\n\n{}\n\n[TASK]\n{}{}", context_block, crate::skills::catalog_text(), task, resume_block.unwrap_or_default())
     })];
     if let Some(shot) = &initial_shot {
         if let Some(img) = image_part(&shot.data_url) {
@@ -198,9 +238,14 @@ pub async fn run_task(
     let _ = tokio::task::spawn_blocking(|| mouse::set_own_window_no_activate("mouse ai overlay", true)).await;
 
     // Drive the loop, then always shut the MCP servers down (whatever the outcome).
-    let result =
-        drive_loop(app, backend, &system, &tools, contents, source, task, &mut mcp, &mut screen_mapping).await;
+    let result = drive_loop(app, backend, &ctx, contents, source, task, &mut mcp, &mut screen_mapping, initial_ledger).await;
     mcp.shutdown().await;
+    // Keep the checkpoint only when there is something to continue.
+    match &result {
+        Ok(text) if text.contains("Say \"continue\"") => {}
+        Ok(_) if cancel_requested(source) => {}
+        _ => checkpoint::clear(source),
+    }
     let _ = tokio::task::spawn_blocking(|| mouse::set_own_window_no_activate("mouse ai overlay", false)).await;
     result
 }

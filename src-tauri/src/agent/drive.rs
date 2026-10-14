@@ -123,18 +123,50 @@ impl ProgressTracker {
 /// no-tools turn to write it (it knows the nuance); if that fails, the ledger
 /// writes it.
 #[allow(clippy::too_many_arguments)]
+/// Everything one run sends with every step: the local fallback prompt, the tool
+/// catalog, and the facts the backend's "desktop" prompt profile renders.
+#[derive(Clone)]
+pub(crate) struct RunContext {
+    pub(crate) system: String,
+    pub(crate) tools: Value,
+    pub(crate) tool_names: Vec<String>,
+    pub(crate) autonomous: bool,
+    pub(crate) environment: String,
+}
+
+impl RunContext {
+    pub(crate) fn prompt_context(&self) -> Value {
+        json!({
+            "autonomous": self.autonomous,
+            "toolNames": self.tool_names,
+            // Behaviours this build implements, so the server prompt never describes a
+            // result shape the client does not produce.
+            "capabilities": ["structured_run_command", "type_text_modes", "checkpoint_resume"],
+            "environment": self.environment,
+            "clientVersion": env!("CARGO_PKG_VERSION"),
+        })
+    }
+
+    /// The same run with no tools offered - for the wrap-up turn, where a stray
+    /// function call would be a bug rather than an action.
+    pub(crate) fn without_tools(&self) -> RunContext {
+        RunContext { tools: json!([]), tool_names: Vec::new(), ..self.clone() }
+    }
+}
+
 pub(crate) async fn stop_with_report(
     app: &AppHandle,
     backend: &BackendClient,
-    system: &str,
-    tools: &Value,
+    ctx: &RunContext,
     contents: &mut Vec<Value>,
     source: &str,
+    task: &str,
     ledger: &Ledger,
     phase: &mut PhaseCounts,
     reason: &str,
 ) -> String {
     flush_phase(app, source, phase);
+    checkpoint::save(source, task, "incomplete", ledger);
     emit(app, source, "thinking", format!("Wrapping up: {}", reason));
     push_user_text(
         contents,
@@ -146,7 +178,8 @@ answers the user asked for. Be specific and brief.",
         ),
     );
     prune_old_images(contents, 1);
-    let text = match agent_step_with_retry(app, backend, system, contents, tools, source, ledger, None).await {
+    let quiet = ctx.without_tools();
+    let text = match agent_step_with_retry(app, backend, &quiet, contents, source, ledger, None).await {
         Ok(step) => step
             .get("parts")
             .and_then(|p| p.as_array())
@@ -186,17 +219,42 @@ pub(crate) fn stopped_message(mid_burst: bool) -> String {
 pub(crate) async fn drive_loop(
     app: &AppHandle,
     backend: &BackendClient,
-    system: &str,
-    tools: &Value,
+    ctx: &RunContext,
     mut contents: Vec<Value>,
     source: &str,
     task: &str,
     mcp: &mut mcp::McpManager,
     screen: &mut Option<ScreenMapping>,
+    initial_ledger: Ledger,
 ) -> Result<String, String> {
     let started = std::time::Instant::now();
     let project = project_folder_from_task(task);
-    let mut ledger = Ledger::default();
+    let mut ledger = initial_ledger;
+    // Per-task tool selection: the core set plus what the task's words call for. The
+    // full catalog stays available in `ctx`; `active` is what the model is offered, and
+    // it widens to everything once if the run stalls, errors repeatedly, the model asks
+    // for an un-offered tool, or a completion review is needed.
+    let full = ctx;
+    let browser_connected = crate::bridge::bridge().is_connected() && crate::bridge::bridge().is_paired();
+    let mut active = full.clone();
+    {
+        let all = full.tools.as_array().cloned().unwrap_or_default();
+        let picked = select_tools(strip_project_prefix(task), &all, browser_connected);
+        active.tool_names = picked.iter().filter_map(|d| d.get("name").and_then(|n| n.as_str()).map(String::from)).collect();
+        active.tools = json!(picked);
+    }
+    let mut widened = active.tool_names.len() >= full.tool_names.len();
+    let widen = |active: &mut RunContext, widened: &mut bool, _why: &str| {
+        if *widened {
+            return;
+        }
+        *widened = true;
+        active.tools = full.tools.clone();
+        active.tool_names = full.tool_names.clone();
+        #[cfg(debug_assertions)]
+        eprintln!("[agent] tool filter lifted: {}", _why);
+    };
+
     let mut progress = ProgressTracker::default();
     let mut budget = BASE_BUDGET;
     let mut empty_response_count: usize = 0;
@@ -220,6 +278,7 @@ pub(crate) async fn drive_loop(
         if cancel_requested(source) {
             flush_phase(app, source, &mut phase);
             emit(app, source, "done", "Stopped");
+            checkpoint::save(source, task, "cancelled", &ledger);
             return Ok(stopped_message(false));
         }
 
@@ -242,7 +301,7 @@ pub(crate) async fn drive_loop(
                     )
                 };
                 let report =
-                    stop_with_report(app, backend, system, tools, &mut contents, source, &ledger, &mut phase, &why).await;
+                    stop_with_report(app, backend, &active, &mut contents, source, task, &ledger, &mut phase, &why).await;
                 return Ok(report);
             }
         }
@@ -257,8 +316,20 @@ pub(crate) async fn drive_loop(
             || consecutive_errors >= 2
             || progress.stall_steps >= STALL_WARN_STEPS;
         think_next = false;
-        let step = match agent_step_with_retry(app, backend, system, &mut contents, tools, source, &ledger, think.then_some(PLANNING_THINKING_BUDGET)).await {
-            Ok(step) => step,
+        let step = match agent_step_with_retry(app, backend, &active, &mut contents, source, &ledger, think.then_some(PLANNING_THINKING_BUDGET)).await {
+            Ok(step) => {
+                // Which prompt/model actually ran - the first thing to check when a run
+                // "got dumb mid-task". Debug builds only; the backend logs it per step.
+                #[cfg(debug_assertions)]
+                if iteration == 1 {
+                    eprintln!(
+                        "[agent] prompt={} model={}",
+                        step.get("promptVersion").and_then(|v| v.as_str()).unwrap_or("local"),
+                        step.get("modelUsed").and_then(|v| v.as_str()).unwrap_or("?")
+                    );
+                }
+                step
+            }
             Err(e) => {
                 if cancel_requested(source) {
                     flush_phase(app, source, &mut phase);
@@ -346,6 +417,7 @@ a tool if you need more information, or give a plain-text final answer if the ta
             if !concerns.is_empty() && completion_reviews < MAX_COMPLETION_REVIEWS && iteration + 1 < budget {
                 completion_reviews += 1;
                 think_next = true;
+                widen(&mut active, &mut widened, "completion review");
                 flush_phase(app, source, &mut phase);
                 emit(app, source, "thinking", "Checking the result before finishing…");
                 let mut note = String::from("[SYSTEM] Completion check before you finish.\n");
@@ -363,6 +435,7 @@ you still have steps left. If it truly can't be done, say exactly what blocks it
             }
             flush_phase(app, source, &mut phase);
             emit(app, source, "done", "Done");
+            checkpoint::clear(source);
             return Ok(assistant_text);
         }
 
@@ -408,6 +481,11 @@ you still have steps left. If it truly can't be done, say exactly what blocks it
             }
 
             ledger.actions += 1;
+            // The model named a tool it was not offered: the relevance filter guessed
+            // wrong. Execute it anyway and lift the filter for the rest of the run.
+            if !active.tool_names.iter().any(|n| n == &name) && full.tool_names.iter().any(|n| n == &name) {
+                widen(&mut active, &mut widened, "model asked for an un-offered tool");
+            }
             let label = tool_label(&name, &args);
             emit(app, source, "tool", label.clone());
             let repeats = progress.note_call(&name, &args);
@@ -536,6 +614,10 @@ state, re-plan, and try a genuinely different route.",
             }
         }
         contents.push(json!({ "role": "user", "parts": response_parts }));
+        checkpoint::save(source, task, "running", &ledger);
+        if consecutive_errors >= 2 || progress.stall_steps >= STALL_WARN_STEPS {
+            widen(&mut active, &mut widened, "errors or stall");
+        }
 
         // After several failures in a row, force a step back.
         if consecutive_errors >= 4 {
@@ -555,10 +637,10 @@ finish now with a plain-text explanation of what's blocking it.",
             let report = stop_with_report(
                 app,
                 backend,
-                system,
-                tools,
+                &active,
                 &mut contents,
                 source,
+                task,
                 &ledger,
                 &mut phase,
                 "it kept repeating the same action without anything changing",
@@ -569,7 +651,7 @@ finish now with a plain-text explanation of what's blocking it.",
         if progress.stall_steps >= STALL_STOP_STEPS {
             let why = format!("the last {} steps made no visible progress (it looks stuck)", progress.stall_steps);
             let report =
-                stop_with_report(app, backend, system, tools, &mut contents, source, &ledger, &mut phase, &why).await;
+                stop_with_report(app, backend, &active, &mut contents, source, task, &ledger, &mut phase, &why).await;
             return Ok(report);
         }
 

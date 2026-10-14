@@ -271,20 +271,70 @@ pub(crate) async fn focus_window_tool(args: &Value) -> ToolOutcome {
 /// Launch a URL / app / file via the shell (ShellExecute semantics), which
 /// picks the right default handler - a browser for URLs, Explorer for folders,
 /// the associated app for files.
-pub(crate) fn open_target_tool(args: &Value, key: &str) -> ToolOutcome {
+/// open_url / open_app without a shell in the loop.
+///
+/// This used to run `cmd /C start "" <target>`. std's Windows argument quoting never
+/// escapes cmd.exe metacharacters, so a URL carrying `&calc` (say, lifted off a page by
+/// the model) ran `calc`. Targets now go through tauri-plugin-opener - ShellExecuteEx with
+/// the target as lpFile, no command line re-parsing - and are validated first: URLs must
+/// be http(s)/file/mailto, app names must be a bare program token, paths must exist.
+pub(crate) fn open_target_tool(app: &AppHandle, args: &Value, key: &str) -> ToolOutcome {
+    use tauri_plugin_opener::OpenerExt;
     let target = args.get(key).and_then(|t| t.as_str()).unwrap_or("").trim().to_string();
     if target.is_empty() {
         return ToolOutcome::err("nothing to open");
     }
-    // `cmd /C start "" <target>` uses the shell to resolve URLs (default
-    // browser), file/folder paths (associated app / Explorer), and app names
-    // on PATH. The empty "" is start's title argument, so a quoted target
-    // isn't mistaken for the window title.
-    let result = std::process::Command::new("cmd")
-        .args(["/C", "start", "", &target])
-        .spawn();
+    if target.chars().any(|c| c.is_control()) || target.len() > 2048 {
+        return ToolOutcome::err("the target contains control characters or is too long - pass an exact URL, path or app name");
+    }
+    let lower = target.to_lowercase();
+    let looks_like_url = lower.contains("://") || lower.starts_with("mailto:");
+    if key == "url" || looks_like_url {
+        let scheme = lower.split(':').next().unwrap_or("");
+        if !matches!(scheme, "http" | "https" | "file" | "mailto") {
+            return ToolOutcome::err(format!(
+                "only http(s), file and mailto URLs can be opened (got \"{}:\"). Pass an exact https:// URL.",
+                scheme
+            ));
+        }
+        return match app.opener().open_url(&target, None::<&str>) {
+            Ok(()) => ToolOutcome::text(format!("Opened {}.", target)),
+            Err(e) => ToolOutcome::err(format!("could not open {}: {}", target, e)),
+        };
+    }
+    if target.starts_with("\\\\") {
+        return ToolOutcome::err("network (UNC) paths are not opened automatically - open the folder yourself or use a local path");
+    }
+    // An existing file/folder: Explorer or the associated app.
+    let path = resolve_agent_path(&target);
+    if path.exists() {
+        return match app.opener().open_path(path.to_string_lossy().to_string(), None::<&str>) {
+            Ok(()) => ToolOutcome::text(format!("Opened {}.", path.display())),
+            Err(e) => ToolOutcome::err(format!("could not open {}: {}", path.display(), e)),
+        };
+    }
+    // A program name, optionally followed by its arguments: "notepad", "code .",
+    // "notepad C:\\x.txt". The program token must be a plain name - never a shell line.
+    let (program, rest) = match target.split_once(char::is_whitespace) {
+        Some((p, r)) => (p.trim(), r.trim()),
+        None => (target.as_str(), ""),
+    };
+    let plain = !program.is_empty() && program.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'));
+    if !plain {
+        return ToolOutcome::err(format!(
+            "\"{}\" is neither an existing path nor a plain app name. Pass an app name (notepad, code, chrome), an absolute path, or an https:// URL - never a shell command.",
+            target
+        ));
+    }
+    let result = if rest.is_empty() {
+        app.opener().open_path(program.to_string(), None::<&str>)
+    } else {
+        let arg_path = resolve_agent_path(rest);
+        let arg = if arg_path.exists() { arg_path.to_string_lossy().to_string() } else { rest.to_string() };
+        app.opener().open_path(arg, Some(program))
+    };
     match result {
-        Ok(_) => ToolOutcome::text(format!("Opened {}.", target)),
+        Ok(()) => ToolOutcome::text(format!("Opened {}.", target)),
         Err(e) => ToolOutcome::err(format!("could not open {}: {}", target, e)),
     }
 }

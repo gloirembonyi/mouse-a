@@ -5,11 +5,19 @@
 use crate::agent::*;
 
 /// Gemini functionDeclarations for every local tool the agent can call.
+/// Names of the built-in declarations below (skills and MCP tools are not in this list).
+pub(crate) const BUILTIN_TOOL_NAMES: &[&str] = &[
+    "run_command", "read_file", "write_file", "edit_file", "delete_file", "list_directory", "find_files", "search_in_files",
+    "download_file", "web_search", "web_fetch", "capture_screen", "get_screen_context", "list_windows", "read_app_content",
+    "focus_window", "click", "double_click", "scroll", "type_text", "press_key", "open_url", "open_app", "wait",
+    "get_clipboard", "set_clipboard", "notify", "request_confirmation", "delegate_to_browser", "check_browser_task", "update_plan",
+];
+
 pub(crate) fn tool_declarations() -> Value {
     json!([
         {
             "name": "run_command",
-            "description": "Run a Windows PowerShell command and return its output. Use background=true for long-running/servers so it doesn't block. For anything that takes more than a few seconds (installs, builds), pass timeout_seconds explicitly rather than letting it hit the default and fail - up to 300s foreground, or use background=true for anything longer/indefinite. IMPORTANT: only use this (or write_file) when no built-in tool already does the job - e.g. never write and run a script to search the web or fetch a page, web_search/web_fetch already do that directly.",
+            "description": "Run a Windows PowerShell command. Returns {ok, stdout, stderr, exit_code, timed_out, truncated, duration_ms}: ok=false means a non-zero exit or a timeout - read stderr first. Use background=true for long-running/servers so it doesn't block. For anything that takes more than a few seconds (installs, builds), pass timeout_seconds explicitly rather than letting it hit the default and fail - up to 300s foreground, or use background=true for anything longer/indefinite. IMPORTANT: only use this (or write_file) when no built-in tool already does the job - e.g. never write and run a script to search the web or fetch a page, web_search/web_fetch already do that directly.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -115,12 +123,12 @@ pub(crate) fn tool_declarations() -> Value {
         },
         {
             "name": "type_text",
-            "description": "Type the given text at the current focus (e.g. into a focused form field). The result automatically includes a fresh after-screenshot: verify YOUR text actually appeared in the RIGHT field before moving on.",
-            "parameters": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }
+            "description": "Type the given text at the current focus (e.g. into a focused form field). mode=auto (default) pastes multi-line, long or code text through the clipboard (restored afterwards) so editors do not auto-indent or auto-close it, and types short text with keystrokes; mode=type forces keystrokes (terminals, apps that intercept Ctrl+V; a newline presses Enter); mode=paste forces the clipboard. The result says which mode ran, includes verified=true/false where the app exposes its text, and a fresh after-screenshot: confirm YOUR text appeared in the RIGHT field before moving on.",
+            "parameters": { "type": "object", "properties": { "text": { "type": "string" }, "mode": { "type": "string", "enum": ["auto", "type", "paste"], "description": "auto | type | paste" } }, "required": ["text"] }
         },
         {
             "name": "press_key",
-            "description": "Press a key or combo, e.g. 'enter', 'tab', 'ctrl+c', 'ctrl+shift+t', 'alt+tab'. The result automatically includes a fresh after-screenshot - verify the effect from it.",
+            "description": "Press a key or combo, e.g. 'enter', 'tab', 'ctrl+c', 'ctrl+shift+t', 'alt+tab', 'f5', 'space', 'pagedown' - or a comma-separated sequence like 'ctrl+a, delete'. The result automatically includes a fresh after-screenshot - verify the effect from it.",
             "parameters": { "type": "object", "properties": { "keys": { "type": "string" } }, "required": ["keys"] }
         },
         {

@@ -43,13 +43,22 @@ pub(crate) async fn confirm(app: &AppHandle, source: &str, message: &str) -> boo
         },
     );
 
+    // Wait for Allow/Deny, but keep listening for Stop: a prompt nobody answers must
+    // not pin the run for five minutes after the user already cancelled it.
     const CONFIRM_TIMEOUT: Duration = Duration::from_secs(300);
-    match tokio::time::timeout(CONFIRM_TIMEOUT, rx).await {
-        Ok(Ok(approved)) => approved,
-        Ok(Err(_)) => false,
-        Err(_) => {
-            confirmations().lock().unwrap().remove(&request_id);
-            false
+    let started = std::time::Instant::now();
+    let mut rx = rx;
+    loop {
+        tokio::select! {
+            res = &mut rx => {
+                return matches!(res, Ok(true));
+            }
+            _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                if cancel_pending(source) || started.elapsed() >= CONFIRM_TIMEOUT {
+                    confirmations().lock().unwrap().remove(&request_id);
+                    return false;
+                }
+            }
         }
     }
 }

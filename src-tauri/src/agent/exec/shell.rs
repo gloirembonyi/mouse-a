@@ -97,23 +97,123 @@ pub(crate) async fn run_command_tool(source: &str, args: &Value) -> ToolOutcome 
     })
     .await;
     match result {
-        Ok(Ok(out)) => {
-            let exit_code = exit_code_of(&out);
-            ToolOutcome {
-                // Head + tail, never head-only: the error and the [exit code N] marker
-                // live at the END of a failing build's output, and cutting them used
-                // to make a failed command look like a success.
-                response: json!({ "output": clip_middle(&out, MAX_TOOL_OUTPUT), "exit_code": exit_code }),
-                image_data_url: None,
-                log: if background { format!("started in background: {}", command) } else { truncate(&out, 300) },
+        Ok(Ok(CommandRun::Background { pid, log_path })) => ToolOutcome {
+            response: json!({
+                "started": true,
+                "pid": pid,
+                "log_path": log_path,
+                "note": "Runs detached. read_file the log after a short wait to confirm it actually started (and on which port) before relying on it.",
+                "stop_hint": format!("Stop-Process -Id {} (or taskkill /T /F /PID {} for its whole process tree)", pid, pid),
+            }),
+            image_data_url: None,
+            log: format!("started in background: {}", command),
+        },
+        // Structured, like a shell's own contract: separate streams, the exit code as a
+        // number, a timeout as data (not an error that loses the output), and an explicit
+        // truncation flag. tool_failed() reads `ok`; the model reads stderr first.
+        Ok(Ok(CommandRun::Finished(r))) => {
+            let ok = r.exit_code == Some(0) && !r.timed_out;
+            let mut resp = json!({
+                "ok": ok,
+                // Head + tail, never head-only: the error and the failing test live at
+                // the END of a build's output, and cutting them used to hide failures.
+                "stdout": clip_middle(&r.stdout, MAX_TOOL_OUTPUT),
+                "stderr": clip_middle(&r.stderr, MAX_TOOL_OUTPUT / 2),
+                "exit_code": r.exit_code,
+                "timed_out": r.timed_out,
+                "truncated": r.stdout_truncated || r.stderr_truncated,
+                "duration_ms": r.duration_ms,
+            });
+            if r.timed_out {
+                resp["note"] = json!(format!(
+                    "The command was ended after {}s with its process tree. Pass a longer timeout_seconds (up to 300) for a slow-but-finite command, or background=true for a server/watcher.",
+                    timeout.as_secs()
+                ));
+            } else if !ok {
+                resp["note"] = json!("Non-zero exit code - read stderr (then stdout) for the cause and fix it; do not re-run the same command unchanged.");
             }
+            if r.stdout_truncated || r.stderr_truncated {
+                resp["truncation_note"] = json!("The middle of the output was dropped (16 KiB per stream kept). Narrow the command (Select-Object -First/-Last, a filter, or write to a log file and read_file it) instead of re-running it.");
+            }
+            let head = if r.stderr.trim().is_empty() { r.stdout.clone() } else { format!("{}\n{}", r.stderr.trim_end(), r.stdout) };
+            let mut log = truncate(head.trim(), 300);
+            if r.timed_out {
+                log.push_str(" [timed out]");
+            } else if let Some(code) = r.exit_code.filter(|c| *c != 0) {
+                log.push_str(&format!(" [exit {}]", code));
+            }
+            if log.trim().is_empty() {
+                log = "(no output)".to_string();
+            }
+            ToolOutcome { response: resp, image_data_url: None, log }
         }
         Ok(Err(e)) => ToolOutcome::err(e),
         Err(e) => ToolOutcome::err(format!("task failed: {}", e)),
     }
 }
 
+/// What a finished (foreground) command produced. Output is capped per stream
+/// (see `wait_with_timeout`), so a runaway command cannot eat the process's memory.
+#[derive(Debug, Clone)]
+pub(crate) struct CommandResult {
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) timed_out: bool,
+    pub(crate) stdout_truncated: bool,
+    pub(crate) stderr_truncated: bool,
+    pub(crate) duration_ms: u64,
+}
+
+#[derive(Debug)]
+pub(crate) enum CommandRun {
+    Background { pid: u32, log_path: String },
+    Finished(CommandResult),
+}
+
+/// Legacy single-string view of a run (the test suite and the log line use it):
+/// stdout, then `[stderr] …`, then `[exit code N]` on failure; a timeout is an Err.
+#[cfg(test)]
+pub(crate) fn command_run_to_text(run: CommandRun, timeout: Duration) -> Result<String, String> {
+    match run {
+        CommandRun::Background { pid, log_path } => Ok(format!(
+            "Started in the background (pid {}). Output is being written to {} - read_file it to check progress. \
+Stop it later with: Stop-Process -Id {} (or taskkill /T /F /PID {} for its whole process tree).",
+            pid, log_path, pid, pid
+        )),
+        CommandRun::Finished(r) => {
+            let mut combined = String::new();
+            if !r.stdout.trim().is_empty() {
+                combined.push_str(r.stdout.trim_end());
+            }
+            if !r.stderr.trim().is_empty() {
+                if !combined.is_empty() {
+                    combined.push('\n');
+                }
+                combined.push_str("[stderr] ");
+                combined.push_str(r.stderr.trim_end());
+            }
+            if r.timed_out {
+                return Err(format!(
+                    "command timed out after {}s and was ended (with its child processes). Pass a longer timeout_seconds for a slow-but-finite command, or background=true for a long-running/indefinite one. Output so far:\n{}",
+                    timeout.as_secs(),
+                    if combined.is_empty() { "(none)".to_string() } else { clip_middle(&combined, 4000) }
+                ));
+            }
+            if combined.is_empty() {
+                combined.push_str("(command completed with no output)");
+            }
+            match r.exit_code {
+                Some(0) | None => {}
+                Some(code) => combined.push_str(&format!("\n[exit code {}]", code)),
+            }
+            Ok(combined)
+        }
+    }
+}
+
 /// `[exit code N]` at the end of run_powershell's output → N (0 when absent).
+#[cfg(test)]
 pub(crate) fn exit_code_of(out: &str) -> i64 {
     let tail = out.trim_end();
     if !tail.ends_with(']') {
@@ -166,8 +266,9 @@ pub(crate) fn hidden_powershell(command: &str) -> std::process::Command {
 
 #[cfg(test)]
 pub(crate) fn run_powershell(command: &str, background: bool, cwd: Option<&str>, timeout: Duration) -> Result<String, String> {
-    run_powershell_cancellable(command, background, cwd, timeout, &|| false)
+    run_powershell_cancellable(command, background, cwd, timeout, &|| false).and_then(|run| command_run_to_text(run, timeout))
 }
+
 
 pub(crate) fn run_powershell_cancellable(
     command: &str,
@@ -175,7 +276,7 @@ pub(crate) fn run_powershell_cancellable(
     cwd: Option<&str>,
     timeout: Duration,
     cancelled: &dyn Fn() -> bool,
-) -> Result<String, String> {
+) -> Result<CommandRun, String> {
     use std::process::Stdio;
 
     if let Some(dir) = cwd {
@@ -199,14 +300,7 @@ pub(crate) fn run_powershell_cancellable(
             cmd.current_dir(dir);
         }
         let child = cmd.spawn().map_err(|e| format!("failed to start: {}", e))?;
-        return Ok(format!(
-            "Started in the background (pid {}). Output is being written to {} - read_file it to check progress. \
-Stop it later with: Stop-Process -Id {} (or taskkill /T /F /PID {} for its whole process tree).",
-            child.id(),
-            log.display(),
-            child.id(),
-            child.id()
-        ));
+        return Ok(CommandRun::Background { pid: child.id(), log_path: log.display().to_string() });
     }
 
     let mut spawn_cmd = hidden_powershell(command);
@@ -214,41 +308,24 @@ Stop it later with: Stop-Process -Id {} (or taskkill /T /F /PID {} for its whole
     if let Some(dir) = cwd {
         spawn_cmd.current_dir(dir);
     }
+    let started_at = std::time::Instant::now();
     let child = spawn_cmd.spawn().map_err(|e| format!("failed to start: {}", e))?;
 
     // Enforce a wall-clock timeout so one hung command can't stall the agent.
-    let (status, stdout, stderr, ended) = wait_with_timeout(child, timeout, cancelled)?;
-    let mut combined = String::new();
-    if !stdout.trim().is_empty() {
-        combined.push_str(stdout.trim_end());
+    let (status, (stdout, stdout_truncated), (stderr, stderr_truncated), ended) =
+        wait_with_timeout(child, timeout, cancelled)?;
+    if matches!(ended, WaitEnd::Cancelled) {
+        return Err("Stopped at your request (the command and its child processes were ended).".to_string());
     }
-    if !stderr.trim().is_empty() {
-        if !combined.is_empty() {
-            combined.push('\n');
-        }
-        combined.push_str("[stderr] ");
-        combined.push_str(stderr.trim_end());
-    }
-    match ended {
-        WaitEnd::Cancelled => return Err("Stopped at your request (the command and its child processes were ended).".to_string()),
-        WaitEnd::TimedOut => {
-            return Err(format!(
-                "command timed out after {}s and was ended (with its child processes). Pass a longer timeout_seconds for a slow-but-finite command, or background=true for a long-running/indefinite one. Output so far:\n{}",
-                timeout.as_secs(),
-                if combined.is_empty() { "(none)".to_string() } else { clip_middle(&combined, 4000) }
-            ))
-        }
-        WaitEnd::Exited => {}
-    }
-    if combined.is_empty() {
-        combined.push_str("(command completed with no output)");
-    }
-    // The model can't tell a failure from a success without this.
-    match status.and_then(|s| s.code()) {
-        Some(0) | None => {}
-        Some(code) => combined.push_str(&format!("\n[exit code {}]", code)),
-    }
-    Ok(combined)
+    Ok(CommandRun::Finished(CommandResult {
+        stdout,
+        stderr,
+        exit_code: status.and_then(|s| s.code()),
+        timed_out: matches!(ended, WaitEnd::TimedOut),
+        stdout_truncated,
+        stderr_truncated,
+        duration_ms: started_at.elapsed().as_millis() as u64,
+    }))
 }
 
 pub(crate) enum WaitEnd {
@@ -281,21 +358,60 @@ pub(crate) fn kill_tree(child: &mut std::process::Child) {
 /// the child blocks writing, never exits, and "times out". The drains are
 /// collected with a deadline, so a grandchild that inherited a pipe can't
 /// block the agent after the command itself has finished.
+/// Per-stream cap: the first STREAM_HEAD bytes and the last STREAM_TAIL bytes are
+/// kept (16 KiB together), the middle is dropped with a marker. A command that prints
+/// megabytes (a verbose build, `Get-ChildItem -Recurse C:\`) therefore costs a bounded
+/// amount of memory and a bounded tool result - and the verdict at the END survives.
+pub(crate) const STREAM_HEAD: usize = 4 * 1024;
+pub(crate) const STREAM_TAIL: usize = 12 * 1024;
+
 pub(crate) fn wait_with_timeout(
     mut child: std::process::Child,
     timeout: Duration,
     cancelled: &dyn Fn() -> bool,
-) -> Result<(Option<std::process::ExitStatus>, String, String, WaitEnd), String> {
+) -> Result<(Option<std::process::ExitStatus>, (String, bool), (String, bool), WaitEnd), String> {
     use std::io::Read;
     use std::time::Instant;
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let (tx, rx) = std::sync::mpsc::channel::<(String, bool)>();
         std::thread::spawn(move || {
-            let mut buf = Vec::new();
+            let mut head: Vec<u8> = Vec::with_capacity(STREAM_HEAD);
+            let mut tail: Vec<u8> = Vec::with_capacity(STREAM_TAIL + 8192);
+            let mut total: usize = 0;
             if let Some(mut p) = pipe {
-                let _ = p.read_to_end(&mut buf);
+                let mut buf = [0u8; 8192];
+                loop {
+                    let n = match p.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => n,
+                    };
+                    total += n;
+                    let mut chunk = &buf[..n];
+                    if head.len() < STREAM_HEAD {
+                        let take = (STREAM_HEAD - head.len()).min(chunk.len());
+                        head.extend_from_slice(&chunk[..take]);
+                        chunk = &chunk[take..];
+                    }
+                    if !chunk.is_empty() {
+                        tail.extend_from_slice(chunk);
+                        if tail.len() > STREAM_TAIL {
+                            let excess = tail.len() - STREAM_TAIL;
+                            tail.drain(..excess);
+                        }
+                    }
+                }
             }
-            let _ = tx.send(String::from_utf8_lossy(&buf).into_owned());
+            let truncated = total > STREAM_HEAD + STREAM_TAIL;
+            let mut text = String::from_utf8_lossy(&head).into_owned();
+            if truncated {
+                text.push_str(&format!(
+                    "\n…[{} bytes omitted - output capped at {} KiB per stream]…\n",
+                    total - head.len() - tail.len(),
+                    (STREAM_HEAD + STREAM_TAIL) / 1024
+                ));
+            }
+            text.push_str(&String::from_utf8_lossy(&tail));
+            let _ = tx.send((text, truncated));
         });
         rx
     };
@@ -320,7 +436,7 @@ pub(crate) fn wait_with_timeout(
     };
     let grace = Duration::from_secs(3);
     let held = "(output stream still held open by a background child process)";
-    let stdout = out_rx.recv_timeout(grace).unwrap_or_else(|_| held.to_string());
+    let stdout = out_rx.recv_timeout(grace).unwrap_or_else(|_| (held.to_string(), false));
     let stderr = err_rx.recv_timeout(Duration::from_millis(500)).unwrap_or_default();
     Ok((status, stdout, stderr, ended))
 }

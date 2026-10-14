@@ -52,11 +52,15 @@ This app sends conversation state + tool results and gets back either plain text
 `functionCalls` to execute. There is no Gemini key anywhere in this codebase - the backend rotates
 across up to 5 shared keys server-side.
 
-The agent loop lives in `src-tauri/src/agent.rs`: ask the model → if it returned functionCalls,
-execute them locally (`run_command`, `read_file`, `write_file`, `find_files`, `web_search`,
-`web_fetch`, `capture_screen`, `get_screen_context`, `click`/`double_click`/`scroll`/`type_text`/
-`press_key`, `open_url`/`open_app`, `wait`, plus MCP-provided tools) → feed results back → repeat
-until a plain-text answer or `MAX_ITERATIONS` (40) is hit. Key details baked into this file:
+The agent loop lives in `src-tauri/src/agent/` (one file per concern - see `agent/mod.rs` for the
+map: `drive.rs` is the loop, `exec/` the tools, `tools/` the declarations and per-task selection,
+`ledger.rs`/`checkpoint.rs` the run's memory, `retry.rs` the model-call resilience; every file starts
+with `use crate::agent::*` and `mod.rs` re-exports each child `pub(crate)`). Ask the model → if it
+returned functionCalls, execute them locally (`run_command`, `read_file`, `write_file`, `find_files`,
+`web_search`, `web_fetch`, `capture_screen`, `get_screen_context`, `click`/`double_click`/`scroll`/
+`type_text`/`press_key`, `open_url`/`open_app`, `wait`, plus MCP-provided tools) → feed results back →
+repeat until a plain-text answer; the step budget starts at 40 and grows while the run makes
+progress (up to 120 steps / 30 min). Key details baked into these files:
 
 - **Screen coordinate mapping**: the model only ever sees a downscaled screenshot; click coordinates
   it returns are normalized 0-1000 and must be mapped back to real screen pixels via `ScreenMapping`
@@ -70,6 +74,45 @@ until a plain-text answer or `MAX_ITERATIONS` (40) is hit. Key details baked int
   what stops model-written throwaway files from landing inside this repo's own source tree.
 - Genuinely destructive shell commands (disk format, recursive system-drive delete, shutdown, …) are
   refused before ever reaching `run_command`.
+- **The system prompt is served by the backend.** `retry.rs` sends `profile: "desktop"` plus a
+  `promptContext` (`autonomous`, `toolNames`, `capabilities`, `environment` - built by
+  `RunContext::prompt_context` in `drive.rs`); the backend renders
+  `backend-Thothai/src/prompts/agent/desktop.js` and answers with `promptVersion`. `agent/prompt.rs`
+  is the same prompt as a local fallback for an older backend. `capabilities` tells the server prompt
+  which newer behaviours this build has (`structured_run_command`, `type_text_modes`) so it never
+  describes a result shape the client does not produce - add to that list when you add one.
+- **`run_command` returns a structured result**, not a string: `{ok, stdout, stderr, exit_code,
+  timed_out, truncated, duration_ms}` (`exec/shell.rs`, `CommandRun`/`CommandResult`). A timeout is
+  data (`timed_out: true`), not an error that loses the output; each stream is capped at 16 KiB
+  (4 KiB head + 12 KiB tail with a marker) while the command runs, so a runaway command cannot eat
+  memory. `tool_failed` reads `ok`; `response_text` reads stderr then stdout. The test-only
+  `run_powershell` wrapper still returns the old `[exit code N]` string shape for the shell tests.
+- **`type_text` has modes** (`exec/computer.rs`): `auto` pastes multi-line / long / code text via
+  the clipboard (`input::paste_via_clipboard`, clipboard restored) so editors do not auto-indent or
+  auto-close it, and types short text with batched keystrokes (`input::type_text_keys`: newline =
+  Enter, tab = Tab, ~30x faster than the old per-unit loop); `type` and `paste` force one. Terminals
+  always get keystrokes. Where the app exposes accessible text the result carries `verified`.
+  `press_key` accepts sequences (`"ctrl+a, delete"`) and F-keys/space/page keys. All SendInput
+  calls run on `spawn_blocking` (they used to sleep on the tokio runtime).
+- **`open_url`/`open_app` never touch cmd.exe** (`exec/windows.rs`). The old `cmd /C start ""
+  <target>` re-parsed the line, so a URL carrying `&calc` ran `calc`. Targets go through
+  `tauri_plugin_opener` (ShellExecuteEx, no shell) after validation: http(s)/file/mailto URLs only,
+  existing paths, or a bare program token with optional arguments.
+- **Verification shots wait for the screen to settle** (`screen.rs::verification_shot`): first
+  capture at 250 ms, then every 300 ms until two 48×32 thumbnails match, capped per tool (1.5 s for
+  click/type/scroll/keys, 4 s for open/focus) - instead of a fixed 900 ms / 2 s.
+- **"continue" resumes** (`checkpoint.rs`): every tool round saves the ledger to
+  `%APPDATA%/mouse-ai/runs/<source>.json`; a continue-phrase (or the same task again) from the same
+  source within 30 min seeds the new run with a `[RESUMING]` digest. The transcript itself is never
+  persisted (replaying old parts with their `thoughtSignature`s 400s). `trusted_apps` is never
+  persisted either.
+- **Tools are selected per task** (`tools/select.rs`, a port of the extension's `selectTools`):
+  a core set plus keyword hints (download, clipboard, notify, create_document, delegate_to_browser
+  only when the extension is connected and paired); MCP tools and `use_skill` always. `drive_loop`
+  widens to the full catalog once if the model names an un-offered tool (that call is executed
+  anyway), on two consecutive errors, a stall, or a completion review.
+- The wrap-up turn (`stop_with_report`) offers no tools, and a pending Allow/Deny prompt now
+  honours Stop (`confirm.rs` polls `cancel_pending`).
 
 ### Rust module map (`src-tauri/src/`)
 
@@ -77,7 +120,7 @@ until a plain-text answer or `MAX_ITERATIONS` (40) is hit. Key details baked int
 | --- | --- |
 | `lib.rs` | App entry: Tauri builder, system tray, global shortcuts, window setup, invoke_handler registration |
 | `commands.rs` | Tauri `#[command]` IPC endpoints exposed to the frontend; owns `AppState` (backend client, ai_active, conversation_id, overlay_pinned) |
-| `agent.rs` | The local agent loop and every built-in tool implementation |
+| `agent/` | The local agent loop (`drive.rs`), tools (`exec/*`, `tools/*`), ledger + checkpoints, prompt fallback, retry - see `agent/mod.rs` |
 | `backend.rs` | HTTP client for the Thothai backend (auth, chat, agent step, conversation history) |
 | `mouse.rs` | Cursor position/context, accessible-element inspection under the cursor (Win32 UI Automation) |
 | `capture.rs` | Screenshot capture (full screen, region, window-or-around-point) |

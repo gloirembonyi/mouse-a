@@ -93,9 +93,8 @@ pub(crate) fn retry_after_hint_secs(err: &str) -> Option<u64> {
 pub(crate) async fn agent_step_with_retry(
     app: &AppHandle,
     backend: &BackendClient,
-    system: &str,
+    ctx: &RunContext,
     contents: &mut Vec<Value>,
-    tools: &Value,
     source: &str,
     ledger: &Ledger,
     thinking: Option<u32>,
@@ -103,7 +102,15 @@ pub(crate) async fn agent_step_with_retry(
     let mut attempt = 0usize;
     let mut compacted_for_size = false;
     loop {
-        match backend.agent_step(system, Value::Array(contents.clone()), tools.clone(), thinking).await {
+        let req = crate::backend::AgentStepRequest {
+            system: &ctx.system,
+            contents: Value::Array(contents.clone()),
+            tools: ctx.tools.clone(),
+            thinking_budget: thinking,
+            profile: Some("desktop"),
+            prompt_context: Some(ctx.prompt_context()),
+        };
+        match backend.agent_step_with_profile(req).await {
             Ok(v) => return Ok(v),
             Err(e) => {
                 if is_payload_too_large(&e) && !compacted_for_size {
