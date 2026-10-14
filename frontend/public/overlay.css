@@ -1036,15 +1036,27 @@ html, body {
 }
 #pill:active { transform: scale(0.97); }
 
+@property --pill-iris {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
 #pill .pill-icon {
   width: 24px;
   height: 24px;
   border-radius: 8px;
   color: #fff;
-  background: linear-gradient(180deg, #769fcd, #436391);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 2px 8px -2px rgba(67, 99, 145, 0.7);
+  /* The brand's iridescent wash (teal -> blue -> violet -> magenta), slowly flowing. */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0)),
+    conic-gradient(from var(--pill-iris), #36e3c9, #4f8bff, #9b6cff, #ec4ad7, #36e3c9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 2px 8px -2px rgba(79, 139, 255, 0.6);
   filter: none;
+  animation: pill-iris 9s linear infinite;
 }
+#panel.agent-running #pill .pill-icon, #pill:hover .pill-icon { animation-duration: 2.4s; }
+@keyframes pill-iris { to { --pill-iris: 360deg; } }
+@media (prefers-reduced-motion: reduce) { #pill .pill-icon { animation: none; } }
 #pill .pill-icon svg { width: 13px; height: 13px; }
 
 #pill .pill-label {

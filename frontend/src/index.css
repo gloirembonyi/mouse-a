@@ -335,6 +335,29 @@ a:focus-visible {
   transform-box: fill-box;
   transform-origin: center;
   animation: bot-blink 4.2s infinite;
+  translate: var(--bot-ex, 0) var(--bot-ey, 0);
+}
+/* The iridescent aura - its motion is the character's state. */
+.bot .bot-aura {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0.55;
+  animation: bot-spin 14s linear infinite;
+  transition: opacity 0.4s ease;
+}
+.bot-still .bot-aura { opacity: 0.42; animation-duration: 22s; }
+.bot-thinking .bot-aura { opacity: 0.85; animation: bot-spin 4s linear infinite, bot-aura-breathe 2.4s ease-in-out infinite; }
+.bot-working .bot-aura { opacity: 1; animation: bot-spin 1.8s linear infinite; }
+.bot-listening .bot-aura { opacity: 0.9; animation: bot-spin 6s linear infinite, bot-aura-listen 1.6s ease-in-out infinite; }
+.bot-happy .bot-aura { opacity: 1; animation: bot-spin 1.2s linear 2, bot-aura-flare 1.4s ease-out 1; }
+.bot-sleeping .bot-aura { opacity: 0.18; animation-duration: 30s; }
+.bot-error .bot-aura { opacity: 0.8; filter: hue-rotate(-60deg) saturate(1.4); animation: bot-spin 6s linear infinite; }
+@keyframes bot-spin { to { transform: rotate(360deg); } }
+@keyframes bot-aura-breathe { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+@keyframes bot-aura-listen { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+@keyframes bot-aura-flare { 0% { opacity: 0.5; transform: scale(0.9); } 40% { opacity: 1; transform: scale(1.12); } 100% { opacity: 0.6; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .bot .bot-body, .bot .bot-eyes, .bot .bot-aura { animation: none !important; }
 }
 .bot-still .bot-eyes {
   animation: none;

@@ -227,7 +227,7 @@ export function CopilotBar() {
       onKeyDown={(e) => e.key === "Escape" && setExpanded(false)}
     >
       {/* ── The pill ── */}
-      <div className="cp-pill glass" data-tauri-drag-region>
+      <div className={clsx("cp-pill glass", busy && "is-busy")} data-tauri-drag-region>
         <button
           type="button"
           className="cp-avatar"

@@ -1,5 +1,45 @@
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 import clsx from "clsx";
+
+// The aura: one fluid iridescent wash (teal -> electric blue -> violet -> magenta) that
+// circles every character. Its speed and brightness ARE the state - a slow drift at
+// rest, a quicker swirl while thinking, a bright spin while working, a breath in time
+// with the voice while listening (index.css, .bot-aura).
+const IRIS = ["#36e3c9", "#4f8bff", "#9b6cff", "#ec4ad7", "#36e3c9"];
+
+// Eyes follow the pointer by a few percent - the small thing that makes a character
+// feel present. One document listener for every avatar, rAF-throttled.
+const gazeTargets = new Set<HTMLElement>();
+let gazeBound = false;
+let gazeRaf = 0;
+let gazeX = 0;
+let gazeY = 0;
+function applyGaze() {
+  gazeRaf = 0;
+  for (const el of gazeTargets) {
+    const r = el.getBoundingClientRect();
+    if (!r.width) continue;
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const dx = Math.max(-1, Math.min(1, (gazeX - cx) / Math.max(160, window.innerWidth / 3)));
+    const dy = Math.max(-1, Math.min(1, (gazeY - cy) / Math.max(120, window.innerHeight / 3)));
+    el.style.setProperty("--bot-ex", `${(dx * 4).toFixed(2)}%`);
+    el.style.setProperty("--bot-ey", `${(dy * 3).toFixed(2)}%`);
+  }
+}
+function bindGaze() {
+  if (gazeBound || typeof document === "undefined") return;
+  gazeBound = true;
+  document.addEventListener(
+    "pointermove",
+    (e) => {
+      gazeX = e.clientX;
+      gazeY = e.clientY;
+      if (!gazeRaf) gazeRaf = requestAnimationFrame(applyGaze);
+    },
+    { passive: true, capture: true },
+  );
+}
 
 // Soft, fuzzy 3D-looking bot characters (after libraries.dev "Bot avatars"),
 // drawn in SVG so they stay crisp at any size and animate with plain CSS:
@@ -111,8 +151,20 @@ export function BotAvatar({
   const c = PALETTE[kind];
   // The felt texture only reads at larger sizes; at chip size it just blurs.
   const fuzzy = size >= 28;
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || size < 20 || mood === "still") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    gazeTargets.add(el);
+    bindGaze();
+    return () => {
+      gazeTargets.delete(el);
+    };
+  }, [size, mood]);
   return (
     <span
+      ref={ref}
       className={clsx("bot inline-flex flex-shrink-0", `bot-${mood}`, className)}
       style={{ width: size, height: size }}
       role={title ? "img" : undefined}
@@ -134,7 +186,32 @@ export function BotAvatar({
           <filter id={`shadow-${uid}`} x="-30%" y="-30%" width="160%" height="170%">
             <feDropShadow dx="0" dy="4" stdDeviation="4" floodColor={c.dark} floodOpacity="0.35" />
           </filter>
+          <linearGradient id={`iris-${uid}`} gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
+            {IRIS.map((col, i) => (
+              <stop key={i} offset={`${(i / (IRIS.length - 1)) * 100}%`} stopColor={col} />
+            ))}
+          </linearGradient>
+          {fuzzy && (
+            <filter id={`blur-${uid}`} x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="3.5" />
+            </filter>
+          )}
         </defs>
+        <g className="bot-aura" style={{ pointerEvents: "none" }}>
+          {fuzzy && (
+            <circle cx="50" cy="55" r="43" fill="none" stroke={`url(#iris-${uid})`} strokeWidth="9" opacity="0.45" filter={`url(#blur-${uid})`} />
+          )}
+          <circle
+            cx="50"
+            cy="55"
+            r="43"
+            fill="none"
+            stroke={`url(#iris-${uid})`}
+            strokeWidth={fuzzy ? 3.2 : 4}
+            strokeLinecap="round"
+            strokeDasharray={fuzzy ? "210 60" : "240 30"}
+          />
+        </g>
         <g className="bot-body" filter={`url(#shadow-${uid})`}>
           <g filter={fuzzy ? `url(#felt-${uid})` : undefined}>
             <Body kind={kind} fill={`url(#shade-${uid})`} />
