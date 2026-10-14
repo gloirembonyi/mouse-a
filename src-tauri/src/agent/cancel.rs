@@ -15,6 +15,31 @@ pub(crate) fn cancels() -> &'static Mutex<HashSet<String>> {
     CANCEL_REQUESTS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// Sources with a run in flight - so "stop everything" (the Esc key, the
+/// banner's Stop) knows whom to stop without the caller naming a source.
+static ACTIVE_RUNS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn active_runs() -> &'static Mutex<HashSet<String>> {
+    ACTIVE_RUNS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+pub(crate) fn begin_run(source: &str) {
+    active_runs().lock().unwrap().insert(source.to_string());
+}
+
+pub(crate) fn end_run(source: &str) {
+    active_runs().lock().unwrap().remove(source);
+}
+
+/// Stop every run in flight. Returns how many were asked to stop.
+pub fn request_cancel_all() -> usize {
+    let sources: Vec<String> = active_runs().lock().unwrap().iter().cloned().collect();
+    for s in &sources {
+        request_cancel(s);
+    }
+    sources.len()
+}
+
 /// Called by the `agent_cancel` Tauri command (the UI's Stop button).
 pub fn request_cancel(source: &str) {
     cancels().lock().unwrap().insert(source.to_string());

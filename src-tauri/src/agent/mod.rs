@@ -248,9 +248,11 @@ continue from where it left off - do not redo steps that are already complete.\n
 
     // Drive the loop, then always shut the MCP servers down (whatever the outcome).
     // The working banner: visible for the whole run, gone the moment it ends.
+    begin_run(source);
     crate::shield::show(app, source, task);
     let result = drive_loop(app, backend, &ctx, contents, source, task, &mut mcp, &mut screen_mapping, initial_ledger).await;
     crate::shield::hide(app);
+    end_run(source);
     mcp.shutdown().await;
     // Keep the checkpoint only when there is something to continue.
     match &result {

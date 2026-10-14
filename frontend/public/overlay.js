@@ -233,9 +233,15 @@ function setupUI() {
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (!mentionMenu.hidden) { closeMentionMenu(); return; }
-    // A pending confirm owns Escape (Deny); a running task is stopped with the
-    // button, not by dismissing the panel; a plain ask in flight just finishes.
-    if (confirmHost.hidden && !agentRunning && !busy) collapse();
+    if (!confirmHost.hidden) return; // the pending confirm owns Esc (Deny)
+    if (agentRunning) {
+      // Esc = Stop while a task runs (the same key stops it from anywhere).
+      btnAsk.disabled = true;
+      questionInput.placeholder = "Stopping…";
+      invoke("agent_cancel", { source: runSource || "overlay" }).catch(() => {});
+      return;
+    }
+    if (!busy) collapse(); // a plain ask in flight just finishes
   });
 
   // Manual resize handle - the window is also natively resizable from its

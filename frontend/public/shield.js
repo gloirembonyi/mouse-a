@@ -41,7 +41,8 @@
   });
 
   stopBtn.addEventListener("click", () => {
-    invoke("agent_cancel", { source: source || undefined }).catch(() => {});
+    invoke("agent_cancel_all").catch(() => {});
     setStep("done", "Stopping…");
   });
+  listen("shield-stopping", () => setStep("done", "Stopping… (Esc)"));
 })();

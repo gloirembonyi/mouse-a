@@ -11,13 +11,52 @@
 // outright (BlockInput) needs administrator rights and would also lock them out; this
 // does not.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Milliseconds (GetTickCount domain) of the agent's own most recent SendInput.
 pub static OUR_LAST_INPUT_TICK: AtomicU64 = AtomicU64::new(0);
-static SHOWN: AtomicBool = AtomicBool::new(false);
+/// Runs currently driving the screen. The banner (and the Esc hotkey) stay up
+/// until the last one ends - two runs at once must not hide each other's banner.
+static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+
+// ── Esc stops everything ──────────────────────────────────────────
+// While the agent drives the mouse, a Stop *button* is hard to reach - the
+// pointer is being moved out from under you. Esc is registered as a global
+// hotkey only for the length of a run, and ignored when the keystroke was the
+// agent's own (press_key "escape" lands within a few ms of our SendInput).
+const OWN_KEY_WINDOW_MS: u64 = 400;
+
+fn apply_esc_hotkey(app: &AppHandle, on: bool) {
+    use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
+    static LOCK: Mutex<()> = Mutex::new(());
+    let _serial = LOCK.lock().unwrap();
+    let gs = app.global_shortcut();
+    let sc = Shortcut::new(None, Code::Escape);
+    let registered = gs.is_registered(sc);
+    if on && !registered {
+        let res = gs.on_shortcut(sc, move |app, _sc, event| {
+            if event.state() != ShortcutState::Pressed {
+                return;
+            }
+            let ours = OUR_LAST_INPUT_TICK.load(Ordering::Relaxed);
+            if tick_now().saturating_sub(ours) < OWN_KEY_WINDOW_MS {
+                return; // the agent pressed Esc, not the person
+            }
+            let n = crate::agent::request_cancel_all();
+            if n > 0 {
+                let _ = app.emit_to("shield", "shield-stopping", n);
+            }
+        });
+        if let Err(e) = res {
+            eprintln!("[shield] could not register Esc: {}", e);
+        }
+    } else if !on && registered {
+        let _ = gs.unregister(sc);
+    }
+}
 
 #[cfg(windows)]
 fn tick_now() -> u64 {
@@ -107,15 +146,24 @@ pub fn show(app: &AppHandle, source: &str, task: &str) {
     let _ = w.show();
     // Never steal focus from the app the agent is driving.
     let _ = crate::mouse::set_own_window_no_activate("mouse ai working", true);
-    SHOWN.store(true, Ordering::Relaxed);
+    if ACTIVE.fetch_add(1, Ordering::SeqCst) == 0 {
+        let app2 = app.clone();
+        std::thread::spawn(move || apply_esc_hotkey(&app2, true));
+    }
     let _ = app.emit_to("shield", "shield-show", serde_json::json!({ "source": source, "task": task.chars().take(80).collect::<String>() }));
 }
 
 pub fn hide(app: &AppHandle) {
-    if !SHOWN.swap(false, Ordering::Relaxed) {
+    let prev = ACTIVE.load(Ordering::SeqCst);
+    if prev == 0 {
         return;
+    }
+    if ACTIVE.fetch_sub(1, Ordering::SeqCst) != 1 {
+        return; // another run is still driving the screen
     }
     if let Some(w) = app.get_webview_window("shield") {
         let _ = w.hide();
     }
+    let app2 = app.clone();
+    std::thread::spawn(move || apply_esc_hotkey(&app2, false));
 }

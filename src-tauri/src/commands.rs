@@ -593,6 +593,12 @@ pub fn agent_cancel(source: Option<String>) {
     crate::agent::request_cancel(source.as_deref().unwrap_or("main"));
 }
 
+/// Stop every agent run in flight (the working banner's Stop, same as Esc).
+#[tauri::command]
+pub fn agent_cancel_all() -> usize {
+    crate::agent::request_cancel_all()
+}
+
 #[derive(Serialize)]
 pub struct BridgeStatus {
     pub connected: bool,
