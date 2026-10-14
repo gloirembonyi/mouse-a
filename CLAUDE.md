@@ -114,6 +114,27 @@ progress (up to 120 steps / 30 min). Key details baked into these files:
 - The wrap-up turn (`stop_with_report`) offers no tools, and a pending Allow/Deny prompt now
   honours Stop (`confirm.rs` polls `cancel_pending`).
 
+### Live transcription (meeting_stream.rs) and element-level tools (uia.rs)
+
+- **Meeting copilot latency.** `meeting_stream.rs` streams mic + system audio to Deepgram
+  over a WebSocket (`tokio-tungstenite` with rustls) using a 2-minute token from the
+  backend (`/api/meeting/stt-token`, 503 when `DEEPGRAM_API_KEY` is unset); interim results
+  are `meeting-transcript-partial {speaker, text}` (the UI's dashed live line), finals go
+  through `meeting::push_entry`. Both channels are sent interleaved (`multichannel=true`)
+  so "me"/"them" is exact. While `LiveSession.streaming` is true the chunker only reports
+  levels; if the stream drops it falls back to Whisper. The Whisper path itself is faster:
+  1.2 s minimum chunk, 260 ms pause window, 5 s cap, up to `MAX_INFLIGHT` (3) chunks
+  transcribed concurrently with results appended in cut order (`FLUSH_SEQ`/`FLUSH_PUBLISHED`).
+  Assist skips the pre-flush when streaming and includes the sentence still being spoken.
+- **UI Automation.** `uia.rs` (windows crate, `Win32_UI_Accessibility`) walks the
+  foreground window's tree (`FindAll(TreeScope_Descendants)`, capped) and returns
+  name/role/value/automation id/rect/patterns; acts through Invoke/Toggle/SelectionItem/
+  ExpandCollapse/Value patterns; always re-finds by name+role near the last rect (COM
+  pointers are never cached). Tools `find_elements` / `click_element` / `set_value`
+  (`agent/exec/elements.rs`) prefer a real click on the element's own rectangle and fall
+  back to patterns or click+select-all+paste. Verified live with
+  `cargo test --lib uia -- --ignored --nocapture`. Capability flag `element_tools`.
+
 ### Rust module map (`src-tauri/src/`)
 
 | Module | Responsibility |
