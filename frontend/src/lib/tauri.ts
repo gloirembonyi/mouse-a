@@ -85,6 +85,9 @@ export const onAiState = (cb: (active: boolean) => void) =>
   listen<boolean>("ai-state", (e) => cb(e.payload));
 export const onCaptureAnalyze = (cb: () => void) => listen("capture-analyze", () => cb());
 export const onQuickAsk = (cb: () => void) => listen("quick-ask", () => cb());
+/** The overlay's "Continue in Mouse AI": open this conversation in the chat view. */
+export const onOpenConversation = (cb: (id: string) => void) =>
+  listen<string>("open-conversation", (e) => cb(e.payload));
 
 // ── File browser / editor (IDE dock) ─────────────────────
 export interface FsEntry {

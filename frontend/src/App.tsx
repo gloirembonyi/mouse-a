@@ -13,7 +13,7 @@ import { useMeeting } from "./hooks/useMeeting";
 import { useAgents } from "./hooks/useAgents";
 import {
   getAiActive,
-  getConversationMessages,
+  getConversationMessages, onOpenConversation,
   newConversation,
   appWindow,
   newId,
@@ -35,6 +35,24 @@ type View = "chat" | "settings" | "meeting" | "agents";
 // The agent prompt is prefixed with the project folder (see useChat); keep
 // that plumbing out of the transcript when a thread is reopened.
 const stripProjectPrefix = (text: string) => text.replace(/^\[Project folder: [^\]]*\]\s*/, "");
+// Stored user turns from the cursor overlay carry its prompt scaffold
+// ("[DESKTOP HOVER CONTEXT] ... asks: <question>", "[TASK] ..."). Reduce a
+// handed-over thread to what the person actually typed (same rule as the
+// overlay's own transcript view, public/overlay.js cleanUserText).
+const cleanUserTurn = (raw: string) => {
+  let text = stripProjectPrefix(raw);
+  const task = text.lastIndexOf("[TASK]");
+  if (task !== -1) text = text.slice(task + "[TASK]".length);
+  const asks = text.toLowerCase().lastIndexOf("asks:");
+  if (asks !== -1) text = text.slice(asks + "asks:".length);
+  if (/\[DESKTOP HOVER CONTEXT\]/.test(text) && asks === -1) text = "What is this?";
+  const cleaned = text
+    .split("\n")
+    .filter((line) => !/^\s*(\[[A-Z][A-Z0-9 _-]+\]|Application:|Window:|Cursor position:|Hovered element:|URL:|Page:|Selected text)/.test(line))
+    .join("\n")
+    .trim();
+  return cleaned || raw;
+};
 
 export default function App() {
   const auth = useAuth();
@@ -154,7 +172,7 @@ export default function App() {
         const uiMsgs: UiMessage[] = msgs.map((m) => ({
           id: newId(),
           kind: m.role === "assistant" ? "assistant" : "user",
-          content: m.role === "assistant" ? m.content : stripProjectPrefix(m.content),
+          content: m.role === "assistant" ? m.content : cleanUserTurn(m.content),
         }));
         chat.loadMessages(uiMsgs, id);
       } catch (err) {
@@ -163,6 +181,23 @@ export default function App() {
     },
     [chat, conversations],
   );
+
+  // The cursor overlay's "Continue in Mouse AI" hands its conversation over.
+  const openThreadRef = useRef(handleOpenThread);
+  openThreadRef.current = handleOpenThread;
+  useEffect(() => {
+    const unlisten = onOpenConversation((id) => {
+      void openThreadRef.current(id).then(() => {
+        // Ready to type: the person came here to carry on the thread.
+        requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>("textarea")?.focus());
+      });
+      conversations.refresh();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleDeleteThread = useCallback(
     async (id: string) => {

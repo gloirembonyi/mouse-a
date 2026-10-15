@@ -398,11 +398,51 @@ pub async fn hide_overlay(app: AppHandle, state: State<'_, AppState>) -> Result<
 
 #[tauri::command]
 pub async fn show_main_window(app: AppHandle) -> Result<(), String> {
+    raise_main_window(&app);
+    Ok(())
+}
+
+/// show() alone does nothing visible for a minimized window - the single most
+/// common state of the main window while the pill is in use.
+fn raise_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+/// "Continue in Mouse AI": bring the main window up and open the conversation
+/// the overlay was just talking in, so the thread continues there instead of
+/// landing the user in whatever chat the window last showed.
+#[tauri::command]
+pub async fn open_in_main(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conversation_id: Option<String>,
+) -> Result<(), String> {
+    let id = match conversation_id.filter(|s| !s.is_empty()) {
+        Some(id) => Some(id),
+        None => state.conversation_id.read().await.clone(),
+    };
+    raise_main_window(&app);
+    if let Some(id) = id {
+        let _ = app.emit_to("main", "open-conversation", id);
+    }
     Ok(())
+}
+
+/// Put text on the OS clipboard. The overlay cannot rely on
+/// navigator.clipboard: WebView2 denies it without a user-activation it does
+/// not always see in a no-activate always-on-top window.
+#[tauri::command]
+pub async fn copy_text(text: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let mut cb = arboard::Clipboard::new().map_err(|e| format!("Clipboard unavailable: {}", e))?;
+        cb.set_text(text).map_err(|e| format!("Clipboard unavailable: {}", e))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Ask the AI about whatever the user paused the mouse over. Combines a

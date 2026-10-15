@@ -74,6 +74,7 @@ let agentRunning = false; // an agent_run is in flight - the send button doubles
 let runSource = null; // "overlay:<n>" of the in-flight run; agent-progress is filtered on it
 let runSeq = 0;
 let threadTurns = 0; // turns rendered in #agent-log (the conversation thread)
+let lastConversationId = null; // the backend conversation the thread is in ("Continue in Mouse AI")
 let lastCollapseAt = 0;
 const THREAD_KEEP_MS = 5 * 60 * 1000; // reopen within this and the thread continues
 
@@ -194,7 +195,7 @@ function makeDraggableClickable(el, onClick) {
 function setupUI() {
   makeDraggableClickable(pill, expand);
   btnClose.addEventListener("click", closePanel);
-  btnOpenApp.addEventListener("click", () => invoke("show_main_window").catch(() => {}));
+  btnOpenApp.addEventListener("click", () => openInMain());
   btnAsk.addEventListener("click", () => {
     if (agentRunning) {
       // The send button is a Stop button while an agent task runs.
@@ -353,7 +354,30 @@ function resetThread({ newConversation } = {}) {
   agentLogEl.hidden = true;
   threadTurns = 0;
   clearChips();
-  if (newConversation) invoke("new_conversation").catch(() => {});
+  if (newConversation) {
+    lastConversationId = null;
+    invoke("new_conversation").catch(() => {});
+  }
+}
+
+/** Open the main window on this thread's conversation (falls back to the current one). */
+function openInMain() {
+  invoke("open_in_main", { conversationId: lastConversationId }).catch(() => invoke("show_main_window").catch(() => {}));
+}
+
+/** Copy through the OS clipboard (Rust) first; the browser API is the fallback. */
+async function copyText(text) {
+  try {
+    await invoke("copy_text", { text: String(text || "") });
+    return true;
+  } catch {
+    try {
+      await navigator.clipboard.writeText(String(text || ""));
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 /** ✕: stop a running task first, then put the panel away. */
@@ -515,6 +539,7 @@ async function askQuestion(question, { webSearch = false } = {}) {
       }),
       webSearch ? 90000 : 55000
     );
+    if (result.conversation_id) lastConversationId = result.conversation_id;
     body.innerHTML = `<div class="answer-body">${renderMarkdown(result.text || "(no answer)")}</div>` + answerActionsHtml();
   } catch (err) {
     body.innerHTML = `<div class="error-box">⚠️ ${escapeHtml(friendlyError(err))}</div>`;
@@ -565,6 +590,7 @@ async function runAgentTask(task) {
       imageDataUrl: attach.image,
     });
     finishAgentSummary(true);
+    if (result.conversation_id) lastConversationId = result.conversation_id;
     appendFinalAnswer(`<div class="answer-body">${renderMarkdown(result.text || "(done)")}</div>` + answerActionsHtml(), turn);
   } catch (err) {
     finishAgentSummary(false);
@@ -658,6 +684,7 @@ async function openConversation(id, title) {
   await syncOverlaySize(560);
   try {
     await invoke("set_conversation_id", { id });
+    lastConversationId = id;
     const messages = await invoke("get_conversation_messages", { id, limit: 40 });
     renderTranscript(title, messages || []);
   } catch (err) {
@@ -1305,12 +1332,12 @@ function onAnswerAction(e) {
   };
   if (act === "copy-code") {
     const code = btn.closest(".md-code")?.querySelector("code")?.textContent || "";
-    navigator.clipboard.writeText(code).then(() => flash("Copied")).catch(() => {});
+    copyText(code).then((ok) => flash(ok ? "Copied" : "Copy failed"));
   } else if (act === "copy-answer") {
-    const body = btn.closest(".agent-final-answer, #answer")?.querySelector(".answer-body");
-    navigator.clipboard.writeText(body?.innerText || "").then(() => flash("Copied")).catch(() => {});
+    const body = btn.closest(".agent-final-answer, .turn-body, #answer")?.querySelector(".answer-body");
+    copyText(body?.innerText || "").then((ok) => flash(ok ? "Copied" : "Copy failed"));
   } else if (act === "open-app") {
-    invoke("show_main_window").catch(() => {});
+    openInMain();
   }
 }
 answerEl.addEventListener("click", onAnswerAction);

@@ -116,6 +116,8 @@ pub fn run() {
             commands::collapse_overlay,
             commands::hide_overlay,
             commands::show_main_window,
+            commands::open_in_main,
+            commands::copy_text,
             commands::ask_about_hover,
             commands::resolve_mention,
             commands::ask_at_cursor,
