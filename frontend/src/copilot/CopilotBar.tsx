@@ -11,6 +11,7 @@ import {
   Globe,
   MessageSquareText,
   NotebookPen,
+  Pause,
   Play,
   RotateCw,
   ScanText,
@@ -304,10 +305,10 @@ export function CopilotBar() {
               type="button"
               className="cp-stop"
               onClick={() => void meeting.stop()}
-              title="End listening"
-              aria-label="End listening"
+              title="Pause listening - the transcript stays, Resume continues it"
+              aria-label="Pause listening"
             >
-              <Square size={12} fill="currentColor" />
+              <Pause size={12} fill="currentColor" />
             </button>
             <button
               type="button"
@@ -326,16 +327,40 @@ export function CopilotBar() {
           </>
         ) : (
           <>
-            <button
-              type="button"
-              className="cp-chip cp-chip-accent"
-              disabled={meeting.starting}
-              onClick={() => void meeting.start("meeting", true, true)}
-              title="Listen to this call (your mic + the other side)"
-            >
-              <Play size={12} fill="currentColor" />
-              {meeting.starting ? "Starting…" : "Listen"}
-            </button>
+            {meeting.resumable ? (
+              <>
+                <button
+                  type="button"
+                  className="cp-chip cp-chip-accent"
+                  disabled={meeting.starting}
+                  onClick={() => void meeting.resume()}
+                  title="Continue this meeting: same transcript, same clock"
+                >
+                  <Play size={12} fill="currentColor" />
+                  {meeting.starting ? "Starting…" : "Resume"}
+                </button>
+                <button
+                  type="button"
+                  className="cp-chip"
+                  disabled={meeting.starting}
+                  onClick={() => void meeting.start("meeting", true, true)}
+                  title="Start over with an empty transcript"
+                >
+                  New
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="cp-chip cp-chip-accent"
+                disabled={meeting.starting}
+                onClick={() => void meeting.start("meeting", true, true)}
+                title="Listen to this call (your mic + the other side)"
+              >
+                <Play size={12} fill="currentColor" />
+                {meeting.starting ? "Starting…" : "Listen"}
+              </button>
+            )}
             <button
               type="button"
               className="cp-icon"

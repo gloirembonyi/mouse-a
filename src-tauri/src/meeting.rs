@@ -113,6 +113,8 @@ pub struct MeetingStatus {
     pub warning: Option<String>,
     /// Live (streaming) transcription is active - words appear as they are spoken.
     pub streaming: bool,
+    /// Not live, but a transcript is there to continue: Resume restarts capture on it.
+    pub resumable: bool,
 }
 
 #[derive(Default)]
@@ -145,6 +147,9 @@ struct LiveSession {
 static LIVE: Mutex<Option<LiveSession>> = Mutex::new(None);
 static TRANSCRIPT: Mutex<Vec<TranscriptEntry>> = Mutex::new(Vec::new());
 static LAST_MODE: Mutex<String> = Mutex::new(String::new());
+/// When the current transcript's session first started - kept across Pause / Resume
+/// so the clock and "started at" stay those of the meeting, not of the last resume.
+static LAST_STARTED_AT: Mutex<Option<i64>> = Mutex::new(None);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// Name of the input device actually opened - quoted in the "mic is silent"
 /// warning, since the usual cause is Windows defaulting to the wrong input.
@@ -814,15 +819,17 @@ pub(crate) fn current_status(warning: Option<String>) -> MeetingStatus {
             started_at_ms: Some(s.started_at_ms),
             warning,
             streaming: s.streaming.load(Ordering::Relaxed),
+            resumable: false,
         },
         None => MeetingStatus {
             live: false,
             mode: LAST_MODE.lock().unwrap().clone(),
             mic: false,
             system: false,
-            started_at_ms: None,
+            started_at_ms: *LAST_STARTED_AT.lock().unwrap(),
             warning,
             streaming: false,
+            resumable: !TRANSCRIPT.lock().unwrap().is_empty(),
         },
     }
 }
@@ -1064,18 +1071,25 @@ pub async fn meeting_start(
     capture_mic: bool,
     capture_system: bool,
     show_bar: Option<bool>,
+    resume: Option<bool>,
 ) -> Result<MeetingStatus, String> {
     if LIVE.lock().unwrap().is_some() {
         return Ok(current_status(None));
     }
+    // Resume = continue the transcript that is already there (Pause is just stop).
+    // Only a fresh session clears it, so nothing from a previous meeting leaks into
+    // new prompts, and nothing from this one is lost by a pause.
+    let resume = resume.unwrap_or(false) && !TRANSCRIPT.lock().unwrap().is_empty();
+    let mode = if resume && mode.trim().is_empty() { LAST_MODE.lock().unwrap().clone() } else { mode };
     let mode = match mode.as_str() {
         "meeting" | "interview" | "practice" => mode,
         other => return Err(format!("Unknown mode: {}", other)),
     };
 
-    // A fresh session starts from a clean slate - nothing from the previous
-    // one leaks into the new prompts.
-    TRANSCRIPT.lock().unwrap().clear();
+    if !resume {
+        TRANSCRIPT.lock().unwrap().clear();
+        *LAST_STARTED_AT.lock().unwrap() = None;
+    }
     *LAST_MODE.lock().unwrap() = mode.clone();
     // Re-probe the backend each session - it may have been redeployed.
     BACKEND_WHISPER_MISSING.store(false, Ordering::Relaxed);
@@ -1117,7 +1131,12 @@ pub async fn meeting_start(
         finished: finished.clone(),
         mic: mic_live.clone(),
         system: sys_live.clone(),
-        started_at_ms: now_ms(),
+        started_at_ms: {
+            let mut first = LAST_STARTED_AT.lock().unwrap();
+            let at = if resume { first.unwrap_or_else(now_ms) } else { now_ms() };
+            *first = Some(at);
+            at
+        },
     });
 
     if has_audio {
@@ -1185,6 +1204,7 @@ pub fn meeting_add_entry(app: AppHandle, speaker: String, text: String) -> Resul
 #[tauri::command]
 pub fn meeting_clear(app: AppHandle) {
     TRANSCRIPT.lock().unwrap().clear();
+    *LAST_STARTED_AT.lock().unwrap() = None;
     emit_status(&app, None);
 }
 

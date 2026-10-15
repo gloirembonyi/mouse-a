@@ -219,6 +219,8 @@ export interface MeetingStatus {
   warning: string | null;
   /** Live (streaming) transcription is active - words appear as they are spoken. */
   streaming?: boolean;
+  /** Paused with a transcript to continue: Resume restarts capture on the same session. */
+  resumable?: boolean;
 }
 
 /** The sentence a speaker is in the middle of (live transcription); empty = none. */
@@ -229,8 +231,8 @@ export interface TranscriptPartial {
 export const onMeetingPartial = (cb: (p: TranscriptPartial) => void) =>
   listen<TranscriptPartial>("meeting-transcript-partial", (e) => cb(e.payload));
 
-export const meetingStart = (mode: MeetingMode, captureMic: boolean, captureSystem: boolean, showBar = true) =>
-  invoke<MeetingStatus>("meeting_start", { mode, captureMic, captureSystem, showBar });
+export const meetingStart = (mode: MeetingMode, captureMic: boolean, captureSystem: boolean, showBar = true, resume = false) =>
+  invoke<MeetingStatus>("meeting_start", { mode, captureMic, captureSystem, showBar, resume });
 export const meetingStop = () => invoke<MeetingStatus>("meeting_stop");
 export const meetingStatus = () => invoke<MeetingStatus>("meeting_status");
 export const meetingTranscript = () => invoke<TranscriptEntry[]>("meeting_transcript");

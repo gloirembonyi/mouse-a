@@ -15,11 +15,11 @@ import {
   Lock,
   Mic,
   Monitor,
+  Pause,
   Play,
   Save,
   ScanText,
   Sparkles,
-  Square,
   Trash2,
   UserCircle2,
   Users,
@@ -104,12 +104,27 @@ export function MeetingView({ meeting, onClose }: MeetingViewProps) {
           </button>
           {hasSession && !status.live && (
             <>
+              {meeting.resumable && (
+                <button
+                  onClick={() => void meeting.resume()}
+                  disabled={meeting.starting}
+                  className="flex h-8 items-center gap-1.5 rounded-lg btn-brand px-3 text-[12.5px] font-medium disabled:opacity-50"
+                  title="Continue this meeting: same transcript, same clock"
+                >
+                  <Play size={12} fill="currentColor" />
+                  Resume
+                </button>
+              )}
               <button
                 onClick={start}
                 disabled={meeting.starting}
-                className="flex h-8 items-center gap-1.5 rounded-lg btn-brand px-3 text-[12.5px] font-medium disabled:opacity-50"
+                className={clsx(
+                  "flex h-8 items-center gap-1.5 rounded-lg px-3 text-[12.5px] font-medium disabled:opacity-50",
+                  meeting.resumable ? "border border-border-soft text-text-secondary hover:bg-bg-hover" : "btn-brand",
+                )}
+                title={meeting.resumable ? "Start over with an empty transcript" : "Start listening"}
               >
-                <Play size={12} fill="currentColor" />
+                {!meeting.resumable && <Play size={12} fill="currentColor" />}
                 New session
               </button>
             </>
@@ -118,9 +133,10 @@ export function MeetingView({ meeting, onClose }: MeetingViewProps) {
             <button
               onClick={() => void meeting.stop()}
               className="flex h-8 items-center gap-1.5 rounded-lg bg-danger px-3 text-[12.5px] font-medium text-white transition hover:opacity-90"
+              title="Pause listening. The transcript stays; Resume picks up where you left off"
             >
-              <Square size={11} fill="currentColor" />
-              Stop
+              <Pause size={11} fill="currentColor" />
+              Pause
             </button>
           )}
           <IconButton title="Back to chat" onClick={onClose}>

@@ -151,19 +151,32 @@ export function useMeeting() {
     };
   }, []);
 
-  const start = useCallback(async (mode: MeetingMode, mic: boolean, system: boolean) => {
+  // What the last start used, so Resume needs no questions.
+  const lastStartRef = useRef<{ mode: MeetingMode; mic: boolean; system: boolean }>({ mode: "meeting", mic: true, system: true });
+
+  const start = useCallback(async (mode: MeetingMode, mic: boolean, system: boolean, resume = false) => {
     setStarting(true);
     setError(null);
     try {
-      setTranscript([]);
-      setCards([]);
-      setStatus(await meetingStart(mode, mic, system, copilotBarEnabled()));
+      if (!resume) {
+        setTranscript([]);
+        setCards([]);
+      }
+      lastStartRef.current = { mode, mic, system };
+      setStatus(await meetingStart(mode, mic, system, copilotBarEnabled(), resume));
     } catch (err) {
       setError(errText(err));
     } finally {
       setStarting(false);
     }
   }, []);
+
+  /** Continue the paused session: same mode and sources, same transcript and clock. */
+  const resume = useCallback(async () => {
+    const last = lastStartRef.current;
+    const mode = (status.mode || last.mode) as MeetingMode;
+    await start(mode, last.mic, mode === "practice" ? false : last.system, true);
+  }, [start, status.mode]);
 
   const stop = useCallback(async () => {
     try {
@@ -232,6 +245,9 @@ export function useMeeting() {
 
   return {
     status,
+    /** Paused with something to continue (the server says so; the local transcript is the fallback). */
+    resumable: !status.live && (status.resumable ?? transcript.length > 0),
+    resume,
     transcript,
     cards,
     profile,
