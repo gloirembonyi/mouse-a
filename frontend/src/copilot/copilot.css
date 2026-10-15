@@ -1069,3 +1069,45 @@ body.copilot-body {
   width: 96px;
   accent-color: var(--brand);
 }
+
+/* ── Menu opens downward from the input row and the window grows to fit it ── */
+.cp-menu {
+  top: calc(100% + 8px);
+  bottom: auto;
+  left: auto;
+  right: -6px;
+}
+
+/* ── A page handed over from the browser extension ── */
+.cp-ctx {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 6px;
+  padding: 5px 6px 5px 10px;
+  border-radius: 999px;
+  width: fit-content;
+  max-width: 100%;
+  font-size: 12px;
+  color: #cfe0f2;
+  background: rgba(118, 159, 205, 0.16);
+  border: 1px solid rgba(118, 159, 205, 0.35);
+}
+.cp-ctx-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 420px;
+}
+.cp-ctx-x {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  color: #a9b9cc;
+}
+.cp-ctx-x:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}

@@ -1361,10 +1361,17 @@ static STEALTH: AtomicBool = AtomicBool::new(true);
 /// wherever the user dragged it.
 static COPILOT_PLACED: AtomicBool = AtomicBool::new(false);
 
-const COPILOT_WINDOWS: [&str; 3] = ["main", "overlay", "copilot"];
+const COPILOT_WINDOWS: [&str; 4] = ["main", "overlay", "copilot", "shield"];
 
 pub fn is_live() -> bool {
     LIVE.lock().unwrap().is_some()
+}
+
+/// Set the in-memory flag and apply it to every window (no persistence - prefs
+/// owns that and calls this from `prefs::apply`).
+pub fn set_stealth(app: &AppHandle, enabled: bool) {
+    STEALTH.store(enabled, Ordering::Relaxed);
+    apply_stealth(app);
 }
 
 pub fn apply_stealth(app: &AppHandle) {
@@ -1529,8 +1536,12 @@ pub fn stealth_get() -> bool {
 
 #[tauri::command]
 pub fn stealth_set(app: AppHandle, enabled: bool) -> bool {
-    STEALTH.store(enabled, Ordering::Relaxed);
-    apply_stealth(&app);
+    // Remembered for the next launch; prefs::update applies it to every window.
+    let mut prefs = crate::prefs::get();
+    prefs.hide_from_screen_share = enabled;
+    if crate::prefs::update(&app, prefs).is_err() {
+        set_stealth(&app, enabled);
+    }
     let _ = app.emit("stealth-changed", enabled);
     enabled
 }

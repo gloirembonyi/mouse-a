@@ -13,7 +13,7 @@ import {
 /** How Mouse AI sits on the desktop: taskbar button, launch behavior and
  *  screen-share visibility. The tray menu flips the same switches. */
 export function DesktopSection() {
-  const [prefs, setPrefs] = useState<WindowPrefs>({ hide_from_taskbar: false, start_in_background: false });
+  const [prefs, setPrefs] = useState<WindowPrefs>({ hide_from_taskbar: false, start_in_background: false, hide_from_screen_share: true });
   const [stealth, setStealth] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,7 +60,7 @@ export function DesktopSection() {
       />
       <Row
         title="Hide from screen share"
-        hint="Mouse AI windows don't appear in shared screens or recordings. Resets to on at each launch."
+        hint="No Mouse AI window (this one, the Ask AI overlay, the copilot bar, the working banner) appears in shared screens or recordings. Remembered across launches."
         on={stealth}
         onChange={(v) => void stealthSet(v).then(setStealth)}
       />

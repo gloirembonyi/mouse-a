@@ -285,7 +285,18 @@ export const stealthSet = (enabled: boolean) => invoke<boolean>("stealth_set", {
 export interface WindowPrefs {
   hide_from_taskbar: boolean;
   start_in_background: boolean;
+  /** Every Mouse AI window is excluded from screen capture. Persisted; on by default. */
+  hide_from_screen_share: boolean;
 }
+/** A page the browser extension handed to the copilot bar (bridge.rs `open_copilot`). */
+export interface CopilotContext {
+  url: string;
+  title: string;
+  text: string;
+  selection: string;
+}
+export const onCopilotContext = (cb: (c: CopilotContext) => void) =>
+  listen<CopilotContext>("copilot-context", (e) => cb(e.payload));
 export const windowPrefsGet = () => invoke<WindowPrefs>("window_prefs_get");
 export const windowPrefsSet = (prefs: WindowPrefs) => invoke<WindowPrefs>("window_prefs_set", { prefs });
 export const onWindowPrefs = (cb: (p: WindowPrefs) => void) => listen<WindowPrefs>("window-prefs", (e) => cb(e.payload));

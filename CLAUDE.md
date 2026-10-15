@@ -17,9 +17,14 @@ the length of every local agent run, with Stop), and the in-call copilot bar (`c
 floating Cluely-style pill + glass panel (Assist / What should I say? / Follow-ups / Recap, live
 insights, auto-answer, Solve screen) that `meeting_start` shows over the call. Ctrl+Shift+\ toggles it; while a
 call is live, Ctrl+Shift+Enter (suggest) and Ctrl+Shift+S (solve what's on screen) are routed to it instead of the
-main window. Ctrl+Alt+Arrows nudge the bar - registered only while it is visible (`set_move_keys` in `meeting.rs`). All Mouse AI windows are excluded
-from screen capture by default (`WDA_EXCLUDEFROMCAPTURE` via `set_content_protected`; `stealth_set`
-in `meeting.rs` toggles it).
+main window. Ctrl+Alt+Arrows nudge the bar - registered only while it is visible (`set_move_keys` in `meeting.rs`). All Mouse AI windows (main, overlay,
+copilot, shield) are excluded from screen capture by default (`WDA_EXCLUDEFROMCAPTURE` via
+`set_content_protected`). The switch is `prefs.hide_from_screen_share` (persisted, default on, applied by
+`prefs::apply` through `meeting::set_stealth`); `stealth_set` in `meeting.rs` writes it and emits
+`stealth-changed`, and the same toggle appears in Settings (DesktopSection) and the copilot bar's menu. The
+browser extension's Undercover can open here instead of in a Chrome popup: the `open_copilot` bridge frame
+(paired only, `bridge.rs`) shows the copilot bar and emits `copilot-context {url,title,text,selection}` to
+it; the bar shows the page as a chip and sends it along with the next question.
 
 ## Commands
 

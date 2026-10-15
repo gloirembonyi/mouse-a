@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Copy,
   Ellipsis,
+  Globe,
   MessageSquareText,
   NotebookPen,
   Play,
@@ -33,7 +34,9 @@ import {
   copilotResize,
   meetingAssist,
   onCopilotAssist,
+  onCopilotContext,
   onStealthChanged,
+  type CopilotContext,
   showMainWindow,
   stealthGet,
   stealthSet,
@@ -91,6 +94,8 @@ export function CopilotBar() {
   const [doMode, setDoMode] = useState(false);
   const [view, setView] = useState<"answers" | "cues">("answers");
   const [opacity, setOpacity] = useState(() => Number(localStorage.getItem(LS.opacity)) || 1);
+  /** A page handed over from the browser extension (Undercover → Mouse AI). */
+  const [pageCtx, setPageCtx] = useState<CopilotContext | null>(null);
   const agent = useCopilotAgent();
   const ins = useInsert();
 
@@ -98,14 +103,39 @@ export function CopilotBar() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Window sizing: the transparent window hugs the glass ──
+  // The "..." menu is absolutely positioned (it opens below the input row), so it
+  // is measured too - otherwise the window edge cut it off.
+  const fitRef = useRef<() => void>(() => {});
   useLayoutEffect(() => {
     const el = rootRef.current;
     if (!el) return;
-    const fit = () => void copilotResize(BAR_WIDTH, Math.ceil(el.getBoundingClientRect().height) + SHADOW_PAD);
+    const fit = () => {
+      const r = el.getBoundingClientRect();
+      const menu = el.querySelector<HTMLElement>(".cp-menu");
+      const bottom = Math.max(r.bottom, menu ? menu.getBoundingClientRect().bottom + 8 : 0);
+      void copilotResize(BAR_WIDTH, Math.ceil(bottom - r.top) + SHADOW_PAD);
+    };
+    fitRef.current = fit;
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+  useLayoutEffect(() => {
+    fitRef.current();
+  }, [menuOpen, pageCtx]);
+
+  // Undercover from the browser: the extension sends the page; the bar opens on it.
+  useEffect(() => {
+    const un = onCopilotContext((c) => {
+      setPageCtx(c);
+      setExpanded(true);
+      setView("answers");
+      setDoMode(false);
+      void copilotFocus();
+      setTimeout(() => inputRef.current?.focus(), 80);
+    });
+    return () => void un.then((fn) => fn());
   }, []);
 
   useEffect(() => {
@@ -203,15 +233,23 @@ export function CopilotBar() {
     void agent.start(task);
   };
 
+  /** The browser page rides along with the question while the chip is attached. */
+  const withPage = (q: string) =>
+    pageCtx
+      ? `[Page from the browser: ${pageCtx.title || "untitled"} (${pageCtx.url})]\n` +
+        (pageCtx.selection ? `Selected text:\n${pageCtx.selection}\n\n` : "") +
+        `${pageCtx.text}\n\nQuestion: ${q}`
+      : q;
+
   const send = () => {
     const q = draft.trim();
     if (doMode) {
       setDraft("");
-      return fix(q);
+      return fix(withPage(q));
     }
-    if (!q) return run("assist");
+    if (!q && !pageCtx) return run("assist");
     setDraft("");
-    run("ask", q);
+    run("ask", withPage(q || "What should I know about this page? Keep it short."));
   };
 
   const card = cards[Math.min(index, Math.max(cards.length - 1, 0))];
@@ -274,9 +312,14 @@ export function CopilotBar() {
             <button
               type="button"
               className="cp-icon"
-              onClick={() => void copilotHide()}
-              title="Hide bar - keeps listening (Ctrl+Shift+\ brings it back)"
-              aria-label="Hide bar"
+              onClick={() => {
+                void (async () => {
+                  await meeting.stop();
+                  await copilotHide();
+                })();
+              }}
+              title="Stop listening and close the bar (Ctrl+Shift+\ brings it back)"
+              aria-label="Stop and close"
             >
               <X size={15} />
             </button>
@@ -420,6 +463,15 @@ export function CopilotBar() {
           )}
 
           <div className="cp-input">
+            {pageCtx && (
+              <div className="cp-ctx" title={pageCtx.url}>
+                <Globe size={13} />
+                <span className="cp-ctx-label">From your browser: {pageCtx.title || pageCtx.url}</span>
+                <button type="button" className="cp-ctx-x" onClick={() => setPageCtx(null)} aria-label="Detach the page">
+                  <X size={12} />
+                </button>
+              </div>
+            )}
             <textarea
               ref={inputRef}
               rows={1}

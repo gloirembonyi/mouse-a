@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowPrefs {
     /// No taskbar button for the main window - reach it from the tray icon.
     #[serde(default)]
@@ -21,6 +21,21 @@ pub struct WindowPrefs {
     /// Don't open the main window at launch; run in the tray.
     #[serde(default)]
     pub start_in_background: bool,
+    /// Every Mouse AI window (main, Ask AI overlay, copilot bar, working banner) is
+    /// excluded from screen capture: shares and recordings never show it. On by
+    /// default; the setting is remembered across launches.
+    #[serde(default = "default_true")]
+    pub hide_from_screen_share: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for WindowPrefs {
+    fn default() -> Self {
+        Self { hide_from_taskbar: false, start_in_background: false, hide_from_screen_share: true }
+    }
 }
 
 static PREFS: Mutex<Option<WindowPrefs>> = Mutex::new(None);
@@ -54,12 +69,13 @@ fn save(prefs: &WindowPrefs) -> Result<(), String> {
 }
 
 /// Apply the taskbar preference to the main window (the overlay and the
-/// copilot bar never have a taskbar button).
+/// copilot bar never have a taskbar button) and the screen-share rule to all.
 pub fn apply(app: &AppHandle) {
     let prefs = get();
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.set_skip_taskbar(prefs.hide_from_taskbar);
     }
+    crate::meeting::set_stealth(app, prefs.hide_from_screen_share);
 }
 
 pub fn update(app: &AppHandle, prefs: WindowPrefs) -> Result<WindowPrefs, String> {

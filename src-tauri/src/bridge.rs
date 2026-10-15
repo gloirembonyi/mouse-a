@@ -406,6 +406,39 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
         Some("ping") => {
             let _ = tx.send(Message::Text(json!({ "v": 1, "type": "pong" }).to_string()));
         }
+        // Undercover from the browser: the extension hands the page it is on to the
+        // copilot bar, which (with hide-from-screen-share on) no share or recording
+        // shows. Paired connections only, like reveal_path.
+        Some("open_copilot") => {
+            let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let s = |k: &str, cap: usize| -> String {
+                v.get(k).and_then(|x| x.as_str()).unwrap_or("").chars().take(cap).collect()
+            };
+            let ok = bridge().is_paired();
+            if ok {
+                crate::meeting::show_copilot(app);
+                let _ = app.emit_to(
+                    "copilot",
+                    "copilot-context",
+                    json!({
+                        "url": s("url", 2_000),
+                        "title": s("title", 300),
+                        "text": s("text", 12_000),
+                        "selection": s("selection", 4_000),
+                    }),
+                );
+            }
+            let _ = tx.send(Message::Text(
+                json!({
+                    "v": 1,
+                    "type": "copilot_opened",
+                    "id": id,
+                    "ok": ok,
+                    "error": if ok { Value::Null } else { json!("The extension isn't paired with Mouse AI.") },
+                })
+                .to_string(),
+            ));
+        }
         // "Show in folder" next to a file path in the extension: open Explorer on it.
         // Paired connections only; it only ever opens a folder view, never runs a file.
         Some("reveal_path") => {
