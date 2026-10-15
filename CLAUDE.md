@@ -17,7 +17,7 @@ the length of every local agent run, with Stop), and the in-call copilot bar (`c
 floating Cluely-style pill + glass panel (Assist / What should I say? / Follow-ups / Recap, live
 insights, auto-answer, Solve screen) that `meeting_start` shows over the call. Ctrl+Shift+\ toggles it; while a
 call is live, Ctrl+Shift+Enter (suggest) and Ctrl+Shift+S (solve what's on screen) are routed to it instead of the
-main window. Ctrl+Alt+Arrows nudge the bar - registered only while it is visible (`set_move_keys` in `meeting.rs`). All Mouse AI windows (main, overlay,
+main window. Ctrl+Alt+Arrows nudge the bar - registered only while it is visible (`set_move_keys` in `meeting.rs`). The bar is shown with a raw `ShowWindow(SW_SHOWNOACTIVATE)` so it never steals focus from the call; because tao only applies visibility *changes*, it must also be hidden with a raw `ShowWindow(SW_HIDE)` (`hide_copilot`) and its visibility read with `IsWindowVisible` - `w.hide()` alone is a no-op for it. All Mouse AI windows (main, overlay,
 copilot, shield) are excluded from screen capture by default (`WDA_EXCLUDEFROMCAPTURE` via
 `set_content_protected`). The switch is `prefs.hide_from_screen_share` (persisted, default on, applied by
 `prefs::apply` through `meeting::set_stealth`); `stealth_set` in `meeting.rs` writes it and emits

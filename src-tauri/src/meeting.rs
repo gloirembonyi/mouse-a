@@ -1418,8 +1418,18 @@ pub fn show_copilot(app: &AppHandle) {
     set_move_keys(app);
 }
 
+/// Mirror of `show_no_activate`: the bar is shown with a raw ShowWindow so the call
+/// keeps focus, which means tao never records it as visible - and tao's `hide()`
+/// only applies a *change* of visibility, so on its own it did nothing. This is why
+/// the X and Ctrl+Shift+\ "closed the meeting but not the bar".
 fn hide_copilot(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("copilot") {
+        #[cfg(windows)]
+        if let Ok(hwnd) = w.hwnd() {
+            unsafe {
+                winapi::um::winuser::ShowWindow(hwnd.0 as _, winapi::um::winuser::SW_HIDE);
+            }
+        }
         let _ = w.hide();
     }
     set_move_keys(app);
@@ -1492,7 +1502,14 @@ fn nudge_copilot(app: &AppHandle, dx: f64, dy: f64) {
 /// Toggle the bar's visibility (Ctrl+Shift+\). Returns whether it is now visible.
 pub fn toggle_copilot(app: &AppHandle) -> bool {
     let Some(w) = app.get_webview_window("copilot") else { return false };
-    if w.is_visible().unwrap_or(false) {
+    #[cfg(windows)]
+    let visible = w
+        .hwnd()
+        .map(|h| unsafe { winapi::um::winuser::IsWindowVisible(h.0 as _) != 0 })
+        .unwrap_or(false);
+    #[cfg(not(windows))]
+    let visible = w.is_visible().unwrap_or(false);
+    if visible {
         hide_copilot(app);
         false
     } else {
