@@ -101,12 +101,112 @@ const MAX_CAPTURE_SIDE: u32 = 1600;
 /// large 4K window doesn't pay for a full-resolution PNG encode it's about
 /// to throw away.
 pub fn capture_window_or_around_point(cx: i32, cy: i32, fallback_radius: u32) -> Result<String, String> {
+    capture_target_or_around_point(0, cx, cy, fallback_radius)
+}
+
+/// Like `capture_window_or_around_point`, but for a remembered window handle
+/// first: the window itself is rendered (PrintWindow), so the always-on-top Ask AI
+/// panel sitting over it never ends up in the picture. 0 = no handle, use the point.
+pub fn capture_target_or_around_point(target: isize, cx: i32, cy: i32, fallback_radius: u32) -> Result<String, String> {
+    if target != 0 {
+        if let Ok(img) = capture_hwnd_raw(target) {
+            return encode_png_fast(&maybe_downscale(img, MAX_CAPTURE_SIDE));
+        }
+        if let Some((x, y, w, h)) = crate::mouse::window_rect_of(target) {
+            if let Ok(img) = capture_region_raw(x, y, w, h) {
+                return encode_png_fast(&maybe_downscale(img, MAX_CAPTURE_SIDE));
+            }
+        }
+    }
+    // The point: never our own overlay (it floats over whatever the user meant).
+    let under = crate::mouse::target_hwnd_at_point(cx, cy);
+    if under != 0 {
+        if let Ok(img) = capture_hwnd_raw(under) {
+            return encode_png_fast(&maybe_downscale(img, MAX_CAPTURE_SIDE));
+        }
+    }
     if let Some((x, y, w, h)) = crate::explorer::window_rect_at(cx, cy) {
         if let Ok(img) = capture_region_raw(x, y, w, h) {
             return encode_png_fast(&maybe_downscale(img, MAX_CAPTURE_SIDE));
         }
     }
     capture_around_point(cx, cy, fallback_radius)
+}
+
+/// Render one top-level window into a bitmap (PrintWindow with
+/// PW_RENDERFULLCONTENT, which GPU-composited apps such as browsers honour).
+/// Fails on a minimized window or a blank render so the caller can fall back.
+#[cfg(windows)]
+pub fn capture_hwnd_raw(hwnd_raw: isize) -> Result<RgbaImage, String> {
+    use winapi::ctypes::c_void;
+    use winapi::shared::windef::{HWND, RECT};
+    use winapi::um::wingdi::{
+        CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        DIB_RGB_COLORS,
+    };
+    use winapi::um::winuser::{GetDC, GetWindowRect, IsIconic, IsWindow, PrintWindow, ReleaseDC};
+    const PW_RENDERFULLCONTENT: u32 = 0x0000_0002;
+
+    let hwnd = hwnd_raw as HWND;
+    unsafe {
+        if hwnd.is_null() || IsWindow(hwnd) == 0 {
+            return Err("window is gone".to_string());
+        }
+        if IsIconic(hwnd) != 0 {
+            return Err("window is minimized".to_string());
+        }
+        let mut rect: RECT = std::mem::zeroed();
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return Err("no window rect".to_string());
+        }
+        let w = (rect.right - rect.left).max(1);
+        let h = (rect.bottom - rect.top).max(1);
+        let screen_dc = GetDC(std::ptr::null_mut());
+        let mem_dc = CreateCompatibleDC(screen_dc);
+        let mut bmi: BITMAPINFO = std::mem::zeroed();
+        bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        bmi.bmiHeader.biWidth = w;
+        bmi.bmiHeader.biHeight = -h; // top-down
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        let mut bits: *mut c_void = std::ptr::null_mut();
+        let bmp = CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, &mut bits as *mut *mut c_void, std::ptr::null_mut(), 0);
+        if bmp.is_null() || bits.is_null() {
+            DeleteDC(mem_dc);
+            ReleaseDC(std::ptr::null_mut(), screen_dc);
+            return Err("could not allocate a bitmap".to_string());
+        }
+        let old = SelectObject(mem_dc, bmp as _);
+        let ok = PrintWindow(hwnd, mem_dc, PW_RENDERFULLCONTENT);
+        let len = (w as usize) * (h as usize) * 4;
+        let src = std::slice::from_raw_parts(bits as *const u8, len);
+        let mut rgba = Vec::with_capacity(len);
+        let mut dark = 0usize;
+        for px in src.chunks_exact(4) {
+            if px[0] < 8 && px[1] < 8 && px[2] < 8 {
+                dark += 1;
+            }
+            rgba.extend_from_slice(&[px[2], px[1], px[0], 255]);
+        }
+        SelectObject(mem_dc, old);
+        DeleteObject(bmp as _);
+        DeleteDC(mem_dc);
+        ReleaseDC(std::ptr::null_mut(), screen_dc);
+        if ok == 0 {
+            return Err("PrintWindow failed".to_string());
+        }
+        // A blank render (some protected or GPU-only surfaces) is worse than a
+        // screen crop: let the caller fall back.
+        if dark * 100 / (len / 4).max(1) > 98 {
+            return Err("blank render".to_string());
+        }
+        RgbaImage::from_raw(w as u32, h as u32, rgba).ok_or_else(|| "bad buffer".to_string())
+    }
+}
+#[cfg(not(windows))]
+pub fn capture_hwnd_raw(_hwnd_raw: isize) -> Result<RgbaImage, String> {
+    Err("window capture by handle is Windows-only".to_string())
 }
 
 /// Never upscales. `Triangle` (bilinear-ish) trades a little sharpness for
@@ -258,7 +358,16 @@ pub fn average_luminance_at(x: i32, y: i32, width: u32, height: u32) -> Option<f
 
 /// The window under the cursor (or a crop fallback), as a small JPEG - the
 /// agent's initial grounding screenshot.
-pub fn capture_agent_window(cx: i32, cy: i32) -> Result<AgentShot, String> {
+/// The agent's grounding shot of a remembered target window (0 = the window
+/// under the point, excluding our own overlay).
+pub fn capture_agent_window_for(target: isize, cx: i32, cy: i32) -> Result<AgentShot, String> {
+    let target = if target != 0 { target } else { crate::mouse::target_hwnd_at_point(cx, cy) };
+    if target != 0 {
+        if let (Ok(img), Some((x, y, w, h))) = (capture_hwnd_raw(target), crate::mouse::window_rect_of(target)) {
+            let data_url = encode_jpeg_downscaled(img, AGENT_MAX_SIDE, AGENT_JPEG_QUALITY)?;
+            return Ok(AgentShot { data_url, origin_x: x, origin_y: y, native_width: w, native_height: h });
+        }
+    }
     if let Some((x, y, w, h)) = crate::explorer::window_rect_at(cx, cy) {
         if let Ok(img) = capture_region_raw(x, y, w, h) {
             let data_url = encode_jpeg_downscaled(img, AGENT_MAX_SIDE, AGENT_JPEG_QUALITY)?;

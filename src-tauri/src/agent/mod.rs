@@ -110,6 +110,8 @@ pub async fn run_task(
     autonomous: bool,
     conversation_id: Option<String>,
     user_image_data_url: Option<String>,
+    // Window the request was about (the Ask AI pill's target); 0 = the point.
+    target_hwnd: isize,
 ) -> Result<String, String> {
     // Runs can overlap (a browser-requested task alongside a chat task), and
     // they share the scratch dir - only the first concurrent run wipes it.
@@ -199,10 +201,10 @@ continue from where it left off - do not redo steps that are already complete.\n
 
     // First user turn: the task + a snapshot of the current screen (text context
     // and an initial screenshot) so the model starts grounded in "this".
-    let context_block = tokio::task::spawn_blocking(move || initial_context_block(cx, cy))
+    let context_block = tokio::task::spawn_blocking(move || initial_context_block(cx, cy, target_hwnd))
         .await
         .unwrap_or_default();
-    let initial_shot = tokio::task::spawn_blocking(move || capture::capture_agent_window(cx, cy))
+    let initial_shot = tokio::task::spawn_blocking(move || capture::capture_agent_window_for(target_hwnd, cx, cy))
         .await
         .ok()
         .and_then(|r| r.ok());

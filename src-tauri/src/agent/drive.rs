@@ -492,13 +492,25 @@ you still have steps left. If it truly can't be done, say exactly what blocks it
             let is_mcp = mcp.owns(&name);
             // Never fight the person: if they are using the mouse or keyboard right now,
             // wait until they stop before touching the screen.
-            if matches!(
+            // The person kept working for a while: skip the GUI step and tell the
+            // model, so the run continues with file/command/web work in the background
+            // instead of grabbing the mouse out of their hand.
+            let user_busy = if matches!(
                 name.as_str(),
                 "click" | "double_click" | "scroll" | "type_text" | "press_key" | "click_element" | "set_value" | "focus_window" | "open_url" | "open_app"
             ) {
-                crate::shield::wait_for_user_idle(app, source, 900, Duration::from_secs(120)).await;
-            }
-            let mut outcome = if is_mcp {
+                crate::shield::wait_for_user_idle(app, source, 900, Duration::from_secs(25)).await
+            } else {
+                false
+            };
+            let mut outcome = if user_busy {
+                ToolOutcome::err(
+                    "The user is actively using the mouse and keyboard right now, so this GUI action was NOT performed. \
+Do the parts of the task that need no mouse or keyboard (files, commands, reading, web), then try this step again \
+later - it goes through as soon as they pause. If nothing else can be done without the GUI, say what you did and \
+what remains, and stop.",
+                )
+            } else if is_mcp {
                 match mcp.call(&name, args.clone()).await {
                     Ok(text) => ToolOutcome {
                         response: json!({ "result": truncate(&text, MAX_TOOL_OUTPUT) }),

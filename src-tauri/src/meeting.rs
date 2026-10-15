@@ -1006,7 +1006,7 @@ then the reasoning. Keep it to what can be said in 30-60 seconds.\n");
 
 /// Direct fetch from this PC, used when the backend cannot read a page (its own
 /// fetch is server-side and behind rate limits). HTML becomes plain text here.
-async fn fetch_page_direct(url: &str) -> Result<crate::backend::FetchedPage, String> {
+pub(crate) async fn fetch_page_direct(url: &str) -> Result<crate::backend::FetchedPage, String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) MouseAI/1.0")
         .timeout(Duration::from_secs(15))

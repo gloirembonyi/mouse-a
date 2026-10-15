@@ -129,9 +129,58 @@ fn context_for_hwnd(hwnd: winapi::shared::windef::HWND, x: i32, y: i32) -> Curso
 #[cfg(windows)]
 pub fn context_at_point(x: i32, y: i32) -> CursorContext {
     use winapi::shared::windef::POINT;
-    use winapi::um::winuser::WindowFromPoint;
-    let hwnd = unsafe { WindowFromPoint(POINT { x, y }) };
+    use winapi::um::winuser::{GetAncestor, WindowFromPoint, GA_ROOT};
+    // The TOP-LEVEL window: WindowFromPoint returns a child (a browser's
+    // "Chrome Legacy Window"), whose title says nothing. The root has the real one.
+    let hwnd = unsafe {
+        let h = WindowFromPoint(POINT { x, y });
+        if h.is_null() {
+            h
+        } else {
+            let root = GetAncestor(h, GA_ROOT);
+            if root.is_null() { h } else { root }
+        }
+    };
     context_for_hwnd(hwnd, x, y)
+}
+
+/// Context for a remembered window handle (the Ask AI pill's target), so the
+/// answer is about the window the user hovered even when the cursor is now over
+/// the overlay itself.
+#[cfg(windows)]
+pub fn context_for_target(hwnd_raw: isize, x: i32, y: i32) -> CursorContext {
+    context_for_hwnd(hwnd_raw as winapi::shared::windef::HWND, x, y)
+}
+#[cfg(not(windows))]
+pub fn context_for_target(_hwnd_raw: isize, x: i32, y: i32) -> CursorContext {
+    context_at_point(x, y)
+}
+
+/// Bounding rect of a window handle in global coordinates.
+#[cfg(windows)]
+pub fn window_rect_of(hwnd_raw: isize) -> Option<(i32, i32, u32, u32)> {
+    use winapi::shared::windef::{HWND, RECT};
+    use winapi::um::winuser::{GetWindowRect, IsWindow};
+    let hwnd = hwnd_raw as HWND;
+    unsafe {
+        if hwnd.is_null() || IsWindow(hwnd) == 0 {
+            return None;
+        }
+        let mut rect: RECT = std::mem::zeroed();
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return None;
+        }
+        let w = rect.right - rect.left;
+        let h = rect.bottom - rect.top;
+        if w <= 0 || h <= 0 {
+            return None;
+        }
+        Some((rect.left, rect.top, w as u32, h as u32))
+    }
+}
+#[cfg(not(windows))]
+pub fn window_rect_of(_hwnd_raw: isize) -> Option<(i32, i32, u32, u32)> {
+    None
 }
 
 #[cfg(not(windows))]

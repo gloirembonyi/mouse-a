@@ -105,23 +105,25 @@ pub fn user_idle_ms() -> Option<u64> {
     Some(tick_now().saturating_sub(last))
 }
 
-/// Wait until the person has been idle for `quiet_ms` (bounded by `max_wait`). Emits
-/// one progress line the first time it has to wait. Returns true if it waited.
+/// Wait until the person has been idle for `quiet_ms`, up to `max_wait`. Emits one
+/// progress line the first time it has to wait. Returns true when it GAVE UP - the
+/// person is still using the PC - so the caller can skip the GUI step instead of
+/// clicking into whatever they are doing.
 pub async fn wait_for_user_idle(app: &AppHandle, source: &str, quiet_ms: u64, max_wait: Duration) -> bool {
     let started = std::time::Instant::now();
     let mut announced = false;
     loop {
         match user_idle_ms() {
-            None => return announced,
-            Some(idle) if idle >= quiet_ms => return announced,
+            None => return false,
+            Some(idle) if idle >= quiet_ms => return false,
             _ => {}
         }
         if started.elapsed() >= max_wait {
-            return announced;
+            return true;
         }
         if !announced {
             announced = true;
-            crate::agent::emit(app, source, "thinking", "Waiting - you are using the mouse or keyboard; I'll continue when you stop.");
+            crate::agent::emit(app, source, "thinking", "Waiting - you are using the mouse or keyboard; I'll continue when you pause.");
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }

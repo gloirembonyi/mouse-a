@@ -225,6 +225,19 @@ Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/confi
   - **Sizing never shrinks mid-thread** (`syncOverlaySize(max, { growOnly })`, one native resize per
     frame, +14px for the root padding) and Rust re-clamps the window into the monitor after each resize.
   - Each run uses source `overlay:<n>`; ✕ cancels a running task before collapsing.
+  - **The pill remembers its target.** `HoverPayload.hwnd` is the top-level window the pill appeared
+    over (`target_hwnd_at_point`, never our own process). The overlay sends it as `targetHwnd` to
+    `ask_about_hover`, `agent_run` and `resolve_mention`; captures go through
+    `capture::capture_target_or_around_point` / `capture_agent_window_for` (PrintWindow on that
+    handle, so the always-on-top panel never ends up in the picture) and context through
+    `mouse::context_for_target`. Without it, the point under the cursor at send time is the panel
+    itself and the model describes "this popup". `context_at_point` resolves to the GA_ROOT window
+    so titles are the real ones, not a child's ("Chrome Legacy Window").
+  - **Links in a question** become `link` chips (`attachLinksIn`) resolved by `resolve_mention`
+    (backend fetch, direct fetch as fallback).
+  - **GUI steps yield.** `wait_for_user_idle` gives up after 25 s of user activity and the tool
+    returns an error telling the model to do non-GUI work and retry later, instead of clicking into
+    what the person is doing.
   - **Ask AI as a collector.** An empty thread shows quick actions (Summarize this, Key facts, Make a
     checklist, What is this?) that attach `@window` and ask. Under every answer: "Save to <project>"
     appends to `<active project>/.mouse-ai/notes.md` (`project_notes_append`; the active project is the

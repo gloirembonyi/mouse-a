@@ -315,7 +315,7 @@ Do the PC-side part (terminal, files, folders, apps), then answer with a concise
 
         let backend = app.state::<crate::commands::AppState>().backend.clone();
         let (cx, cy) = crate::mouse::get_cursor_position();
-        let result = crate::agent::run_task(&app, &backend, &prompt, cx, cy, &source, true, None, None).await;
+        let result = crate::agent::run_task(&app, &backend, &prompt, cx, cy, &source, true, None, None, 0).await;
         match result {
             Ok(text) => {
                 task_finished(&id, Ok(&text));

@@ -170,6 +170,7 @@ pub fn trigger_ask_at_cursor(app: &AppHandle) {
                 y,
                 context: ctx,
                 element,
+                hwnd: mouse::target_hwnd_at_point(x, y) as i64,
             },
         );
     });
@@ -296,16 +297,34 @@ fn content_nodes_text(nodes: &[mouse::ContentNode]) -> String {
 
 #[tauri::command]
 pub async fn resolve_mention(
+    state: State<'_, AppState>,
     kind: String,
     x: Option<i32>,
     y: Option<i32>,
     path: Option<String>,
+    target_hwnd: Option<i64>,
 ) -> Result<MentionResult, String> {
     let (cx, cy) = match (x, y) {
         (Some(x), Some(y)) => (x, y),
         _ => mouse::get_cursor_position(),
     };
+    let target = target_hwnd.unwrap_or(0) as isize;
     match kind.as_str() {
+        // A URL in the question: read the page (backend first, this PC as fallback).
+        "link" => {
+            let url = path.filter(|p| p.starts_with("http://") || p.starts_with("https://")).ok_or("Not a web link.")?;
+            let page = match state.backend.agent_fetch_page(&url, 12_000).await {
+                Ok(p) => p,
+                Err(first) => crate::meeting::fetch_page_direct(&url).await.map_err(|second| format!("{} / {}", first, second))?,
+            };
+            let label = if page.title.trim().is_empty() {
+                url.trim_start_matches("https://").trim_start_matches("http://").chars().take(60).collect()
+            } else {
+                page.title.trim().chars().take(80).collect()
+            };
+            let text = format!("[LINK - {} ({})]\n{}", label, url, cap_chars(&page.text, MENTION_TEXT_CAP));
+            Ok(MentionResult { kind, label, text: Some(text), image_data_url: None })
+        }
         "screen" => {
             let img = tokio::task::spawn_blocking(capture::capture_full_screen)
                 .await
@@ -314,9 +333,11 @@ pub async fn resolve_mention(
         }
         "window" => {
             let (img, text, label) = tokio::task::spawn_blocking(move || {
-                let ctx = mouse::context_at_point(cx, cy);
-                let img = capture::capture_window_or_around_point(cx, cy, 280).ok();
-                let nodes = explorer::window_rect_at(cx, cy)
+                let target = if target != 0 { target } else { mouse::target_hwnd_at_point(cx, cy) };
+                let ctx = if target != 0 { mouse::context_for_target(target, cx, cy) } else { mouse::context_at_point(cx, cy) };
+                let img = capture::capture_target_or_around_point(target, cx, cy, 280).ok();
+                let nodes = mouse::window_rect_of(target)
+                    .or_else(|| explorer::window_rect_at(cx, cy))
                     .map(|(x, y, w, h)| mouse::sample_window_content(x, y, w, h))
                     .unwrap_or_default();
                 let app = ctx.process_name.trim_end_matches(".exe").to_string();
@@ -507,7 +528,9 @@ pub async fn ask_about_hover(
     web_search: Option<bool>,
     extra_context: Option<String>,
     image_data_url: Option<String>,
+    target_hwnd: Option<i64>,
 ) -> Result<ChatResult, String> {
+    let target = target_hwnd.unwrap_or(0) as isize;
     // A failed capture (secure screens, etc.) shouldn't kill the ask -
     // the element text alone is often enough. Captures the whole window
     // under the cursor (not just a small crop) so the model actually sees
@@ -515,7 +538,7 @@ pub async fn ask_about_hover(
     // An @-mention image (screen / file) replaces the automatic capture.
     let image_data_url = match image_data_url.filter(|s| !s.is_empty()) {
         Some(url) => Some(url),
-        None => tokio::task::spawn_blocking(move || capture::capture_window_or_around_point(x, y, 280))
+        None => tokio::task::spawn_blocking(move || capture::capture_target_or_around_point(target, x, y, 280))
             .await
             .map_err(|e| format!("Task failed: {}", e))?
             .ok(),
@@ -603,10 +626,12 @@ pub async fn agent_run(
     source: Option<String>,
     autonomous: Option<bool>,
     image_data_url: Option<String>,
+    target_hwnd: Option<i64>,
 ) -> Result<ChatResult, String> {
     if task.trim().is_empty() {
         return Err("Empty task.".to_string());
     }
+    let target = target_hwnd.unwrap_or(0) as isize;
     let (cx, cy) = match (x, y) {
         (Some(x), Some(y)) => (x, y),
         _ => mouse::get_cursor_position(),
@@ -628,6 +653,7 @@ pub async fn agent_run(
         autonomous,
         conversation_id.clone(),
         image_data_url,
+        target,
     )
     .await;
 

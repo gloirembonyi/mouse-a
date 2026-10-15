@@ -22,6 +22,10 @@ pub(crate) fn system_prompt(autonomous: bool) -> String {
         "  your first real action) with ordered steps and a concrete, checkable done_when (\"npm test passes\",",
         "  \"the note is visible in the list\"). Call it again when you finish a step (completed=N), change",
         "  approach, or learn a fact you'll need later (notes - they survive when old results are trimmed).",
+        "- A short reply such as \"do it\", \"go ahead\", \"yes\" or \"fix that\" refers to the LAST thing discussed in",
+        "  [RECENT CONVERSATION] - carry that out. A [Project folder] only says where files and commands live; never",
+        "  substitute generic project work (running tests, builds, exploring the repo) for a request that is about",
+        "  something else. If the request truly does not say what to do, ask in one sentence and stop.",
         "- Every tool round carries a run_status (step/budget, your plan, warnings). Read it. Your step budget",
         "  grows while you make progress, so long jobs are fine - but it stops if you loop.",
         "- Independent tool calls can go in one response (e.g. read three files at once).",
@@ -126,10 +130,20 @@ destructive operations (mass deletion, disk formatting, shutting down the machin
 
 /// Build the initial context block describing what's on screen right now, so
 /// "this file / this window / what I'm looking at" resolves correctly.
-pub(crate) fn initial_context_block(cx: i32, cy: i32) -> String {
-    let ctx = mouse::get_cursor_context();
+pub(crate) fn initial_context_block(cx: i32, cy: i32, target_hwnd: isize) -> String {
+    // The window the request was about. With the Ask AI panel open, the point under
+    // the cursor is the panel itself (our own process) - never describe that.
+    let own_under_cursor = mouse::is_own_process_at(cx, cy);
+    let ctx = if target_hwnd != 0 {
+        mouse::context_for_target(target_hwnd, cx, cy)
+    } else if own_under_cursor {
+        let t = mouse::target_hwnd_at_point(cx, cy);
+        if t != 0 { mouse::context_for_target(t, cx, cy) } else { mouse::get_foreground_context() }
+    } else {
+        mouse::get_cursor_context()
+    };
     let foreground = mouse::get_foreground_context();
-    let element = mouse::get_element_under_cursor(cx, cy);
+    let element = if own_under_cursor { mouse::ElementInfo::default() } else { mouse::get_element_under_cursor(cx, cy) };
     let mut block = format!(
         "[CURRENT SCREEN CONTEXT]\nApp under cursor: {}\nWindow under cursor: {}\nCursor at: ({}, {})",
         ctx.process_name, ctx.window_title, cx, cy

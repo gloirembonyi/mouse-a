@@ -15,6 +15,10 @@ pub struct HoverPayload {
     pub y: i32,
     pub context: mouse::CursorContext,
     pub element: mouse::ElementInfo,
+    /// Top-level window the pill appeared over (0 = none / our own). Every later
+    /// capture and context read uses this, because once the panel is open the
+    /// point under the cursor is the panel itself.
+    pub hwnd: i64,
 }
 
 const POLL_MS: u64 = 90;
@@ -122,6 +126,7 @@ pub fn spawn_hover_watcher(app: AppHandle) {
             last_trigger_pos = (x, y);
             overlay_anchor = (x, y);
             pill_showing = true;
+            let hwnd = mouse::target_hwnd_at_point(x, y) as i64;
 
             show_overlay_near(&app, x, y);
             let _ = app.emit_to(
@@ -132,6 +137,7 @@ pub fn spawn_hover_watcher(app: AppHandle) {
                     y,
                     context: ctx,
                     element,
+                    hwnd,
                 },
             );
         }

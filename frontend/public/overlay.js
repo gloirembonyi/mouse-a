@@ -466,9 +466,22 @@ function needsWeb(text) {
   return WEB_HINT.test(t);
 }
 
+// A pasted URL means "read this page": it becomes a link chip, resolved at send time.
+function attachLinksIn(text) {
+  const urls = (text.match(/https?:\/\/[^\s<>"')\]]+/g) || []).slice(0, 3);
+  for (const url of urls) {
+    if (chips.some((c) => c.kind === "link" && c.path === url)) continue;
+    let host = url;
+    try { host = new URL(url).host; } catch { /* keep the url */ }
+    chips.push({ kind: "link", label: host, path: url });
+  }
+  if (urls.length) renderChips();
+}
+
 function submit() {
   const text = questionInput.value.trim();
   if (!text && !chips.length) return;
+  attachLinksIn(text);
   if (routeFor(text) === "agent") runAgentTask(text);
   else askQuestion(text || null, { webSearch: needsWeb(text) });
 }
@@ -501,7 +514,7 @@ async function resolveAttachments() {
   for (const chip of chips) {
     if (chip.kind === "web") { out.labels.push({ kind: "web", label: "Web" }); continue; }
     try {
-      const r = chip.resolved || (await invoke("resolve_mention", { kind: chip.kind, x: hover?.x, y: hover?.y, path: chip.path || null }));
+      const r = chip.resolved || (await invoke("resolve_mention", { kind: chip.kind, x: hover?.x, y: hover?.y, path: chip.path || null, targetHwnd: hover?.hwnd || 0 }));
       if (r.text) out.text.push(r.text);
       if (r.image_data_url && !out.image) out.image = r.image_data_url;
       out.labels.push({ kind: chip.kind, label: r.label || chip.label });
@@ -539,6 +552,7 @@ async function askQuestion(question, { webSearch = false } = {}) {
         webSearch,
         extraContext: attach.text.join("\n\n") || null,
         imageDataUrl: attach.image,
+        targetHwnd: hover.hwnd || 0,
       }),
       webSearch ? 90000 : 55000
     );
@@ -591,6 +605,7 @@ async function runAgentTask(task) {
       source: mySource,
       autonomous: true,
       imageDataUrl: attach.image,
+      targetHwnd: hover.hwnd || 0,
     });
     finishAgentSummary(true);
     if (result.conversation_id) lastConversationId = result.conversation_id;
@@ -1455,6 +1470,7 @@ const MENTIONS = [
 ];
 
 function chipIcon(kind) {
+  if (kind === "link") return "🔗";
   return MENTIONS.find((m) => m.kind === kind)?.icon || "•";
 }
 
@@ -1551,7 +1567,7 @@ async function pickMention(kind) {
       const name = String(path).split(/[\\/]/).pop();
       const chip = { kind: "file", label: name, path: String(path) };
       // Read it now so a bad pick (binary, too large) is reported immediately.
-      chip.resolved = await invoke("resolve_mention", { kind: "file", path: chip.path });
+      chip.resolved = await invoke("resolve_mention", { kind: "file", path: chip.path, targetHwnd: 0 });
       addChip(chip);
     } catch (err) {
       questionInput.placeholder = friendlyError(err);
