@@ -219,8 +219,9 @@ continue from where it left off - do not redo steps that are already complete.\n
         .and_then(|p| project_notes_block(&p))
         .map(|b| format!("{}\n\n", b))
         .unwrap_or_default();
+    let video_note = video_routing_note(task, &context_block);
     let mut first_parts = vec![json!({
-        "text": format!("{}\n\n{}{}\n\n[TASK]\n{}{}", context_block, notes_block, crate::skills::catalog_text(), task, resume_block.unwrap_or_default())
+        "text": format!("{}\n\n{}{}{}\n\n[TASK]\n{}{}", context_block, notes_block, video_note, crate::skills::catalog_text(), task, resume_block.unwrap_or_default())
     })];
     if let Some(shot) = &initial_shot {
         if let Some(img) = image_part(&shot.data_url) {

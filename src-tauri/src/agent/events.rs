@@ -10,10 +10,41 @@ pub(crate) fn emit(app: &AppHandle, source: &str, kind: &str, message: impl Into
         AgentProgress {
             source: source.to_string(),
             kind: kind.to_string(),
-            message: message.into(),
+            message: redact_secrets(&message.into()),
             request_id: None,
         },
     );
+}
+
+/// Mask tokens that look like API keys or access tokens (a script the agent ran once
+/// printed a Gemini key into the step log, which is saved to history).
+pub(crate) fn redact_secrets(text: &str) -> String {
+    const PREFIXES: &[(&str, usize)] = &[
+        ("AIza", 35), ("sk-ant-", 30), ("sk-", 24), ("ghp_", 30), ("gho_", 30), ("github_pat_", 40),
+        ("xoxb-", 20), ("xoxp-", 20), ("xoxa-", 20), ("AKIA", 20), ("ya29.", 40), ("Bearer ", 0),
+    ];
+    let is_tok = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '/' | '+' | '=');
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while !rest.is_empty() {
+        let run_len = rest.chars().take_while(|c| is_tok(*c)).map(|c| c.len_utf8()).sum::<usize>();
+        if run_len == 0 {
+            let ch = rest.chars().next().unwrap();
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+            continue;
+        }
+        let tok = &rest[..run_len];
+        let secret = PREFIXES.iter().any(|(p, min)| *min > 0 && tok.starts_with(p) && tok.len() >= *min && !tok.contains("://"));
+        if secret {
+            out.push_str(&tok[..tok.len().min(6)]);
+            out.push_str("…[redacted]");
+        } else {
+            out.push_str(tok);
+        }
+        rest = &rest[run_len..];
+    }
+    out
 }
 
 #[derive(Default, Clone)]

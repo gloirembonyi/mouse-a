@@ -276,6 +276,48 @@ mod win {
         });
     }
 
+    /// The URL in a browser window's address bar. Chrome, Edge, Comet, Brave and Firefox
+    /// all expose it as an Edit control named like "Address and search bar"; browsers
+    /// hide the scheme, so a bare host gets https:// back. None when not a browser.
+    pub fn address_bar_url(hwnd_raw: isize) -> Option<String> {
+        let _com = Com::init();
+        let auto = automation().ok()?;
+        let hwnd = HWND(hwnd_raw as *mut core::ffi::c_void);
+        let root = unsafe { auto.ElementFromHandle(hwnd) }.ok()?;
+        let cond = unsafe {
+            auto.CreatePropertyCondition(windows::Win32::UI::Accessibility::UIA_ControlTypePropertyId, &VARIANT::from(50004i32))
+        }
+        .ok()?;
+        let found = unsafe { root.FindAll(TreeScope_Descendants, &cond) }.ok()?;
+        let n = unsafe { found.Length() }.unwrap_or(0).max(0) as usize;
+        for i in 0..n.min(400) {
+            let Ok(el) = (unsafe { found.GetElement(i as i32) }) else { continue };
+            let name = unsafe { el.CurrentName() }.map(|b| b.to_string()).unwrap_or_default().to_lowercase();
+            let looks_like_bar = name.contains("address")
+                || name.contains("search or enter")
+                || name.contains("search bar")
+                || name.contains("url")
+                || name.contains("location");
+            if !looks_like_bar {
+                continue;
+            }
+            let Ok(p) = (unsafe { el.GetCurrentPattern(UIA_ValuePatternId) }) else { continue };
+            let Ok(vp) = p.cast::<IUIAutomationValuePattern>() else { continue };
+            let value = unsafe { vp.CurrentValue() }.map(|b| b.to_string()).unwrap_or_default();
+            let value = value.trim();
+            if value.is_empty() || value.contains(' ') {
+                continue;
+            }
+            if value.contains("://") {
+                return Some(value.to_string());
+            }
+            if value.contains('.') {
+                return Some(format!("https://{}", value));
+            }
+        }
+        None
+    }
+
     pub fn find(q: &Query) -> Result<Vec<UiElement>, String> {
         let _com = Com::init();
         let auto = automation()?;
@@ -385,6 +427,11 @@ pub fn find_elements(q: &Query) -> Result<Vec<UiElement>, String> {
 pub fn act_on(name: &str, role: &str, near: Option<(i32, i32)>, action: Act) -> Result<(UiElement, String), String> {
     win::act(name, role, near, action)
 }
+/// The URL of the tab a browser window is showing (None for non-browsers).
+#[cfg(windows)]
+pub fn address_bar_url(hwnd: isize) -> Option<String> {
+    win::address_bar_url(hwnd)
+}
 #[cfg(windows)]
 pub fn locate(name: &str, role: &str, near: Option<(i32, i32)>) -> Result<UiElement, String> {
     win::center_of(name, role, near)
@@ -406,6 +453,10 @@ pub fn find_elements(_q: &Query) -> Result<Vec<UiElement>, String> {
 #[cfg(not(windows))]
 pub fn act_on(_n: &str, _r: &str, _near: Option<(i32, i32)>, _a: Act) -> Result<(UiElement, String), String> {
     Err("UI Automation is only available on Windows".to_string())
+}
+#[cfg(not(windows))]
+pub fn address_bar_url(_hwnd: isize) -> Option<String> {
+    None
 }
 #[cfg(not(windows))]
 pub fn locate(_n: &str, _r: &str, _near: Option<(i32, i32)>) -> Result<UiElement, String> {

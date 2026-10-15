@@ -65,9 +65,12 @@ pub(crate) fn system_prompt(autonomous: bool) -> String {
         "",
         "BROWSER & WEB",
         "- Videos: watch_video(url) makes the model WATCH a public YouTube video (audio + frames) and return notes,",
-        "  a transcript or an answer with MM:SS timestamps - the only way to know what a video says. Never try",
-        "  to download a video, scrub through it or screenshot frames. The URL of the active browser tab is in",
-        "  the address bar (read_app_content / find_elements on the browser window), or ask the extension.",
+        "  a transcript or an answer with MM:SS timestamps in ONE call. For any task about a video (summarize,",
+        "  notes, transcript, 'what does it say', a report on it) it is the FIRST tool call, before anything",
+        "  else: never scrape the page text, open a transcript panel, write a python/yt-dlp/curl script, call",
+        "  an API yourself, scrub through it, or screenshot frames - those take minutes and fail. The tab's URL",
+        "  is on the 'Browser tab URL' line of the context block; if it is missing, read_app_content on the",
+        "  browser window shows it. A document from the video = watch_video, then create_document.",
         "- Information: web_search, then web_fetch the best result. If a search returns nothing, rephrase once",
         "  with different keywords instead of repeating it.",
         "- Doing things on a website: delegate_to_browser with a self-contained instruction (site/URL and what",
@@ -170,6 +173,14 @@ pub(crate) fn initial_context_block(cx: i32, cy: i32, target_hwnd: isize) -> Str
     if !el.is_empty() {
         block.push_str(&format!("\nElement under cursor: {}", el));
     }
+    // A browser: the tab's URL straight from the address bar, so "this page" and
+    // "this video" are concrete from step one instead of costing clicks to find.
+    let url_target = if target_hwnd != 0 { target_hwnd } else { mouse::target_hwnd_at_point(cx, cy) };
+    if url_target != 0 && crate::agent::exec::classify_process(&ctx.process_name) == "browser" {
+        if let Some(url) = crate::uia::address_bar_url(url_target) {
+            block.push_str(&format!("\nBrowser tab URL: {}", url));
+        }
+    }
     if let Some(ectx) = explorer::get_context_at(cx, cy) {
         block.push_str("\n\n");
         block.push_str(&explorer::format_context(&ectx));
@@ -218,6 +229,51 @@ Keyboard shortcuts use Cmd (press_key \"cmd+c\"), not Ctrl. open_url/open_app us
     } else {
         "Shell for run_command: bash (POSIX) on Linux - && and || work; apt/dnf/pacman need sudo, which cannot \
 prompt here (tell the user instead). GUI control needs an X11 session."
+    }
+}
+
+/// The first YouTube video URL in a piece of text (task, context block), if any.
+pub(crate) fn find_youtube_url(hay: &str) -> Option<String> {
+    for marker in ["youtube.com/watch?v=", "youtu.be/", "youtube.com/shorts/", "youtube.com/live/"] {
+        if let Some(i) = hay.find(marker) {
+            let start = hay[..i].rfind(|c: char| c.is_whitespace() || "\"'<>()[]".contains(c)).map(|j| j + 1).unwrap_or(0);
+            let tail = &hay[start..];
+            let end = tail.find(|c: char| c.is_whitespace() || "\"'<>()[]".contains(c)).unwrap_or(tail.len());
+            let url = tail[..end].trim_end_matches(|c| c == '.' || c == ',');
+            if url.contains(marker) {
+                let url = if url.contains("://") { url.to_string() } else { format!("https://{}", url) };
+                return Some(url);
+            }
+        }
+    }
+    None
+}
+
+/// Deterministic routing for video tasks: the model otherwise spent minutes scraping
+/// pages and writing download scripts before thinking of watch_video.
+pub(crate) fn video_routing_note(task: &str, context_block: &str) -> String {
+    let lower = task.to_lowercase();
+    let wants_video = ["video", "youtube", "transcript", "transcribe", "watch", "episode", "tutorial", "lecture"]
+        .iter()
+        .any(|w| lower.contains(w));
+    let url = find_youtube_url(task).or_else(|| find_youtube_url(context_block));
+    match (url, wants_video) {
+        (Some(u), true) => format!(
+            "[VIDEO] This task is about a video: {}\nCall watch_video with this URL FIRST (mode \"notes\" for a report or summary, \
+\"transcript\" for the words, \"answer\" for a question). One call returns everything in the video with MM:SS timestamps. \
+Do NOT scrape the page, search for a transcript, open a transcript panel, write yt-dlp or python scripts, or call any API yourself.\n\n",
+            u
+        ),
+        (Some(u), false) => format!(
+            "[VIDEO] The browser tab is a YouTube video: {}. If the task needs what the video says or shows, call watch_video with this URL.\n\n",
+            u
+        ),
+        (None, true) if context_block.contains("Browser tab URL:") || context_block.to_lowercase().contains("youtube") => {
+            "[VIDEO] The user means the video in their browser. Take its URL from the 'Browser tab URL' line above (or \
+read_app_content on the browser window) and call watch_video with it FIRST. Never scrape, download or screenshot the video.\n\n"
+                .to_string()
+        }
+        _ => String::new(),
     }
 }
 
