@@ -213,8 +213,12 @@ continue from where it left off - do not redo steps that are already complete.\n
         Some(recent) => format!("{}\n\n{}", recent, context_block),
         None => context_block,
     };
+    let notes_block = project_folder_from_task(task)
+        .and_then(|p| project_notes_block(&p))
+        .map(|b| format!("{}\n\n", b))
+        .unwrap_or_default();
     let mut first_parts = vec![json!({
-        "text": format!("{}\n\n{}\n\n[TASK]\n{}{}", context_block, crate::skills::catalog_text(), task, resume_block.unwrap_or_default())
+        "text": format!("{}\n\n{}{}\n\n[TASK]\n{}{}", context_block, notes_block, crate::skills::catalog_text(), task, resume_block.unwrap_or_default())
     })];
     if let Some(shot) = &initial_shot {
         if let Some(img) = image_part(&shot.data_url) {

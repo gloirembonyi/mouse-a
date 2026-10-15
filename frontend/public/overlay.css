@@ -1388,3 +1388,19 @@ body.surface-light .panel-icon svg { color: #ffffff; filter: drop-shadow(0 0 1px
 #btn-mention:hover { color: var(--accent-light); background: var(--accent-soft); }
 #btn-mention svg { width: 16px; height: 16px; }
 .ask-row { gap: 6px; padding: 10px 12px 12px; }
+
+/* ── Quick actions on an empty thread ── */
+#quick-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
+#quick-row[hidden] { display: none; }
+.quick-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.quick-chip:hover { color: var(--text-primary); border-color: var(--accent); background: var(--accent-soft); }

@@ -91,6 +91,30 @@ pub struct MeetingProfile {
     /// How answers should read (e.g. "short bullets", "formal").
     #[serde(default)]
     pub style: String,
+    /// Links the user added (job posts, company pages, docs, repos), fetched and read.
+    #[serde(default)]
+    pub sources: Vec<SourceNote>,
+    /// The briefing the model wrote from those links + the fields above. Editable.
+    #[serde(default)]
+    pub research: String,
+    /// Leave the profile out of prompts for now (a toggle in the meeting view and
+    /// the copilot bar). Inverted so the default - use it - is `false`.
+    #[serde(default)]
+    pub skip_context: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourceNote {
+    pub url: String,
+    #[serde(default)]
+    pub title: String,
+    /// What the fetch produced, in characters (0 = failed; `error` says why).
+    #[serde(default)]
+    pub chars: usize,
+    #[serde(default)]
+    pub error: String,
+    #[serde(default)]
+    pub fetched_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -954,16 +978,22 @@ it is often the real context of what was just asked.\n",
         mode_label(mode)
     );
     if mode == "interview" || mode == "practice" {
-        s.push_str("- For behavioral questions use a compact STAR shape (Situation, Task, Action, Result) built only from the user's real experience.\n");
+        s.push_str("- For behavioral questions use a compact STAR shape (Situation, Task, Action, Result) built only from the user's real experience.\n\
+- Interview rule: the first sentence of every **Say:** block already answers the question. Name the key term, decision or number up front, \
+then the reasoning. Keep it to what can be said in 30-60 seconds.\n");
     }
     let style = profile.style.trim();
     if !style.is_empty() {
         s.push_str(&format!("- The user's preferred answer style: {}\n", style));
     }
+    if profile.skip_context {
+        return s;
+    }
     let sections = [
         ("ABOUT THE USER", &profile.about),
         ("THEIR PROJECTS & RESPONSIBILITIES", &profile.projects),
         ("THIS SESSION (agenda / attendees / job description / goals)", &profile.session_context),
+        ("RESEARCH BRIEF (from links the user added - treat as facts about the other side, the role or the product)", &profile.research),
     ];
     for (title, body) in sections {
         let body = body.trim();
@@ -974,11 +1004,116 @@ it is often the real context of what was just asked.\n",
     s
 }
 
+/// Text of a tool-less model step (parts[].text joined).
+fn step_text(v: &Value) -> String {
+    v.get("parts")
+        .and_then(|p| p.as_array())
+        .map(|parts| parts.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).collect::<Vec<_>>().join(""))
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+const RESEARCH_MAX_LINKS: usize = 8;
+const RESEARCH_PER_SOURCE_CHARS: usize = 9_000;
+
+/// Fetch every link, read it, and write the briefing the copilot will ground
+/// answers in. Replaces the previous brief; the user can edit the result.
+#[tauri::command]
+pub async fn meeting_research(app: AppHandle, state: State<'_, AppState>, urls: Vec<String>) -> Result<MeetingProfile, String> {
+    let urls: Vec<String> = urls
+        .into_iter()
+        .map(|u| u.trim().to_string())
+        .filter(|u| u.starts_with("http://") || u.starts_with("https://"))
+        .take(RESEARCH_MAX_LINKS)
+        .collect();
+    if urls.is_empty() {
+        return Err("Add at least one link (http:// or https://).".to_string());
+    }
+    let mut profile = load_profile();
+    let backend = state.backend.clone();
+    let mut sources = Vec::new();
+    let mut corpus = String::new();
+    for url in &urls {
+        let _ = app.emit("meeting-research-progress", format!("Reading {}", url));
+        match backend.agent_fetch(url).await {
+            Ok(text) if !text.trim().is_empty() => {
+                let body = truncate_chars(text.trim(), RESEARCH_PER_SOURCE_CHARS);
+                let title = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").chars().take(120).collect::<String>();
+                corpus.push_str(&format!("\n\n=== SOURCE: {} ===\n{}", url, body));
+                sources.push(SourceNote { url: url.clone(), title, chars: body.chars().count(), error: String::new(), fetched_at_ms: now_ms() });
+            }
+            Ok(_) => sources.push(SourceNote { url: url.clone(), error: "Nothing readable on that page".into(), fetched_at_ms: now_ms(), ..Default::default() }),
+            Err(e) => sources.push(SourceNote { url: url.clone(), error: e, fetched_at_ms: now_ms(), ..Default::default() }),
+        }
+    }
+    if corpus.is_empty() {
+        profile.sources = sources;
+        save_profile(&profile)?;
+        let _ = app.emit("meeting-profile", &profile);
+        return Err("None of the links could be read.".to_string());
+    }
+    let _ = app.emit("meeting-research-progress", "Writing the brief".to_string());
+    let system = "You prepare a private briefing for someone before a meeting, interview or call. You get the pages \
+they linked (job posts, company pages, product docs, profiles, repos) plus what they told you about themselves and the \
+session. Write ONLY the briefing, in markdown, in this shape:\n\
+## Sources\n- one line per source: what it is and the 2-4 facts that matter\n\
+## What matters for this session\n- 5-10 bullets: the facts, numbers, names, requirements, risks and talking points to have ready\n\
+## Questions they may ask / I should ask\n- up to 6\n\
+Be concrete and factual; never invent. Keep it under 500 words.";
+    let user = format!(
+        "[ABOUT ME]\n{}\n\n[MY PROJECTS]\n{}\n\n[THIS SESSION]\n{}\n\n[LINKED PAGES]{}",
+        truncate_chars(profile.about.trim(), 3000),
+        truncate_chars(profile.projects.trim(), 3000),
+        truncate_chars(profile.session_context.trim(), 3000),
+        corpus
+    );
+    let contents = json!([{ "role": "user", "parts": [{ "text": user }] }]);
+    let reply = backend.agent_step(system, contents, json!([]), None).await?;
+    let brief = step_text(&reply);
+    if brief.is_empty() {
+        return Err("The model returned an empty brief - try again in a moment.".to_string());
+    }
+    profile.sources = sources;
+    profile.research = brief;
+    save_profile(&profile)?;
+    let _ = app.emit("meeting-profile", &profile);
+    Ok(profile)
+}
+
+/// Append text to one of the profile fields (Ask AI's "Add to meeting context").
+#[tauri::command]
+pub fn meeting_context_append(app: AppHandle, field: String, text: String) -> Result<MeetingProfile, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("Nothing to add.".to_string());
+    }
+    let mut profile = load_profile();
+    let slot = match field.as_str() {
+        "about" => &mut profile.about,
+        "projects" => &mut profile.projects,
+        "research" => &mut profile.research,
+        _ => &mut profile.session_context,
+    };
+    if !slot.trim().is_empty() {
+        slot.push_str("\n\n");
+    }
+    slot.push_str(text);
+    save_profile(&profile)?;
+    let _ = app.emit("meeting-profile", &profile);
+    Ok(profile)
+}
+
 fn instruction_for(action: &str, question: Option<&str>) -> Result<String, String> {
     Ok(match action {
-        "suggest" => "Look at the most recent thing said to me (usually the last THEM lines - a question, objection or request). \
-Give me what to say next: first a bold **Say:** line (1-3 sentences I can say verbatim), then up to 3 bullets of supporting points or specifics \
-from my background. If nothing is currently being asked of me, say so and offer one useful contribution instead."
+        "suggest" => "Look at the most recent thing said TO me: the last THEM lines, including a line marked (still speaking). \
+If it is a question, a request to explain or describe something, or an invitation for me to speak: ANSWER IT DIRECTLY. Start with a bold \
+**Say:** block of 2-6 sentences I can say verbatim, in my voice, that already contains the answer in its first sentence (no 'great question', \
+no restating the question). Technical or factual asks: the correct, specific answer first. Behavioral or experience asks: a compact STAR built \
+only from my context, with a concrete detail or number. Then up to 3 short bullets: a detail to add if they dig in, a likely follow-up and \
+how to take it, or a caution. If their words are garbled by speech recognition, infer the most likely question from the context and answer \
+that, noting the assumption in a few words. Only if nothing at all is being asked of me: one line saying so, then ONE useful thing to say now. \
+Never open with analysis of the conversation - the **Say:** block comes first."
             .to_string(),
         "assist" => "Decide what would help me most RIGHT NOW and give only that: if I was just asked something, give me the answer \
 to say (bold **Say:** line first); if a term, number or claim came up I may not know, explain it in one or two lines; if a screen is attached \
@@ -1337,8 +1472,11 @@ pub fn meeting_get_profile() -> MeetingProfile {
 }
 
 #[tauri::command]
-pub fn meeting_set_profile(profile: MeetingProfile) -> Result<(), String> {
-    save_profile(&profile)
+pub fn meeting_set_profile(app: AppHandle, profile: MeetingProfile) -> Result<(), String> {
+    save_profile(&profile)?;
+    // The copilot bar and the meeting view both show the "use my context" switch.
+    let _ = app.emit("meeting-profile", &profile);
+    Ok(())
 }
 
 /// Explicit, user-initiated save of the session into their Threads history.

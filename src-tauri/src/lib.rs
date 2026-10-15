@@ -118,6 +118,8 @@ pub fn run() {
             commands::show_main_window,
             commands::open_in_main,
             commands::copy_text,
+            commands::project_notes_append,
+            commands::project_notes_read,
             commands::ask_about_hover,
             commands::resolve_mention,
             commands::ask_at_cursor,
@@ -176,6 +178,8 @@ pub fn run() {
             copilot::copilot_insert_cancel,
             meeting::stealth_get,
             meeting::stealth_set,
+            meeting::meeting_research,
+            meeting::meeting_context_append,
             prefs::window_prefs_get,
             prefs::window_prefs_set,
         ])

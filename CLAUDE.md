@@ -180,7 +180,7 @@ progress (up to 120 steps / 30 min). Key details baked into these files:
 | `mcp.rs` | MCP client: launches configured servers as stdio subprocesses, speaks JSON-RPC 2.0 (`initialize` → `tools/list` → `tools/call`). Strictly additive/fail-safe - a broken MCP server is skipped, never breaks the core agent loop |
 | `bridge.rs` | Localhost WebSocket (127.0.0.1:47821) to the Thothai browser extension - the transport for agent handoffs |
 | `link.rs` | Two-way agent link on top of the bridge: pairing code (`%APPDATA%/mouse-ai/bridge.json`), browser→desktop `desktop_task` runs (source `browser:<id>`), the shared task board (`bridge-task` events → Agents view) and the watcher that probes/fails stalled handoffs |
-| `meeting.rs` | Meeting copilot: two-sided audio capture → Whisper chunks → transcript; assist actions (answers stream from the backend's `/api/agent/stream` as `meeting-answer-delta`, falling back to `/api/agent/step`); the copilot bar window, stealth, move keys |
+| `meeting.rs` | Meeting copilot (profile = `meeting_profile.json`: about/projects/session/style plus `sources` + `research` written by `meeting_research` - every link fetched through the backend's `/api/agent/fetch`, then one tool-less `agent_step` writes the brief - and `skip_context`, the "Use my context" switch shown in the meeting view and the copilot bar; `meeting-profile` event keeps both in sync): two-sided audio capture → Whisper chunks → transcript; assist actions (answers stream from the backend's `/api/agent/stream` as `meeting-answer-delta`, falling back to `/api/agent/step`); the copilot bar window, stealth, move keys |
 | `copilot.rs` | The bar's hands-on tools: "Fix it" runs `agent::run_task` under source `copilot` with transcript + active project as context; `copilot_insert` pastes (clipboard restored) or naturally types text into the last non-Mouse-AI foreground window, tracked by a 250 ms watcher |
 | `oauth.rs` | Google OAuth loopback flow (`http://127.0.0.1:8917/callback`) for Sign in with Google; a per-flow `state` must round-trip or the redirect is ignored |
 | `auth_sync.rs` | One login across desktop + extension: over a *paired* bridge, `auth_request` / `auth_offer {code}` frames pass a one-time 60 s handoff code (`/api/auth/handoff` → `/api/auth/handoff/redeem`), never a session token. Only a client without a real (non-guest) account adopts an offer |
@@ -225,6 +225,12 @@ Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/confi
   - **Sizing never shrinks mid-thread** (`syncOverlaySize(max, { growOnly })`, one native resize per
     frame, +14px for the root padding) and Rust re-clamps the window into the monitor after each resize.
   - Each run uses source `overlay:<n>`; ✕ cancels a running task before collapsing.
+  - **Ask AI as a collector.** An empty thread shows quick actions (Summarize this, Key facts, Make a
+    checklist, What is this?) that attach `@window` and ask. Under every answer: "Save to <project>"
+    appends to `<active project>/.mouse-ai/notes.md` (`project_notes_append`; the active project is the
+    main window's `mouse-ai-active-project` localStorage key, shared across windows) and "To meeting"
+    appends to the copilot's This-session context (`meeting_context_append`). The agent gets the notes
+    file in its first turn (`prompt.rs project_notes_block`) for any task in that project.
   - `renderMarkdown` keeps numbered lists together across blank lines and preserves item numbers
     (`<li value>`); the test in the session scratchpad exercises the shapes models emit.
 

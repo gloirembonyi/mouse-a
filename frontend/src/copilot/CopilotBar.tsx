@@ -177,20 +177,60 @@ export function CopilotBar() {
   }, []);
 
   // ── Auto-answer: the other side asked something → draft a reply ──
+  // Two triggers. The fast one watches the sentence they are STILL saying (the live
+  // partial): once it reads as a question and has not changed for 700 ms, the answer
+  // starts before they finish. The final transcript line then arrives and is matched
+  // against what was already answered, so one question never gets two answers.
   const answeredRef = useRef(0);
+  const earlyRef = useRef<{ text: string; at: number } | null>(null);
   const cardsRef = useRef(cards);
   cardsRef.current = cards;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const sameAsk = (a: string, b: string) => {
+    const x = norm(a);
+    const y = norm(b);
+    if (!x || !y) return false;
+    const head = Math.min(28, x.length, y.length);
+    return x.slice(0, head) === y.slice(0, head) || x.includes(y.slice(0, 40)) || y.includes(x.slice(0, 40));
+  };
+  useEffect(() => {
+    if (!autoAnswer || !live || status.mode === "practice") return;
+    const text = partials.them;
+    if (!text || text.length < 20 || !looksLikeQuestion(text)) return;
+    const early = earlyRef.current;
+    if (early && Date.now() - early.at < 20_000 && sameAsk(early.text, text)) return;
+    const t = setTimeout(() => {
+      if (cardsRef.current.some((c) => c.pending)) return;
+      earlyRef.current = { text, at: Date.now() };
+      runRef.current("suggest");
+    }, 700);
+    return () => clearTimeout(t);
+  }, [partials.them, autoAnswer, live, status.mode]);
   useEffect(() => {
     if (!autoAnswer || !live || status.mode === "practice") return;
     const turn = lastTheirTurn(transcript);
     if (!turn || turn.id <= answeredRef.current || !looksLikeQuestion(turn.text)) return;
+    const early = earlyRef.current;
+    if (early && Date.now() - early.at < 20_000 && sameAsk(early.text, turn.text)) {
+      answeredRef.current = turn.id; // already answered from the live partial
+      return;
+    }
     const t = setTimeout(() => {
       if (cardsRef.current.some((c) => c.pending)) return;
       answeredRef.current = turn.id;
       runRef.current("suggest");
-    }, 600);
+    }, 250);
     return () => clearTimeout(t);
   }, [transcript, autoAnswer, live, status.mode]);
+
+  // With auto-answer off (or a question it did not catch), one tap answers it.
+  const pendingAsk = (() => {
+    if (!live) return null;
+    const turn = lastTheirTurn(transcript);
+    if (!turn || turn.id <= answeredRef.current || !looksLikeQuestion(turn.text)) return null;
+    if (cards.some((c) => c.pending)) return null;
+    return turn;
+  })();
 
   // ── Live insights: a rolling read of the call as it grows ──
   const insightMark = useRef({ chars: 0, at: 0 });
@@ -406,6 +446,21 @@ export function CopilotBar() {
                 }
               />
 
+              {pendingAsk && (
+                <button
+                  type="button"
+                  className="cp-chip cp-chip-accent cp-answer-now"
+                  onClick={() => {
+                    answeredRef.current = pendingAsk.id;
+                    run("suggest");
+                  }}
+                  title={pendingAsk.text}
+                >
+                  <WandSparkles size={13} />
+                  Answer what they just asked
+                </button>
+              )}
+
               {card ? (
                 <div className="cp-card">
                   <div className="cp-card-head">
@@ -560,6 +615,8 @@ export function CopilotBar() {
                     onClose={() => setMenuOpen(false)}
                     stealth={stealth}
                     onStealth={(v) => void stealthSet(v).then(setStealth)}
+                    useContext={meeting.useContext}
+                    onUseContext={(v) => void meeting.setUseContext(v)}
                     autoAnswer={autoAnswer}
                     onAutoAnswer={(v) => {
                       localStorage.setItem(AUTO_ANSWER_KEY, v ? "on" : "off");
@@ -696,6 +753,8 @@ function MoreMenu(props: {
   onClose: () => void;
   stealth: boolean;
   onStealth: (v: boolean) => void;
+  useContext: boolean;
+  onUseContext: (v: boolean) => void;
   autoAnswer: boolean;
   onAutoAnswer: (v: boolean) => void;
   insights: boolean;
@@ -715,6 +774,7 @@ function MoreMenu(props: {
   return (
     <div ref={ref} className="cp-menu glass" role="menu">
       <MenuSwitch label="Hide from screen share" hint="Invisible in shares & recordings" on={props.stealth} set={props.onStealth} />
+      <MenuSwitch label="Use my context" hint="About me, projects, this session, research brief" on={props.useContext} set={props.onUseContext} />
       <MenuSwitch label="Auto-answer questions" hint="Drafts a reply when you're asked" on={props.autoAnswer} set={props.onAutoAnswer} />
       <MenuSwitch label="Live insights" hint="Topic, key points, what to say next" on={props.insights} set={props.onInsights} />
       <label className="cp-menu-item cp-menu-range">

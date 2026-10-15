@@ -196,12 +196,33 @@ export interface MeetingAnswer {
   screen: string | null;
 }
 
+export interface SourceNote {
+  url: string;
+  title: string;
+  chars: number;
+  error: string;
+  fetched_at_ms: number;
+}
 export interface MeetingProfile {
   about: string;
   projects: string;
   session_context: string;
   style: string;
+  /** Links the user added, fetched and read (meeting_research). */
+  sources: SourceNote[];
+  /** The briefing written from those links; editable. */
+  research: string;
+  /** Leave the profile out of prompts (inverted so the default is "use it"). */
+  skip_context: boolean;
 }
+/** Fetch the links, read them and write the research brief into the profile. */
+export const meetingResearch = (urls: string[]) => invoke<MeetingProfile>("meeting_research", { urls });
+export const meetingContextAppend = (field: "about" | "projects" | "session_context" | "research", text: string) =>
+  invoke<MeetingProfile>("meeting_context_append", { field, text });
+export const onMeetingProfile = (cb: (p: MeetingProfile) => void) =>
+  listen<MeetingProfile>("meeting-profile", (e) => cb(e.payload));
+export const onMeetingResearchProgress = (cb: (step: string) => void) =>
+  listen<string>("meeting-research-progress", (e) => cb(e.payload));
 
 export interface TranscriptEntry {
   id: number;

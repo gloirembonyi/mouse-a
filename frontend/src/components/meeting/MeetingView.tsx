@@ -182,7 +182,15 @@ export function MeetingView({ meeting, onClose }: MeetingViewProps) {
         />
       )}
 
-      {contextOpen && <ContextDrawer profile={meeting.profile} onSave={meeting.saveProfile} onClose={() => setContextOpen(false)} />}
+      {contextOpen && (
+        <ContextDrawer
+          profile={meeting.profile}
+          onSave={meeting.saveProfile}
+          onResearch={meeting.research}
+          researching={meeting.researching}
+          onClose={() => setContextOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -567,6 +575,11 @@ function CopilotPane({
             <Monitor size={12} />
             Include screen
           </label>
+          <label className="flex cursor-pointer items-center gap-1.5" title="Ground answers in My context (about me, projects, this session, research brief)">
+            <Switch on={meeting.useContext} onChange={(v) => void meeting.setUseContext(v)} label="Use my context" />
+            <Lock size={12} />
+            Use my context
+          </label>
           {mode !== "practice" && <CopilotBarToggle live={status.live} />}
         </div>
       </div>
@@ -749,15 +762,37 @@ function AnswerCard({
 function ContextDrawer({
   profile,
   onSave,
+  onResearch,
+  researching,
   onClose,
 }: {
   profile: MeetingProfile;
   onSave: (p: MeetingProfile) => Promise<void>;
+  onResearch: (urls: string[]) => Promise<MeetingProfile>;
+  researching: string | null;
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState(profile);
   const [status, setStatus] = useState("");
+  const [links, setLinks] = useState(() => profile.sources.map((x) => x.url).join("\n"));
   useEffect(() => setDraft(profile), [profile]);
+
+  const runResearch = async () => {
+    const urls = links.split(/\s+/).map((u) => u.trim()).filter(Boolean);
+    if (!urls.length) {
+      setStatus("Paste one or more links first.");
+      return;
+    }
+    setStatus("");
+    try {
+      // Save the text fields first so the brief is written with them in mind.
+      await onSave({ ...draft, sources: profile.sources });
+      const next = await onResearch(urls);
+      setDraft(next);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -765,7 +800,8 @@ function ContextDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const field = (key: keyof MeetingProfile, label: string, placeholder: string, rows = 3) => (
+  type TextKey = "about" | "projects" | "session_context" | "style" | "research";
+  const field = (key: TextKey, label: string, placeholder: string, rows = 3) => (
     <label className="flex flex-col gap-1.5">
       <span className="text-[12px] font-medium text-text-secondary">{label}</span>
       <textarea
@@ -799,6 +835,53 @@ function ContextDrawer({
           {field("projects", "Projects & responsibilities", "What you're working on, your part in it, results and numbers you'd cite.", 5)}
           {field("session_context", "This session", "Agenda, who you're meeting, or the job description you're interviewing for.", 4)}
           {field("style", "Answer style", "e.g. concise and confident, under 40 words, plain English", 1)}
+
+          {/* Links → research brief */}
+          <div className="flex flex-col gap-1.5 rounded-xl border border-border-soft bg-bg-card p-3">
+            <span className="text-[12px] font-medium text-text-secondary">Links to read</span>
+            <span className="text-[11.5px] text-text-muted">
+              Job post, company page, product docs, a profile, a repo. Mouse AI fetches each one and writes a brief it will answer from.
+            </span>
+            <textarea
+              value={links}
+              onChange={(e) => setLinks(e.target.value)}
+              rows={3}
+              placeholder={"https://…\nhttps://…"}
+              className="w-full resize-y rounded-xl border border-border-default bg-bg-primary px-3 py-2 font-mono text-[12.5px] outline-none focus:border-border-focus"
+            />
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => void runResearch()}
+                disabled={!!researching}
+                className="flex h-8 items-center gap-1.5 rounded-lg btn-brand px-3 text-[12.5px] font-medium disabled:opacity-50"
+              >
+                <Sparkles size={13} />
+                {researching ? "Researching…" : draft.research ? "Research again" : "Fetch & research"}
+              </button>
+              {researching && <span className="text-[12px] text-text-muted">{researching}</span>}
+            </div>
+            {draft.sources.length > 0 && (
+              <ul className="mt-1 flex flex-col gap-1 text-[12px]">
+                {draft.sources.map((src) => (
+                  <li key={src.url} className="flex items-start gap-2 text-text-secondary">
+                    <span className={clsx("mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full", src.error ? "bg-danger" : "bg-success")} />
+                    <span className="min-w-0 flex-1 truncate" title={src.url}>
+                      {src.title || src.url}
+                      <span className="text-text-muted"> · {src.error ? src.error : `${src.chars.toLocaleString()} chars read`}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {field("research", "Research brief", "Written from the links above. Edit anything that is off; the copilot treats this as fact.", 8)}
+          <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-border-soft bg-bg-card px-3 py-2.5">
+            <span className="flex flex-col">
+              <span className="text-[13px]">Use my context in answers</span>
+              <span className="text-[11.5px] text-text-muted">Off = answer from the conversation and screen only. Also in the in-call bar's menu.</span>
+            </span>
+            <Switch on={!draft.skip_context} onChange={(v) => setDraft({ ...draft, skip_context: !v })} label="Use my context" />
+          </label>
         </div>
         <div className="flex flex-shrink-0 items-center gap-3 border-t border-border-soft p-4">
           <button

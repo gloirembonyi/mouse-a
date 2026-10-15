@@ -432,6 +432,54 @@ pub async fn open_in_main(
     Ok(())
 }
 
+/// Where Ask AI's "Save to project" goes: a markdown file inside the project the
+/// agent can read (prompt.rs `project_notes_block` puts it in every run's first turn).
+fn project_notes_path(project: &str) -> Result<std::path::PathBuf, String> {
+    let dir = std::path::Path::new(project.trim());
+    if project.trim().is_empty() || !dir.is_dir() {
+        return Err("Pick a project folder in Mouse AI first (Projects in the sidebar).".to_string());
+    }
+    Ok(dir.join(".mouse-ai").join("notes.md"))
+}
+
+#[tauri::command]
+pub async fn project_notes_append(project: String, title: String, text: String) -> Result<String, String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Nothing to save.".to_string());
+    }
+    let path = project_notes_path(&project)?;
+    tokio::task::spawn_blocking(move || {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let fresh = !path.exists();
+        let mut body = String::new();
+        if fresh {
+            body.push_str("# Mouse AI notes\n\nThings saved with the Ask AI button for this project. The agent reads this file.\n");
+        }
+        let title = title.trim();
+        body.push_str(&format!(
+            "\n\n## {} ({})\n\n{}\n",
+            if title.is_empty() { "Note" } else { title },
+            chrono::Local::now().format("%Y-%m-%d %H:%M"),
+            text
+        ));
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
+        f.write_all(body.as_bytes()).map_err(|e| e.to_string())?;
+        Ok(path.display().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn project_notes_read(project: String) -> Result<String, String> {
+    let path = project_notes_path(&project)?;
+    Ok(tokio::fs::read_to_string(path).await.unwrap_or_default())
+}
+
 /// Put text on the OS clipboard. The overlay cannot rely on
 /// navigator.clipboard: WebView2 denies it without a user-activation it does
 /// not always see in a no-activate always-on-top window.

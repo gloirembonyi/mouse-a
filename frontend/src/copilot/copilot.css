@@ -1070,6 +1070,12 @@ body.copilot-body {
   accent-color: var(--brand);
 }
 
+/* ── "Answer what they just asked" ── */
+.cp-answer-now {
+  align-self: flex-start;
+  animation: cp-rise 220ms var(--ease-out) both;
+}
+
 /* ── Menu opens downward from the input row and the window grows to fit it ── */
 .cp-menu {
   top: calc(100% + 8px);

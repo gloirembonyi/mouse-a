@@ -3,6 +3,9 @@ import {
   meetingAddEntry,
   meetingAssist,
   meetingClear,
+  meetingResearch,
+  onMeetingProfile,
+  onMeetingResearchProgress,
   meetingGetProfile,
   meetingSaveNotes,
   meetingSetProfile,
@@ -39,7 +42,7 @@ export interface AssistCard {
   screen?: string | null;
 }
 
-const EMPTY_PROFILE: MeetingProfile = { about: "", projects: "", session_context: "", style: "" };
+const EMPTY_PROFILE: MeetingProfile = { about: "", projects: "", session_context: "", style: "", sources: [], research: "", skip_context: false };
 const IDLE: MeetingStatus = { live: false, mode: "", mic: false, system: false, started_at_ms: null, warning: null };
 
 export const ACTION_LABELS: Record<MeetingAction, string> = {
@@ -64,18 +67,33 @@ export const copilotBarEnabled = () => localStorage.getItem(BAR_KEY) !== "off";
 export const setCopilotBarEnabled = (on: boolean) => localStorage.setItem(BAR_KEY, on ? "on" : "off");
 export const AUTO_ANSWER_KEY = "mouse-ai-auto-answer";
 
-const QUESTION_START =
-  /^(?:(?:so|and|okay|ok|alright|right|well|now|then|great|cool|um|uh)[,\s]+)*(?:what|what's|how|why|when|where|who|which|can you|could you|would you|will you|do you|did you|have you|are you|were you|is there|is it|tell me|walk me|talk me|describe|explain|give me|share|let's say|imagine|suppose)\b/;
+const FILLER = "(?:(?:so|and|okay|ok|alright|right|well|now|then|great|cool|um|uh|yeah|yes|no|but|also|next|first|finally|lastly)[,\\s]+)*";
+const QUESTION_START = new RegExp(
+  "^" +
+    FILLER +
+    "(?:what|what's|whats|how|how's|why|when|where|who|who's|which|whose|can you|could you|would you|will you|do you|did you|does|have you|has|are you|were you|is there|is it|is that|isn't|aren't|don't you|shall we|should we|" +
+    "tell me|tell us|walk me|walk us|take me|take us|talk me|run me|describe|explain|give me|give us|give an example|share|let's say|imagine|suppose|say|introduce|" +
+    "any (?:experience|thoughts|questions|idea)|rate your|so your|your (?:biggest|greatest|main|last|current|most))\\b",
+);
+// Asks that sit mid-sentence or lack a question word: "I'd like to know how…",
+// "we're curious about…", "you've worked with Kafka, right".
+const QUESTION_ANYWHERE =
+  /\b(?:i(?:'d| would) like to (?:know|hear|understand)|i want to (?:know|hear|understand)|i'?m curious|we'?re curious|curious (?:to|about|how|what|if)|can you (?:tell|walk|talk|explain|describe|share|give)|could you (?:tell|walk|talk|explain|describe|share|give)|tell (?:me|us) (?:about|a bit|a little|more|how|why|what)|walk (?:me|us) through|a time when|an example of|what would you|how would you|how do you|how did you|how have you|why did you|why do you|why would you|what do you think|what are your|what is your|what's your|do you have (?:any|experience)|have you (?:ever|worked|used|done|built)|are you familiar|how familiar|how comfortable|how long|how many|how much|where do you see|why should we|why do you want|what interests you|biggest (?:challenge|weakness|strength|achievement)|questions for (?:me|us)|right\??$|correct\??$|isn'?t it\??$|don'?t you think\??$|would you say)\b/;
 
 /** Heuristic for "the other side just asked something" - drives auto-answer.
- *  Also checks the last sentence, since a question often follows a preamble
- *  ("We use Kafka a lot. How would you handle backpressure"). */
+ *  Speech recognition rarely emits a "?", so the shape of the sentence has to do:
+ *  question openers (with filler before them), interview prompts ("tell me about a
+ *  time", "walk us through"), and asks buried mid-sentence ("I'd like to know how…").
+ *  The last sentence is checked on its own, since a question often follows a
+ *  preamble ("We use Kafka a lot. How would you handle backpressure"). */
 export function looksLikeQuestion(text: string) {
-  const t = text.trim().toLowerCase();
+  const t = text.trim().toLowerCase().replace(/\s+/g, " ");
   if (t.length < 8) return false;
   if (t.includes("?")) return true;
-  const sentences = t.split(/(?<=[.!])\s+/);
-  return QUESTION_START.test(t) || QUESTION_START.test(sentences[sentences.length - 1] ?? "");
+  const sentences = t.split(/(?<=[.!])\s+/).filter(Boolean);
+  const last = sentences[sentences.length - 1] ?? t;
+  const tail = sentences.slice(-2).join(" ");
+  return QUESTION_START.test(t) || QUESTION_START.test(last) || QUESTION_ANYWHERE.test(tail);
 }
 
 /** The other side's latest turn - consecutive "them" lines joined, since
@@ -238,6 +256,33 @@ export function useMeeting() {
     setProfile(next);
   }, []);
 
+  // Links → brief. Progress lines come from Rust while it reads each page.
+  const [researching, setResearching] = useState<string | null>(null);
+  const research = useCallback(async (urls: string[]) => {
+    setResearching("Starting…");
+    try {
+      const next = await meetingResearch(urls);
+      setProfile(next);
+      return next;
+    } finally {
+      setResearching(null);
+    }
+  }, []);
+  useEffect(() => {
+    const unP = onMeetingProfile(setProfile);
+    const unR = onMeetingResearchProgress((step) => setResearching((cur) => (cur === null ? null : step)));
+    return () => {
+      unP.then((fn) => fn());
+      unR.then((fn) => fn());
+    };
+  }, []);
+
+  /** The one switch both surfaces show: ground answers in my context, or not. */
+  const setUseContext = useCallback(
+    (use: boolean) => saveProfile({ ...profile, skip_context: !use }),
+    [profile, saveProfile],
+  );
+
   const saveNotes = useCallback(
     (notes: string, includeTranscript: boolean) => meetingSaveNotes(notes, includeTranscript),
     [],
@@ -267,6 +312,10 @@ export function useMeeting() {
     addEntry,
     clear,
     saveProfile,
+    research,
+    researching,
+    setUseContext,
+    useContext: !profile.skip_context,
     saveNotes,
   };
 }

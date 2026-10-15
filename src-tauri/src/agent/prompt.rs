@@ -203,6 +203,21 @@ prompt here (tell the user instead). GUI control needs an X11 session."
     }
 }
 
+/// `<project>/.mouse-ai/notes.md`: what the user saved for this project with Ask AI
+/// (facts they corrected, data they gathered). Goes into the first turn so the model
+/// starts with it instead of rediscovering or contradicting it.
+pub(crate) fn project_notes_block(project: &str) -> Option<String> {
+    let path = std::path::Path::new(project).join(".mouse-ai").join("notes.md");
+    let text = std::fs::read_to_string(&path).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let shown: String = text.chars().take(6000).collect();
+    let more = if shown.len() < text.len() { "\n…(more in the file - read_file it if you need the rest)" } else { "" };
+    Some(format!("[PROJECT NOTES - {} - saved by the user for this project; treat as facts]\n{}{}", path.display(), shown, more))
+}
+
 /// The task text without the UI's "[Project folder: …]" prefix.
 pub(crate) fn strip_project_prefix(task: &str) -> &str {
     let t = task.trim_start();

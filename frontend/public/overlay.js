@@ -338,6 +338,7 @@ async function showPanel({ resize }) {
   const stale = threadTurns > 0 && Date.now() - lastCollapseAt > THREAD_KEEP_MS;
   if (stale) resetThread({ newConversation: true });
   agentLogEl.hidden = threadTurns === 0;
+  renderQuickRow();
 
   if (resize) {
     await syncOverlaySize(threadTurns ? answerHeight() : 380);
@@ -354,6 +355,7 @@ function resetThread({ newConversation } = {}) {
   agentLogEl.hidden = true;
   threadTurns = 0;
   clearChips();
+  renderQuickRow();
   if (newConversation) {
     lastConversationId = null;
     invoke("new_conversation").catch(() => {});
@@ -488,6 +490,7 @@ function newTurn(question, attachments) {
   turn.innerHTML = questionHeaderHtml(question || "What is this?") + chipsHtml;
   agentLogEl.appendChild(turn);
   threadTurns += 1;
+  renderQuickRow();
   requestAnimationFrame(() => turn.scrollIntoView({ block: "start", behavior: "smooth" }));
   return turn;
 }
@@ -1310,12 +1313,37 @@ function renderMarkdown(text) {
   return out.join("");
 }
 
-/** Copy / open-in-app row under every finished answer. */
+// The main window's active project (same origin, same localStorage - the copilot bar
+// reads it the same way). Where "Save to project" goes.
+function activeProject() {
+  const p = localStorage.getItem("mouse-ai-active-project") || "";
+  if (!p) return null;
+  return { path: p, name: p.split(/[\\/]/).filter(Boolean).pop() || p };
+}
+
+/** Copy / save / open-in-app row under every finished answer. Ask AI is the collector:
+ *  what it gathered and you corrected can go to the project's notes (the agent reads
+ *  them) or into the meeting copilot's context. */
 function answerActionsHtml() {
+  const proj = activeProject();
+  const save = proj
+    ? `<button type="button" data-act="save-project" title="Append to ${escapeHtml(proj.path)}\\.mouse-ai\\notes.md - the agent reads it on every task in this project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M4 4h10l6 6v10"/><path d="M14 4v6h6"/></svg><span>Save to ${escapeHtml(proj.name)}</span></button>`
+    : "";
   return `<div class="answer-actions">
     <button type="button" data-act="copy-answer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span></button>
+    ${save}
+    <button type="button" data-act="save-meeting" title="Add to the meeting copilot's context (This session)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 10l4.5-2.5v9L15 14"/><rect x="3" y="6" width="12" height="12" rx="2"/></svg><span>To meeting</span></button>
     <button type="button" data-act="open-app"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg><span>Continue in Mouse AI</span></button>
   </div>`;
+}
+
+/** The answer text and the question it answered, for saving. */
+function answerPayload(btn) {
+  const turn = btn.closest(".turn");
+  const body = btn.closest(".agent-final-answer, .turn-body, #answer")?.querySelector(".answer-body");
+  const question = turn?.querySelector(".asked-question")?.textContent?.trim() || "";
+  const app = (hover && appSummary(hover)) || "";
+  return { question, text: body?.innerText?.trim() || "", app };
 }
 
 // One delegated handler for answer actions and code-block copy buttons in
@@ -1336,6 +1364,21 @@ function onAnswerAction(e) {
   } else if (act === "copy-answer") {
     const body = btn.closest(".agent-final-answer, .turn-body, #answer")?.querySelector(".answer-body");
     copyText(body?.innerText || "").then((ok) => flash(ok ? "Copied" : "Copy failed"));
+  } else if (act === "save-project") {
+    const proj = activeProject();
+    const { question, text, app } = answerPayload(btn);
+    if (!proj || !text) { flash("Nothing to save"); return; }
+    const title = (question || `Gathered from ${app || "the screen"}`).slice(0, 80);
+    invoke("project_notes_append", { project: proj.path, title, text: (app ? `Source: ${app}\n\n` : "") + text })
+      .then(() => flash("Saved"))
+      .catch((e) => flash(String(e?.message || e).slice(0, 40)));
+  } else if (act === "save-meeting") {
+    const { question, text, app } = answerPayload(btn);
+    if (!text) { flash("Nothing to add"); return; }
+    const head = question ? `${question}${app ? ` (from ${app})` : ""}` : app ? `From ${app}` : "";
+    invoke("meeting_context_append", { field: "session_context", text: head ? `${head}:\n${text}` : text })
+      .then(() => flash("Added"))
+      .catch((e) => flash(String(e?.message || e).slice(0, 40)));
   } else if (act === "open-app") {
     openInMain();
   }
@@ -1358,6 +1401,37 @@ function renderInlineMarkdown(text) {
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
   return html;
+}
+
+// ── Quick actions ──────────────────────────────────────────
+// Ask AI as a collector: one tap gathers what is in front of you (the window under
+// the cursor is attached) and shapes it; the answer can then be corrected and saved.
+const quickRow = document.getElementById("quick-row");
+const QUICK = [
+  { label: "Summarize this", prompt: "Summarize what is in this window in a few clear bullet points. Keep every number, name and date exactly as shown." },
+  { label: "Key facts", prompt: "Extract the key facts from this window as a clean list: names, numbers, dates, decisions, links. Group related facts. Do not interpret, just organize." },
+  { label: "Make a checklist", prompt: "Turn what is in this window into an actionable checklist, one task per line, in a sensible order." },
+  { label: "What is this?", prompt: "Explain what this is and what I can do with it, in plain language." },
+];
+
+function renderQuickRow() {
+  if (!quickRow) return;
+  const show = threadTurns === 0 && !busy && expanded;
+  quickRow.hidden = !show;
+  if (!show) return;
+  quickRow.innerHTML = "";
+  for (const q of QUICK) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "quick-chip";
+    b.textContent = q.label;
+    b.addEventListener("click", () => {
+      addChip({ kind: "window", label: "Window" });
+      questionInput.value = q.prompt;
+      submit();
+    });
+    quickRow.appendChild(b);
+  }
 }
 
 // ── @-mentions ─────────────────────────────────────────────
