@@ -7,11 +7,13 @@ import {
   Globe,
   MousePointerClick,
   Search,
+  ShieldCheck,
   Terminal,
   Wrench,
   X,
 } from "lucide-react";
 import { agentConfirm } from "../../lib/tauri";
+import { Kbd } from "../ui/primitives";
 import { formatDuration, friendlyError } from "../../lib/format";
 import type { AgentProgressEvent } from "../../lib/types";
 
@@ -197,8 +199,18 @@ function Step({ step, isLast }: { step: AgentStep; isLast: boolean }) {
 
 function ConfirmPrompt({ message, requestId }: { message: string; requestId: string }) {
   const [decided, setDecided] = useState<"allow" | "deny" | null>(null);
+  const allowRef = useRef<HTMLButtonElement>(null);
+
+  // Rust phrases the app gate as: First action on "<window (process)>" this task - let Mouse AI control it?
+  const appMatch = /^First action on "(.+)" this task/.exec(message);
+  const title = appMatch ? "Let Mouse AI control this app?" : "Approve this action?";
+  const subject = appMatch ? appMatch[1] : message;
+  const hint = appMatch
+    ? "It will click and type in this window for the rest of the task. Esc stops it at any time."
+    : "Mouse AI asks before anything it cannot undo.";
 
   const decide = async (approved: boolean) => {
+    if (decided) return;
     setDecided(approved ? "allow" : "deny");
     try {
       await agentConfirm(requestId, approved);
@@ -207,27 +219,70 @@ function ConfirmPrompt({ message, requestId }: { message: string; requestId: str
     }
   };
 
-  return (
-    <div className="my-1.5 rounded-xl border border-warning/45 bg-warning-soft px-3 py-3 shadow-[0_2px_12px_rgba(255,183,77,0.12)]">
-      <div className="mb-2.5 text-[12px] leading-[1.45] text-text-primary">
-        {decided ? (decided === "allow" ? `✅ Allowed: ${message}` : `🚫 Denied: ${message}`) : `🔒 ${message}`}
+  // Enter = Allow, Esc = Deny while the question is open, so it is one keypress away.
+  useEffect(() => {
+    if (decided) return;
+    allowRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void decide(true);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        void decide(false);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decided]);
+
+  if (decided) {
+    const ok = decided === "allow";
+    return (
+      <div className="my-1 flex items-center gap-2 rounded-lg px-2 py-1 text-[11.5px] text-text-muted">
+        <span className={`grid h-5 w-5 place-items-center rounded-full ${ok ? "bg-success-soft text-success" : "bg-danger-soft text-danger"}`}>
+          {ok ? <Check size={11} strokeWidth={2.5} /> : <X size={11} strokeWidth={2.5} />}
+        </span>
+        <span className="min-w-0 truncate">
+          <span className="font-medium text-text-secondary">{ok ? "Allowed" : "Denied"}</span> · {subject}
+        </span>
       </div>
-      {!decided && (
-        <div className="flex gap-2">
-          <button
-            onClick={() => decide(true)}
-            className="flex-1 rounded-lg border border-success/35 bg-success-soft px-3 py-2 text-[12px] font-bold text-success transition hover:-translate-y-px hover:bg-success/30"
-          >
-            Allow
-          </button>
-          <button
-            onClick={() => decide(false)}
-            className="flex-1 rounded-lg border border-danger/35 bg-danger-soft px-3 py-2 text-[12px] font-bold text-danger transition hover:-translate-y-px hover:bg-danger/30"
-          >
-            Deny
-          </button>
+    );
+  }
+
+  return (
+    <div className="animate-fade-up my-2 overflow-hidden rounded-2xl border border-accent/40 bg-bg-elevated shadow-pop ring-1 ring-accent/15">
+      <div className="flex items-start gap-3 px-4 pt-3.5 pb-3">
+        <span className="mt-0.5 grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-accent-soft text-accent">
+          <ShieldCheck size={18} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold text-text-primary">{title}</div>
+          <div className="mt-0.5 truncate text-[12.5px] text-text-secondary" title={subject}>{subject}</div>
+          <div className="mt-1 text-[11.5px] text-text-muted">{hint}</div>
         </div>
-      )}
+      </div>
+      <div className="flex items-center gap-2 border-t border-border-soft bg-bg-card/60 px-4 py-2.5">
+        <button
+          ref={allowRef}
+          onClick={() => void decide(true)}
+          className="flex h-8 items-center gap-2 rounded-lg btn-brand px-3.5 text-[12.5px] font-semibold"
+        >
+          <Check size={13} strokeWidth={2.5} />
+          Allow
+          <Kbd>Enter</Kbd>
+        </button>
+        <button
+          onClick={() => void decide(false)}
+          className="flex h-8 items-center gap-2 rounded-lg border border-border-default bg-bg-primary px-3.5 text-[12.5px] font-medium text-text-secondary transition hover:border-danger/50 hover:text-danger"
+        >
+          <X size={13} strokeWidth={2.5} />
+          Deny
+          <Kbd>Esc</Kbd>
+        </button>
+        <span className="ml-auto text-[11px] text-text-muted">Waiting for you</span>
+      </div>
     </div>
   );
 }

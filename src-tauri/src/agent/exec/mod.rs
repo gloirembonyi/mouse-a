@@ -46,6 +46,7 @@ pub(crate) async fn execute_tool(
         "find_files" => find_files_tool(args).await,
         "web_search" => web_search_tool(backend, args).await,
         "web_fetch" => web_fetch_tool(backend, args).await,
+        "watch_video" => watch_video_tool(app, source, backend, args).await,
         "capture_screen" => capture_screen_tool(screen).await,
         "get_screen_context" => get_screen_context_tool().await,
         "list_windows" => list_windows_tool().await,

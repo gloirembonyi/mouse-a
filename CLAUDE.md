@@ -235,6 +235,15 @@ Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/confi
     so titles are the real ones, not a child's ("Chrome Legacy Window").
   - **Links in a question** become `link` chips (`attachLinksIn`) resolved by `resolve_mention`
     (backend fetch, direct fetch as fallback).
+  - **Talk to a running agent.** `agent_steer(source, text)` queues a message for an active run
+    (`cancel.rs` STEER registry); `drive.rs` folds it in as a `[USER UPDATE]` user turn before the
+    next model call, and when a message lands just as the model finishes it continues instead of
+    returning. False = nothing running, so the UIs queue the text as the next task (main window
+    `useChat` queuedRef, overlay `queuedAfterRun`). The composer and the Ask AI box stay editable
+    while a run is on; Stop shows only when there is nothing to send.
+  - **watch_video** (tools/decl.rs → exec/web.rs → `backend.agent_video` → `/api/agent/video`): the
+    model watches a public YouTube video and returns timestamped notes / transcript / an answer. It
+    is the only video path: no downloading, scrubbing or frame screenshots.
   - **GUI steps yield.** `wait_for_user_idle` gives up after 25 s of user activity and the tool
     returns an error telling the model to do non-GUI work and retry later, instead of clicking into
     what the person is doing.

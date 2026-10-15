@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { agentCancel, agentRun, newId, onAgentProgress, sendChat, setConversationId } from "../lib/tauri";
+import { agentCancel, agentRun, agentSteer, newId, onAgentProgress, sendChat, setConversationId } from "../lib/tauri";
 import { friendlyError } from "../lib/format";
 import { resolveAttachments } from "../lib/attachments";
 import type { Attachment, UiMessage } from "../lib/chatTypes";
@@ -157,10 +157,20 @@ export function useChat({ onActivity, projectPath = null }: UseChatOptions = {})
     agentCancel(SOURCE_PREFIX + currentRef.current).catch(() => {});
   }, []);
 
+  // Messages typed while a run was finishing (the agent could not take them):
+  // they become the next task as soon as the run ends.
+  const queuedRef = useRef<Record<string, string[]>>({});
+  const sendRef = useRef<(text: string, attachments?: Attachment[]) => Promise<void>>(async () => {});
+
   const finish = useCallback(
     (key: string, patch: (s: ChatSession) => ChatSession) => {
       update(key, (s) => ({ ...patch(s), running: false, agentMsgId: null, needsYou: false, unseen: currentRef.current !== key }));
       onActivityRef.current?.();
+      const queued = queuedRef.current[key];
+      if (queued?.length) {
+        delete queuedRef.current[key];
+        setTimeout(() => void sendRef.current(queued.join("\n")), 80);
+      }
     },
     [update],
   );
@@ -170,7 +180,19 @@ export function useChat({ onActivity, projectPath = null }: UseChatOptions = {})
       const key = currentRef.current;
       const session = sessionsRef.current[key];
       const trimmed = text.trim();
-      if (!session || (!trimmed && attachments.length === 0) || session.running) return;
+      if (!session || (!trimmed && attachments.length === 0)) return;
+      if (session.running) {
+        // Talk to the running agent. Delivered = it adjusts at its next step; not
+        // delivered (the run is ending) = queued as the next task.
+        if (!trimmed) return;
+        const delivered = await agentSteer(SOURCE_PREFIX + key, trimmed).catch(() => false);
+        update(key, (s) => ({
+          ...s,
+          messages: [...s.messages, { id: newId(), kind: "user", content: delivered ? trimmed : `${trimmed}\n\n(queued - runs when the current task ends)` }],
+        }));
+        if (!delivered) queuedRef.current[key] = [...(queuedRef.current[key] || []), trimmed];
+        return;
+      }
 
       const agentMsgId = agentMode ? newId() : null;
       const thinkingId = newId();
@@ -253,6 +275,8 @@ export function useChat({ onActivity, projectPath = null }: UseChatOptions = {})
         .sort((a, b) => Number(b.needsYou) - Number(a.needsYou)),
     [sessions, currentKey],
   );
+
+  sendRef.current = send;
 
   return {
     messages: current?.messages ?? [],

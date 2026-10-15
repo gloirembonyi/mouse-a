@@ -1389,6 +1389,19 @@ body.surface-light .panel-icon svg { color: #ffffff; filter: drop-shadow(0 0 1px
 #btn-mention svg { width: 16px; height: 16px; }
 .ask-row { gap: 6px; padding: 10px 12px 12px; }
 
+/* ── A message sent to the running task ── */
+.turn-steer {
+  margin: 6px 0 2px auto;
+  width: fit-content;
+  max-width: 90%;
+  padding: 6px 10px;
+  border-radius: 12px 12px 4px 12px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(118, 159, 205, 0.3);
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
 /* ── Quick actions on an empty thread ── */
 #quick-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
 #quick-row[hidden] { display: none; }

@@ -281,6 +281,22 @@ pub(crate) async fn drive_loop(
             checkpoint::save(source, task, "cancelled", &ledger);
             return Ok(stopped_message(false));
         }
+        // Anything the user said while we worked goes in before the next decision.
+        let updates = take_steer(source);
+        if !updates.is_empty() {
+            flush_phase(app, source, &mut phase);
+            for u in &updates {
+                emit(app, source, "thinking", format!("You said: {}", truncate(u, 200)));
+            }
+            push_user_text(
+                &mut contents,
+                &format!(
+                    "[USER UPDATE - sent while you were working; it takes priority over earlier instructions. Adjust your plan and continue.]\n{}",
+                    updates.join("\n")
+                ),
+            );
+            think_next = true;
+        }
 
         // ── Budget: extend while progressing, stop when stuck or out of time.
         let time_left = started.elapsed() < MAX_RUN_TIME;
@@ -431,6 +447,25 @@ read_file the result, capture_screen) and then give your final answer. If it isn
 you still have steps left. If it truly can't be done, say exactly what blocks it.",
                 );
                 push_user_text(&mut contents, &note);
+                continue;
+            }
+            // A message arrived while the final answer was being written: it is the
+            // next instruction, not something to lose - keep going instead of finishing.
+            let late = take_steer(source);
+            if !late.is_empty() && iteration + 1 < budget {
+                flush_phase(app, source, &mut phase);
+                for u in &late {
+                    emit(app, source, "thinking", format!("You said: {}", truncate(u, 200)));
+                }
+                push_user_text(
+                    &mut contents,
+                    &format!(
+                        "[USER UPDATE - sent just as you finished. Treat it as the next instruction and continue; your previous answer was:]\n{}\n\n[UPDATE]\n{}",
+                        truncate(&assistant_text, 1500),
+                        late.join("\n")
+                    ),
+                );
+                think_next = true;
                 continue;
             }
             flush_phase(app, source, &mut phase);

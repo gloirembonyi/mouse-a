@@ -779,6 +779,39 @@ impl BackendClient {
         resp.json().await.map_err(|e| format!("Failed to parse search: {}", e))
     }
 
+    /// The model watches a public YouTube video (backend /api/agent/video) and
+    /// returns notes / a transcript / an answer with MM:SS timestamps.
+    pub async fn agent_video(&self, video_url: &str, question: &str, mode: &str, start_sec: Option<f64>, end_sec: Option<f64>) -> Result<String, String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let url = format!("{}/api/agent/video", self.base_url.read().await);
+        let mut body = serde_json::json!({ "url": video_url, "question": question, "mode": mode });
+        if let Some(s) = start_sec {
+            body["startSec"] = serde_json::json!(s);
+        }
+        if let Some(e) = end_sec {
+            body["endSec"] = serde_json::json!(e);
+        }
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .timeout(std::time::Duration::from_secs(170))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        let status = resp.status();
+        let data: serde_json::Value = resp.json().await.map_err(|e| format!("Failed to parse video reply: {}", e))?;
+        if !status.is_success() {
+            return Err(data.get("error").and_then(|e| e.as_str()).map(String::from).unwrap_or_else(|| format!("Video failed ({})", status.as_u16())));
+        }
+        let text = data.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        if text.trim().is_empty() {
+            return Err("The model returned nothing for this video.".to_string());
+        }
+        Ok(text)
+    }
+
     /// Server-side page fetch+extract for the agent's web_fetch tool.
     pub async fn agent_fetch(&self, page_url: &str) -> Result<String, String> {
         self.agent_fetch_page(page_url, 8000).await.map(|p| p.text)

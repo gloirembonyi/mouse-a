@@ -8,7 +8,7 @@ use crate::agent::*;
 /// Names of the built-in declarations below (skills and MCP tools are not in this list).
 pub(crate) const BUILTIN_TOOL_NAMES: &[&str] = &[
     "run_command", "read_file", "write_file", "edit_file", "delete_file", "list_directory", "find_files", "search_in_files",
-    "download_file", "web_search", "web_fetch", "capture_screen", "get_screen_context", "list_windows", "read_app_content",
+    "download_file", "web_search", "web_fetch", "watch_video", "capture_screen", "get_screen_context", "list_windows", "read_app_content",
     "focus_window", "find_elements", "click_element", "set_value",
     "click", "double_click", "scroll", "type_text", "press_key", "open_url", "open_app", "wait",
     "get_clipboard", "set_clipboard", "notify", "request_confirmation", "delegate_to_browser", "check_browser_task", "update_plan",
@@ -79,6 +79,21 @@ pub(crate) fn tool_declarations() -> Value {
             "name": "web_fetch",
             "description": "Fetch a URL and return its readable text content.",
             "parameters": { "type": "object", "properties": { "url": { "type": "string" } }, "required": ["url"] }
+        },
+        {
+            "name": "watch_video",
+            "description": "Have the model WATCH a public YouTube video (audio and frames) and return complete timestamped notes, a transcript, or the answer to a question - with MM:SS timestamps. This is the only way to know what a video says; never download a video, scrub through it or screenshot frames. Takes 20-90 seconds. The URL of the active browser tab is in its address bar (read_app_content / find_elements on the browser window).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "The YouTube URL (watch?v=, youtu.be, shorts)." },
+                    "mode": { "type": "string", "enum": ["notes", "transcript", "answer"], "description": "notes = complete timestamped notes (default); transcript = the spoken words; answer = answer the question." },
+                    "question": { "type": "string", "description": "What to look for or answer (optional for notes/transcript)." },
+                    "start_sec": { "type": "number", "description": "Optional clip start, in seconds." },
+                    "end_sec": { "type": "number", "description": "Optional clip end, in seconds." }
+                },
+                "required": ["url"]
+            }
         },
         {
             "name": "capture_screen",

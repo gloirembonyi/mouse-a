@@ -22,6 +22,7 @@ pub(crate) const CORE_TOOLS: &[&str] = &[
 
 /// Specialist tools and the task words that make them worth offering.
 pub(crate) const TOOL_HINTS: &[(&[&str], &[&str])] = &[
+    (&["watch_video"], &["video", "youtube", "watch", "transcript", "transcribe", "clip", "timestamp", "episode", "tutorial", "lecture"]),
     (&["download_file"], &["download", "save from", "installer", "zip", "pdf", "image", "fetch the file"]),
     (&["get_clipboard", "set_clipboard"], &["clipboard", "copy", "paste", "copied"]),
     (&["notify"], &["notify", "notification", "let me know", "alert", "when done", "when it finishes"]),

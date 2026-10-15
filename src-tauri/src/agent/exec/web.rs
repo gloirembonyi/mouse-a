@@ -57,6 +57,28 @@ pub(crate) async fn web_fetch_tool(backend: &BackendClient, args: &Value) -> Too
     }
 }
 
+/// The model watches a public YouTube video through the backend. Long: the progress
+/// line says so, and the result carries the timestamps the model cites.
+pub(crate) async fn watch_video_tool(app: &AppHandle, source: &str, backend: &BackendClient, args: &Value) -> ToolOutcome {
+    let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("").trim();
+    if url.is_empty() {
+        return ToolOutcome::err("watch_video needs the video's URL.");
+    }
+    let mode = args.get("mode").and_then(|m| m.as_str()).unwrap_or("notes");
+    let question = args.get("question").and_then(|q| q.as_str()).unwrap_or("");
+    let start = args.get("start_sec").and_then(|v| v.as_f64());
+    let end = args.get("end_sec").and_then(|v| v.as_f64());
+    emit(app, source, "thinking", format!("Watching the video ({}) - this takes a little while…", mode));
+    match backend.agent_video(url, question, mode, start, end).await {
+        Ok(text) => ToolOutcome {
+            response: json!({ "url": url, "mode": mode, "text": truncate(&text, MAX_TOOL_OUTPUT) }),
+            image_data_url: None,
+            log: format!("watched {} ({} chars of {})", url, text.len(), mode),
+        },
+        Err(e) => ToolOutcome::err(e),
+    }
+}
+
 /// Hand a web task to the connected browser extension over the local bridge.
 /// Inline by default (waits for the result); background=true returns a task_id
 /// so the desktop agent can keep working and collect it later via

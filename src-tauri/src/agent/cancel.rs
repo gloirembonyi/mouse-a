@@ -29,6 +29,34 @@ pub(crate) fn begin_run(source: &str) {
 
 pub(crate) fn end_run(source: &str) {
     active_runs().lock().unwrap().remove(source);
+    steer().lock().unwrap().remove(source);
+}
+
+// ── Steering: talk to a run while it works ──────────────────────
+// The user keeps typing while a task runs: "also rename the file", "no, the other
+// tab", "check the video". Each message is queued here per source and the loop
+// folds it into the conversation at its next step (or before it finishes), so a
+// run never has to be stopped and restarted to be corrected.
+static STEER: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+
+fn steer() -> &'static Mutex<HashMap<String, Vec<String>>> {
+    STEER.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Queue a message for a running source. Returns false when no run with that
+/// source is active - the caller should start a new task instead.
+pub fn request_steer(source: &str, text: &str) -> bool {
+    let text = text.trim();
+    if text.is_empty() || !active_runs().lock().unwrap().contains(source) {
+        return false;
+    }
+    steer().lock().unwrap().entry(source.to_string()).or_default().push(text.to_string());
+    true
+}
+
+/// Everything queued for a source since the last call.
+pub(crate) fn take_steer(source: &str) -> Vec<String> {
+    steer().lock().unwrap().remove(source).unwrap_or_default()
 }
 
 /// Stop every run in flight. Returns how many were asked to stop.

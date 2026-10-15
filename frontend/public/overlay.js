@@ -478,8 +478,26 @@ function attachLinksIn(text) {
   if (urls.length) renderChips();
 }
 
+let queuedAfterRun = null; // typed as the run ended: becomes the next task
+
 function submit() {
   const text = questionInput.value.trim();
+  if (agentRunning && runSource) {
+    // Talk to the running task instead of being locked out.
+    if (!text) return;
+    questionInput.value = "";
+    invoke("agent_steer", { source: runSource, text })
+      .then((ok) => {
+        const note = document.createElement("div");
+        note.className = "turn-steer";
+        note.textContent = ok ? `You: ${text}` : `Queued for after this task: ${text}`;
+        (agentSummary?.root?.parentElement || agentLogEl).appendChild(note);
+        if (!ok) queuedAfterRun = queuedAfterRun ? `${queuedAfterRun}\n${text}` : text;
+        agentLogEl.scrollTop = agentLogEl.scrollHeight;
+      })
+      .catch(() => {});
+    return;
+  }
   if (!text && !chips.length) return;
   attachLinksIn(text);
   if (routeFor(text) === "agent") runAgentTask(text);
@@ -624,6 +642,11 @@ async function runAgentTask(task) {
     // Size to the answer (up to ~75% of the screen) so it's readable
     // without dragging the window bigger.
     await syncOverlaySize(answerHeight(), { growOnly: true });
+    if (queuedAfterRun) {
+      const next = queuedAfterRun;
+      queuedAfterRun = null;
+      setTimeout(() => runAgentTask(next), 80);
+    }
   }
 }
 
@@ -1109,8 +1132,9 @@ function setBusy(state) {
   // starts - leaving the same text sitting in the input for the whole
   // "Working…" duration just duplicates it on screen. Lock the field instead
   // so it visibly reads as busy rather than as an editable, stale question.
-  questionInput.readOnly = state;
-  questionInput.placeholder = state ? (agentRunning ? "Working… (⏹ to stop)" : "Working…") : placeholderFor();
+  // A running task still takes messages (they steer it); a plain ask locks the box.
+  questionInput.readOnly = state && !agentRunning;
+  questionInput.placeholder = state ? (agentRunning ? "Working… type to tell it something, ⏹ to stop" : "Working…") : placeholderFor();
 }
 
 // ── Helpers ────────────────────────────────────────────────

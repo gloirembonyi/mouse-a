@@ -707,6 +707,13 @@ pub fn agent_cancel(source: Option<String>) {
     crate::agent::request_cancel(source.as_deref().unwrap_or("main"));
 }
 
+/// Send a message to a RUNNING agent: it is folded into the conversation at the
+/// next step. Returns false when nothing is running for that source (start a task).
+#[tauri::command]
+pub fn agent_steer(source: Option<String>, text: String) -> bool {
+    crate::agent::request_steer(source.as_deref().unwrap_or("main"), &text)
+}
+
 /// Stop every agent run in flight (the working banner's Stop, same as Esc).
 #[tauri::command]
 pub fn agent_cancel_all() -> usize {

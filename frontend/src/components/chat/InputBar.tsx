@@ -226,7 +226,9 @@ export function InputBar({
     { key: "__add", icon: <FolderPlus size={14} />, label: "Add folder…", onSelect: onAddProject },
   ];
 
-  const canSend = !busy && (value.trim().length > 0 || attachments.length > 0);
+  // While a run is on, typing still sends: the message goes to the running agent
+  // (or runs next); Stop shows only when there is nothing to send.
+  const canSend = value.trim().length > 0 || attachments.length > 0;
 
   return (
     <div className={clsx("flex-shrink-0", variant === "docked" ? "px-6 pb-4 pt-2" : "w-full")}>
@@ -324,7 +326,7 @@ export function InputBar({
               />
             </div>
 
-            {busy ? (
+            {busy && !canSend ? (
               <button
                 onClick={onStop}
                 title="Stop"
@@ -336,7 +338,7 @@ export function InputBar({
               <button
                 onClick={submit}
                 disabled={!canSend}
-                title="Send (Enter)"
+                title={busy ? "Send to the running agent (Enter)" : "Send (Enter)"}
                 className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full btn-brand disabled:cursor-not-allowed disabled:opacity-25"
               >
                 <ArrowUp size={16} strokeWidth={2.4} />

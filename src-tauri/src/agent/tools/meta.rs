@@ -214,6 +214,7 @@ pub(crate) fn tool_label(name: &str, args: &Value) -> String {
         "find_files" => format!("Finding files: {}", args.get("name_contains").and_then(|c| c.as_str()).unwrap_or("")),
         "web_search" => format!("Searching: {}", args.get("query").and_then(|c| c.as_str()).unwrap_or("")),
         "web_fetch" => format!("Fetching {}", args.get("url").and_then(|c| c.as_str()).unwrap_or("")),
+        "watch_video" => format!("Watching the video: {}", args.get("url").and_then(|c| c.as_str()).unwrap_or("")),
         "capture_screen" => "Looking at the screen".to_string(),
         "get_screen_context" => "Reading screen context".to_string(),
         "list_windows" => "Listing open windows".to_string(),

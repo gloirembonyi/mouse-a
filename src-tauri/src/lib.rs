@@ -98,6 +98,7 @@ pub fn run() {
             commands::agent_confirm,
             commands::agent_cancel,
             commands::agent_cancel_all,
+            commands::agent_steer,
             commands::analyze_at_cursor,
             commands::new_conversation,
             commands::get_history_stats,
