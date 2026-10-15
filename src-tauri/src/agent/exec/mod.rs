@@ -83,43 +83,32 @@ pub(crate) async fn execute_tool(
 /// None = read the clipboard; Some(text) = write it. Goes through PowerShell's
 /// Get-/Set-Clipboard (no extra native dependency), with the window hidden.
 pub(crate) async fn clipboard_tool(write: Option<&str>) -> ToolOutcome {
-    use tokio::io::AsyncWriteExt;
-    let script = match write {
-        None => "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw",
-        Some(_) => "[Console]::InputEncoding=[Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())",
-    };
-    let mut cmd = tokio::process::Command::new("powershell.exe");
-    cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);
-    #[cfg(windows)]
-    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    cmd.stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => return ToolOutcome::err(format!("clipboard unavailable: {}", e)),
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Some(text) = write {
-            let _ = stdin.write_all(text.as_bytes()).await;
-        }
-        drop(stdin);
-    }
-    match tokio::time::timeout(Duration::from_secs(10), child.wait_with_output()).await {
-        Ok(Ok(out)) if out.status.success() => match write {
-            None => {
-                let text = String::from_utf8_lossy(&out.stdout).to_string();
-                if text.trim().is_empty() {
-                    ToolOutcome::text("The clipboard is empty (or holds an image/files, not text).")
-                } else {
-                    ToolOutcome::text(truncate(&text, MAX_FILE_READ))
-                }
+    // arboard talks to the OS clipboard on Windows, macOS and Linux (X11) - no
+    // PowerShell round trip, so it also works where there is no PowerShell.
+    let write = write.map(|s| s.to_string());
+    let wrote = write.as_ref().map(|t| t.chars().count());
+    let res = tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
+        let mut cb = arboard::Clipboard::new().map_err(|e| format!("clipboard unavailable: {}", e))?;
+        match write {
+            None => Ok(Some(cb.get_text().unwrap_or_default())),
+            Some(text) => {
+                cb.set_text(text).map_err(|e| format!("clipboard error: {}", e))?;
+                Ok(None)
             }
-            Some(text) => ToolOutcome::text(format!("Copied {} characters to the clipboard.", text.chars().count())),
-        },
-        Ok(Ok(out)) => ToolOutcome::err(format!("clipboard error: {}", String::from_utf8_lossy(&out.stderr).trim())),
-        Ok(Err(e)) => ToolOutcome::err(format!("clipboard error: {}", e)),
-        Err(_) => ToolOutcome::err("clipboard timed out"),
+        }
+    })
+    .await;
+    match res {
+        Ok(Ok(Some(text))) => {
+            if text.trim().is_empty() {
+                ToolOutcome::text("The clipboard is empty (or holds an image/files, not text).")
+            } else {
+                ToolOutcome::text(truncate(&text, MAX_FILE_READ))
+            }
+        }
+        Ok(Ok(None)) => ToolOutcome::text(format!("Copied {} characters to the clipboard.", wrote.unwrap_or(0))),
+        Ok(Err(e)) => ToolOutcome::err(e),
+        Err(e) => ToolOutcome::err(format!("clipboard task failed: {}", e)),
     }
 }
 

@@ -29,7 +29,8 @@ pub(crate) fn system_prompt(autonomous: bool) -> String {
         "CHOOSING TOOLS (most reliable first)",
         "1. Direct tools: read_file, edit_file, write_file, list_directory, search_in_files, find_files,",
         "   web_search, web_fetch, download_file, get_clipboard/set_clipboard, read_app_content.",
-        "2. run_command (PowerShell) for anything a command can do: builds, tests, git, installs, queries.",
+        "2. run_command (the OS shell named in [ENVIRONMENT]) for anything a command can do: builds, tests,",
+        "   git, installs, queries.",
         "3. delegate_to_browser for interactive WEBSITE work (forms, logged-in pages, multi-step web flows).",
         "4. GUI control only for what has no command/file/web route - and then by ELEMENT first:",
         "   find_elements lists the window's controls by name; click_element / set_value act on them",
@@ -50,8 +51,8 @@ pub(crate) fn system_prompt(autonomous: bool) -> String {
         "  before you finish. Only write to real locations when the user wants the file kept there.",
         "",
         "TERMINAL",
-        "- run_command runs Windows PowerShell 5.1: no && or || (use ';' and $LASTEXITCODE), quote paths with",
-        "  spaces, call a quoted exe with & \"C:\\path\\x.exe\". Use cwd instead of cd. Output ends with",
+        "- run_command uses the shell named in [ENVIRONMENT] and follows its rules there. Quote paths with",
+        "  spaces. Use cwd instead of cd.",
         "  The result has stdout, stderr, exit_code, timed_out and truncated; ok:false means it failed - read",
         "  stderr, fix the cause, and don't re-run it unchanged. truncated:true = narrow the command, don't repeat it.",
         "- Slow but finite (install/build/test): pass timeout_seconds (up to 300; default 45).",
@@ -166,15 +167,40 @@ pub(crate) fn environment_block() -> String {
     let show = |p: Option<std::path::PathBuf>| p.map(|p| p.display().to_string()).unwrap_or_else(|| "(unknown)".into());
     format!(
         "[ENVIRONMENT]\nUser: {}\nHome: {}\nDesktop: {}\nDocuments: {}\nDownloads: {}\nToday: {}\n\
-Shell for run_command: Windows PowerShell 5.1 - no && or ||; separate commands with ';' and test native \
-commands with $LASTEXITCODE. Paths with spaces must be quoted; run a quoted exe with & \"C:\\path\\tool.exe\".",
-        std::env::var("USERNAME").unwrap_or_default(),
+OS: {}\n{}",
+        std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_default(),
         show(dirs::home_dir()),
         show(dirs::desktop_dir()),
         show(dirs::document_dir()),
         show(dirs::download_dir()),
         chrono::Local::now().format("%A %Y-%m-%d %H:%M"),
+        os_label(),
+        shell_rules(),
     )
+}
+
+pub(crate) fn os_label() -> &'static str {
+    if cfg!(windows) {
+        "Windows"
+    } else if cfg!(target_os = "macos") {
+        "macOS"
+    } else {
+        "Linux"
+    }
+}
+
+/// What the model must know about run_command's shell on this OS.
+pub(crate) fn shell_rules() -> &'static str {
+    if cfg!(windows) {
+        "Shell for run_command: Windows PowerShell 5.1 - no && or ||; separate commands with ';' and test native \
+commands with $LASTEXITCODE. Paths with spaces must be quoted; run a quoted exe with & \"C:\\path\\tool.exe\"."
+    } else if cfg!(target_os = "macos") {
+        "Shell for run_command: bash (POSIX) on macOS - && and || work; use Homebrew paths (/opt/homebrew/bin). \
+Keyboard shortcuts use Cmd (press_key \"cmd+c\"), not Ctrl. open_url/open_app use the macOS `open` behaviour."
+    } else {
+        "Shell for run_command: bash (POSIX) on Linux - && and || work; apt/dnf/pacman need sudo, which cannot \
+prompt here (tell the user instead). GUI control needs an X11 session."
+    }
 }
 
 /// The task text without the UI's "[Project folder: …]" prefix.

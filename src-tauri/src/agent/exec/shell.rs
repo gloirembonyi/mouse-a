@@ -233,6 +233,7 @@ pub(crate) fn exit_code_of(out: &str) -> i64 {
 ///  - The command runs in a script block, and the process exits with the real
 ///    status: the last native exit code, or 1 if the last cmdlet failed. Before,
 ///    `npm run build; Write-Output done` exited 0 and the failure was invisible.
+#[cfg(windows)]
 pub(crate) fn powershell_prelude(command: &str) -> String {
     format!(
         "$ProgressPreference='SilentlyContinue'; $ErrorActionPreference='Continue'; \
@@ -245,9 +246,35 @@ $global:LASTEXITCODE = 0; & {{\n{}\n}}; if ($LASTEXITCODE) {{ exit $LASTEXITCODE
     )
 }
 
+/// The POSIX counterpart of `powershell_prelude`: a predictable PATH (Homebrew,
+/// cargo, pip user installs) and the command run as written.
+#[cfg(not(windows))]
+pub(crate) fn posix_prelude(command: &str) -> String {
+    format!(
+        "export PATH=\"$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin\"; {}",
+        command
+    )
+}
+
+/// The shell `run_command` uses on this OS, with the hygiene the agent relies on.
+/// Named for its Windows origin; on macOS/Linux it is `bash -c` (or `sh -c`) in its
+/// own process group so `kill_tree` can end everything the command started.
 pub(crate) fn hidden_powershell(command: &str) -> std::process::Command {
-    let mut cmd = std::process::Command::new("powershell");
-    cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &powershell_prelude(command)]);
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = std::process::Command::new("powershell");
+        c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &powershell_prelude(command)]);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        use std::os::unix::process::CommandExt;
+        let shell = if std::path::Path::new("/bin/bash").exists() { "/bin/bash" } else { "/bin/sh" };
+        let mut c = std::process::Command::new(shell);
+        c.args(["-c", &posix_prelude(command)]);
+        c.process_group(0);
+        c
+    };
     // No hidden prompts that would sit until the timeout: git asking for a
     // password, npx asking "Ok to proceed?", Python crashing on non-ASCII output.
     cmd.env("GIT_TERMINAL_PROMPT", "0")
@@ -348,6 +375,16 @@ pub(crate) fn kill_tree(child: &mut std::process::Child) {
             .stderr(std::process::Stdio::null())
             .status();
     }
+    #[cfg(not(windows))]
+    {
+        // The shell was started in its own process group (hidden_powershell):
+        // a negative pid signals the whole group.
+        let _ = std::process::Command::new("kill")
+            .args(["-9", "--", &format!("-{}", child.id())])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
     let _ = child.kill();
     let _ = child.wait();
 }
@@ -441,7 +478,8 @@ pub(crate) fn wait_with_timeout(
     Ok((status, stdout, stderr, ended))
 }
 
-#[cfg(test)]
+// These drive real PowerShell; the POSIX shell path is exercised by the Linux/macOS CI build.
+#[cfg(all(test, windows))]
 mod run_command_tests {
     use super::*;
 

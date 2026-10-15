@@ -25,7 +25,43 @@ pub fn get_cursor_position() -> (i32, i32) {
 
 #[cfg(not(windows))]
 pub fn get_cursor_position() -> (i32, i32) {
-    (0, 0)
+    crate::input::cursor_position().unwrap_or((0, 0))
+}
+
+/// Frontmost app + window title without a native accessibility bridge:
+/// `osascript` on macOS, `xdotool` on Linux (X11). Empty when unavailable.
+#[cfg(not(windows))]
+fn probe_foreground() -> (String, String) {
+    fn run(program: &str, args: &[&str]) -> Option<String> {
+        let out = std::process::Command::new(program).args(args).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+    if cfg!(target_os = "macos") {
+        let script = r#"tell application "System Events"
+set p to first application process whose frontmost is true
+set t to ""
+try
+set t to name of front window of p
+end try
+return (name of p) & linefeed & t
+end tell"#;
+        if let Some(out) = run("osascript", &["-e", script]) {
+            let mut lines = out.lines();
+            let app = lines.next().unwrap_or("").to_string();
+            let title = lines.next().unwrap_or("").to_string();
+            return (app, title);
+        }
+        return (String::new(), String::new());
+    }
+    let title = run("xdotool", &["getactivewindow", "getwindowname"]).unwrap_or_default();
+    let app = run("xdotool", &["getactivewindow", "getwindowpid"])
+        .and_then(|pid| std::fs::read_to_string(format!("/proc/{}/comm", pid.trim())).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    (app, title)
 }
 
 #[cfg(windows)]
@@ -100,7 +136,10 @@ pub fn context_at_point(x: i32, y: i32) -> CursorContext {
 
 #[cfg(not(windows))]
 pub fn context_at_point(x: i32, y: i32) -> CursorContext {
-    CursorContext { x, y, window_title: String::new(), process_name: String::new(), class_name: String::new() }
+    // No per-point window lookup without a platform accessibility API: the
+    // frontmost window is the best available answer.
+    let (process_name, window_title) = probe_foreground();
+    CursorContext { x, y, window_title, process_name, class_name: String::new() }
 }
 
 #[cfg(windows)]
@@ -160,13 +199,9 @@ pub fn get_foreground_context() -> CursorContext {
 
 #[cfg(not(windows))]
 pub fn get_foreground_context() -> CursorContext {
-    CursorContext {
-        x: 0,
-        y: 0,
-        window_title: String::new(),
-        process_name: String::new(),
-        class_name: String::new(),
-    }
+    let (x, y) = get_cursor_position();
+    let (process_name, window_title) = probe_foreground();
+    CursorContext { x, y, window_title, process_name, class_name: String::new() }
 }
 
 #[cfg(windows)]
@@ -212,13 +247,7 @@ pub(crate) fn get_process_name(pid: u32) -> String {
 
 #[cfg(not(windows))]
 pub fn get_cursor_context() -> CursorContext {
-    CursorContext {
-        x: 0,
-        y: 0,
-        window_title: String::new(),
-        process_name: String::new(),
-        class_name: String::new(),
-    }
+    get_foreground_context()
 }
 
 // ── Element under cursor (MSAA / IAccessible) ──────────────────────

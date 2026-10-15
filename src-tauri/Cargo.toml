@@ -52,6 +52,11 @@ windows = { version = "0.61", features = [
     "Win32_System_Ole", "Win32_UI_Shell"
 ] }
 
+[target.'cfg(not(windows))'.dependencies]
+# Mouse/keyboard synthesis on macOS (CGEvent) and Linux (X11). Windows keeps its own
+# SendInput path in input.rs; this mirrors it so computer-use works on every OS.
+enigo = "0.6"
+
 [profile.release]
 strip = true
 lto = true

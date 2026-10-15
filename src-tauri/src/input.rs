@@ -287,21 +287,194 @@ pub fn press_combo(combo: &str) -> Result<(), String> {
     win::press_combo(combo)
 }
 
+// ── macOS / Linux: the same surface, through enigo ───────────────────────
+// Windows above talks to SendInput directly. Everywhere else `enigo` drives
+// CGEvent (macOS; needs Accessibility permission) or X11 (Linux). Scroll sign
+// follows the Windows convention used by the tools: positive = up.
 #[cfg(not(windows))]
-pub fn click(_x: i32, _y: i32, _right: bool) {}
+mod unix {
+    use enigo::{Axis, Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
+    use std::time::Duration;
+
+    fn with(f: impl FnOnce(&mut Enigo) -> Result<(), enigo::InputError>) -> Result<(), String> {
+        let mut e = Enigo::new(&Settings::default()).map_err(|e| {
+            format!(
+                "input unavailable: {} (on macOS allow Mouse AI under System Settings > Privacy & Security > Accessibility; on Linux an X11 session is required)",
+                e
+            )
+        })?;
+        f(&mut e).map_err(|e| format!("input failed: {}", e))
+    }
+
+    pub fn click(x: i32, y: i32, right: bool) -> Result<(), String> {
+        with(|e| {
+            e.move_mouse(x, y, Coordinate::Abs)?;
+            std::thread::sleep(Duration::from_millis(30));
+            e.button(if right { Button::Right } else { Button::Left }, Direction::Click)
+        })
+    }
+
+    pub fn double_click(x: i32, y: i32) -> Result<(), String> {
+        with(|e| {
+            e.move_mouse(x, y, Coordinate::Abs)?;
+            std::thread::sleep(Duration::from_millis(30));
+            e.button(Button::Left, Direction::Click)?;
+            std::thread::sleep(Duration::from_millis(60));
+            e.button(Button::Left, Direction::Click)
+        })
+    }
+
+    pub fn scroll(x: i32, y: i32, clicks: i32) -> Result<(), String> {
+        with(|e| {
+            e.move_mouse(x, y, Coordinate::Abs)?;
+            e.scroll(-clicks, Axis::Vertical)
+        })
+    }
+
+    pub fn type_text(text: &str) -> Result<(), String> {
+        with(|e| e.text(text))
+    }
+
+    /// `\n` is Enter and `\t` is Tab, as on Windows.
+    pub fn type_text_keys(text: &str) -> Result<(), String> {
+        with(|e| {
+            let mut run = String::new();
+            for ch in text.chars() {
+                match ch {
+                    '\n' | '\t' => {
+                        if !run.is_empty() {
+                            e.text(&run)?;
+                            run.clear();
+                        }
+                        e.key(if ch == '\n' { Key::Return } else { Key::Tab }, Direction::Click)?;
+                    }
+                    '\r' => {}
+                    c => run.push(c),
+                }
+            }
+            if !run.is_empty() {
+                e.text(&run)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn key_for(name: &str) -> Option<Key> {
+        Some(match name {
+            "ctrl" | "control" => Key::Control,
+            "alt" | "option" | "opt" => Key::Alt,
+            "shift" => Key::Shift,
+            "win" | "meta" | "cmd" | "command" | "super" => Key::Meta,
+            "enter" | "return" => Key::Return,
+            "tab" => Key::Tab,
+            "esc" | "escape" => Key::Escape,
+            "backspace" | "back" => Key::Backspace,
+            "delete" | "del" => Key::Delete,
+            "up" | "uparrow" => Key::UpArrow,
+            "down" | "downarrow" => Key::DownArrow,
+            "left" | "leftarrow" => Key::LeftArrow,
+            "right" | "rightarrow" => Key::RightArrow,
+            "home" => Key::Home,
+            "end" => Key::End,
+            "pageup" | "pgup" => Key::PageUp,
+            "pagedown" | "pgdn" => Key::PageDown,
+            "space" => Key::Space,
+            "f1" => Key::F1, "f2" => Key::F2, "f3" => Key::F3, "f4" => Key::F4, "f5" => Key::F5, "f6" => Key::F6,
+            "f7" => Key::F7, "f8" => Key::F8, "f9" => Key::F9, "f10" => Key::F10, "f11" => Key::F11, "f12" => Key::F12,
+            other => {
+                let mut it = other.chars();
+                match (it.next(), it.next()) {
+                    (Some(c), None) => Key::Unicode(c),
+                    _ => return None,
+                }
+            }
+        })
+    }
+
+    /// "ctrl+shift+s", "cmd+v", "enter", "f5" - modifiers held, the last key clicked.
+    pub fn press_combo(combo: &str) -> Result<(), String> {
+        let parts: Vec<String> = combo
+            .split('+')
+            .map(|p| p.trim().to_lowercase())
+            .filter(|p| !p.is_empty())
+            .collect();
+        if parts.is_empty() {
+            return Err("empty key combo".to_string());
+        }
+        let keys: Vec<Key> = parts
+            .iter()
+            .map(|p| key_for(p).ok_or_else(|| format!("unknown key \"{}\" in \"{}\"", p, combo)))
+            .collect::<Result<_, _>>()?;
+        let (last, mods) = keys.split_last().unwrap();
+        with(|e| {
+            for m in mods {
+                e.key(*m, Direction::Press)?;
+            }
+            let r = e.key(*last, Direction::Click);
+            for m in mods.iter().rev() {
+                let _ = e.key(*m, Direction::Release);
+            }
+            r
+        })
+    }
+
+    pub fn paste_via_clipboard(text: &str) -> Result<(), String> {
+        let mut cb = arboard::Clipboard::new().map_err(|e| format!("Clipboard unavailable: {}", e))?;
+        let previous = cb.get_text().ok();
+        cb.set_text(text.to_string()).map_err(|e| format!("Clipboard unavailable: {}", e))?;
+        std::thread::sleep(Duration::from_millis(60));
+        press_combo(if cfg!(target_os = "macos") { "cmd+v" } else { "ctrl+v" })?;
+        std::thread::sleep(Duration::from_millis(450));
+        if let Some(prev) = previous {
+            let _ = cb.set_text(prev);
+        }
+        Ok(())
+    }
+
+    pub fn cursor_position() -> Option<(i32, i32)> {
+        Enigo::new(&Settings::default()).ok()?.location().ok()
+    }
+}
+
 #[cfg(not(windows))]
-pub fn double_click(_x: i32, _y: i32) {}
-#[cfg(not(windows))]
-pub fn scroll(_x: i32, _y: i32, _clicks: i32) {}
-#[cfg(not(windows))]
-pub fn type_text(_text: &str) {}
-#[cfg(not(windows))]
-pub fn type_text_keys(_text: &str) {}
-#[cfg(not(windows))]
-pub fn paste_via_clipboard(_text: &str) -> Result<(), String> {
-    Err("computer-use input is only supported on Windows".to_string())
+pub fn click(x: i32, y: i32, right: bool) {
+    if let Err(e) = unix::click(x, y, right) {
+        eprintln!("[input] click: {}", e);
+    }
 }
 #[cfg(not(windows))]
-pub fn press_combo(_combo: &str) -> Result<(), String> {
-    Err("computer-use input is only supported on Windows".to_string())
+pub fn double_click(x: i32, y: i32) {
+    if let Err(e) = unix::double_click(x, y) {
+        eprintln!("[input] double_click: {}", e);
+    }
+}
+#[cfg(not(windows))]
+pub fn scroll(x: i32, y: i32, clicks: i32) {
+    if let Err(e) = unix::scroll(x, y, clicks) {
+        eprintln!("[input] scroll: {}", e);
+    }
+}
+#[cfg(not(windows))]
+pub fn type_text(text: &str) {
+    if let Err(e) = unix::type_text(text) {
+        eprintln!("[input] type_text: {}", e);
+    }
+}
+#[cfg(not(windows))]
+pub fn type_text_keys(text: &str) {
+    if let Err(e) = unix::type_text_keys(text) {
+        eprintln!("[input] type_text_keys: {}", e);
+    }
+}
+#[cfg(not(windows))]
+pub fn paste_via_clipboard(text: &str) -> Result<(), String> {
+    unix::paste_via_clipboard(text)
+}
+#[cfg(not(windows))]
+pub fn press_combo(combo: &str) -> Result<(), String> {
+    unix::press_combo(combo)
+}
+#[cfg(not(windows))]
+pub fn cursor_position() -> Option<(i32, i32)> {
+    unix::cursor_position()
 }

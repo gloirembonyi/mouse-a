@@ -1,7 +1,7 @@
 # Mouse AI Desktop
 
-A Windows desktop AI assistant powered by the **Thothai backend** (`../backend-Thothai`).
-Built with Tauri 2 (Rust + vanilla HTML/JS). Point your mouse at anything on screen and ask the AI about it.
+A desktop AI assistant for Windows, macOS and Linux, powered by the **Thothai backend** (`../backend-Thothai`).
+Built with Tauri 2 (Rust + React/TypeScript). Point your mouse at anything on screen and ask the AI about it.
 
 ## Features
 
@@ -38,9 +38,32 @@ Thothai backend, which holds the only Gemini key(s) and rotates across up to 5 s
 See `backend-Thothai/src/lib/gemini-request.js`. To raise the effective rate limit, add more shared
 keys on the backend deployment - there's nothing to configure here.
 
+## Platform support
+
+Every feature works on Windows. On macOS and Linux the app builds and runs with the differences below;
+the GitHub Actions workflow (`.github/workflows/build.yml`) builds installers for all three on every push
+and attaches them to a draft release when you push a `v*` tag.
+
+| Feature | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Chat, agent tools (files, shell, web, MCP), Ask AI overlay, bridge to the browser extension | yes | yes | yes |
+| Shell for `run_command` / terminal | PowerShell 5.1 | bash (`$SHELL` in the terminal) | bash (`$SHELL` in the terminal) |
+| Mouse/keyboard control (click, type, press_key) | SendInput | CGEvent via `enigo` - grant **Accessibility** | X11 via `enigo` - needs an X11 session (Wayland: limited) |
+| Screenshots (`capture_screen`, Ask AI context) | yes | grant **Screen Recording** | yes (X11) |
+| Element-level tools (`find_elements`, `click_element`, `set_value`), window under the cursor | UI Automation | frontmost app/title only (`osascript`) | frontmost app/title only (`xdotool`) |
+| Meeting copilot: microphone | yes | grant **Microphone** | yes |
+| Meeting copilot: the other participants (system audio) | WASAPI loopback | needs a virtual device (e.g. BlackHole) selected as the input | needs a PulseAudio/PipeWire monitor selected as the input |
+| Hide windows from screen share | yes | yes | no (not supported by the platform) |
+| Global hotkeys, tray, Esc-to-stop | yes | yes | yes |
+
+macOS asks for each permission the first time it is needed (System Settings > Privacy & Security).
+Linux builds need the Tauri system libraries plus `libasound2-dev`, `libx11-dev`, `libxtst-dev`,
+`libxkbcommon-dev`, `libxdo-dev` and the `xdotool` package at runtime (see the workflow for the exact list).
+
 ## Prerequisites
 
-- Rust (stable) + the Tauri 2 prerequisites for Windows (WebView2, MSVC build tools)
+- Rust (stable) + the Tauri 2 prerequisites for your OS (Windows: WebView2 + MSVC build tools;
+  macOS: Xcode command line tools; Linux: the packages listed above)
 - Node.js (only for the `tauri` CLI)
 
 ## Run in development

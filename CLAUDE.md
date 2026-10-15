@@ -43,6 +43,25 @@ Rust-only (from `src-tauri/`): standard `cargo build` / `cargo check` work direc
 
 There are no automated tests in this repo currently.
 
+## Cross-platform rules
+
+The app ships for Windows, macOS and Linux (`.github/workflows/build.yml` builds all three on every push;
+a `v*` tag publishes a draft release). Keep it that way:
+
+- Anything Win32 lives behind `#[cfg(windows)]` with a `#[cfg(not(windows))]` counterpart in the same
+  file that does the closest honest thing - never a silent no-op that makes a tool "succeed". Today:
+  `input.rs` (SendInput vs. `enigo`), `mouse.rs` (UI Automation vs. `osascript`/`xdotool` frontmost
+  window), `agent/exec/shell.rs` (PowerShell vs. `bash -c` in its own process group so `kill_tree`
+  works), `terminal.rs` (`powershell.exe` vs. `$SHELL -l`), `shield.rs` (GetLastInputInfo vs. "never
+  busy"), `uia.rs`/`explorer.rs`/`copilot.rs` (stubs).
+- `winapi`/`windows` are `[target.'cfg(windows)'.dependencies]`; `enigo` is the non-Windows one.
+  Clipboard is `arboard` everywhere (no PowerShell round trip).
+- The prompts never name a shell: `agent/prompt.rs` `environment_block()` adds `OS:` and the
+  `shell_rules()` line for the running OS, and the backend's desktop profile tells the model to
+  follow `[ENVIRONMENT]`. Tests that drive real PowerShell are `#[cfg(all(test, windows))]`.
+- A macOS/Linux cross-check cannot run from a Windows machine (dependency build scripts need the
+  target's C compiler); CI is the verification for those targets.
+
 ## Architecture
 
 ### Split of responsibility: backend does the thinking, this app does the doing

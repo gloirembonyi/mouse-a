@@ -313,7 +313,18 @@ fn spawn_capture_thread(
                         streams.push(s);
                         sys_ok = true;
                     }
-                    Err(e) => problems.push(e),
+                    Err(e) => problems.push(if cfg!(windows) {
+                        e
+                    } else {
+                        // cpal only exposes loopback capture through WASAPI. Elsewhere the
+                        // other side of the call needs a virtual device routed as the input.
+                        format!(
+                            "{} - on macOS/Linux, capturing the other participants needs a virtual audio device \
+(e.g. BlackHole on macOS, a PulseAudio/PipeWire monitor on Linux) selected as the microphone; \
+continuing with the microphone only.",
+                            e
+                        )
+                    }),
                 }
             }
 

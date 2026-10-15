@@ -53,10 +53,16 @@ pub fn pty_spawn(
         .openpty(PtySize { rows: rows.max(2), cols: cols.max(10), pixel_width: 0, pixel_height: 0 })
         .map_err(|e| format!("Could not open a terminal: {}", e))?;
 
-    let shell = if cfg!(windows) { "powershell.exe" } else { "bash" };
-    let mut cmd = CommandBuilder::new(shell);
+    let shell = if cfg!(windows) {
+        "powershell.exe".to_string()
+    } else {
+        std::env::var("SHELL").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "/bin/bash".to_string())
+    };
+    let mut cmd = CommandBuilder::new(shell.as_str());
     if cfg!(windows) {
         cmd.arg("-NoLogo");
+    } else {
+        cmd.arg("-l"); // login shell: the user's PATH (Homebrew, nvm, cargo)
     }
     if let Some(dir) = cwd.as_ref().filter(|d| std::path::Path::new(d).is_dir()) {
         cmd.cwd(dir);

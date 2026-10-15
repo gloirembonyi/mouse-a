@@ -38,6 +38,9 @@ pub(crate) fn is_read_only_command(name: &str, args: &Value) -> bool {
         "get-childitem", "gci", "ls", "dir", "get-content", "gc", "cat", "type", "test-path", "get-item",
         "select-string", "get-command", "where.exe", "where", "get-process", "get-date", "echo", "write-output",
         "resolve-path", "get-location", "pwd", "whoami", "hostname", "systeminfo",
+        // POSIX
+        "find", "grep", "rg", "head", "tail", "wc", "which", "ps", "date", "uname", "df", "du", "stat",
+        "file", "env", "printenv", "id", "uptime", "tree", "less", "more", "sw_vers", "lsb_release",
     ];
     if looks.contains(&first) {
         return true;
