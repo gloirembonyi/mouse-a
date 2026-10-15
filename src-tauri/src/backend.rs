@@ -62,6 +62,12 @@ pub struct ChatResponse {
     pub conversation_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct FetchedPage {
+    pub title: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatRequest {
     #[serde(rename = "userText")]
@@ -775,13 +781,19 @@ impl BackendClient {
 
     /// Server-side page fetch+extract for the agent's web_fetch tool.
     pub async fn agent_fetch(&self, page_url: &str) -> Result<String, String> {
+        self.agent_fetch_page(page_url, 8000).await.map(|p| p.text)
+    }
+
+    /// Same, with the page title and a caller-chosen size (the meeting research
+    /// reads whole job posts and docs, not an 8 KB excerpt).
+    pub async fn agent_fetch_page(&self, page_url: &str, max_chars: usize) -> Result<FetchedPage, String> {
         let token = self.get_session_token().await.ok_or("Not signed in")?;
         let url = format!("{}/api/agent/fetch", self.base_url.read().await);
         let resp = self
             .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .json(&serde_json::json!({ "url": page_url }))
+            .json(&serde_json::json!({ "url": page_url, "maxChars": max_chars }))
             .send()
             .await
             .map_err(|e| Self::friendly_network_error(&e))?;
@@ -792,7 +804,11 @@ impl BackendClient {
             .json()
             .await
             .map_err(|e| format!("Failed to parse fetch: {}", e))?;
-        Ok(data.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string())
+        let text = data.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        if text.trim().is_empty() {
+            return Err(data.get("error").and_then(|e| e.as_str()).unwrap_or("Nothing readable on that page").to_string());
+        }
+        Ok(FetchedPage { title: data.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(), text })
     }
 
     /// Persists a finished agent task as a user+assistant message pair, same

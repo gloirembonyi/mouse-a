@@ -1004,6 +1004,142 @@ then the reasoning. Keep it to what can be said in 30-60 seconds.\n");
     s
 }
 
+/// Direct fetch from this PC, used when the backend cannot read a page (its own
+/// fetch is server-side and behind rate limits). HTML becomes plain text here.
+async fn fetch_page_direct(url: &str) -> Result<crate::backend::FetchedPage, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) MouseAI/1.0")
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status().as_u16()));
+    }
+    let ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !(ct.is_empty() || ct.contains("html") || ct.contains("text/") || ct.contains("json") || ct.contains("xml")) {
+        return Err(format!("not a text page ({})", ct));
+    }
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    let (title, text) = if ct.contains("html") || body.trim_start().starts_with('<') { html_to_text(&body) } else { (String::new(), body) };
+    if text.trim().is_empty() {
+        return Err("Nothing readable on that page".to_string());
+    }
+    Ok(crate::backend::FetchedPage { title, text })
+}
+
+/// Minimal HTML → text: drop script/style/noscript/comments, break on block tags,
+/// strip the rest, decode the common entities, collapse whitespace.
+fn html_to_text(html: &str) -> (String, String) {
+    let lower = html.to_ascii_lowercase();
+    let title = lower
+        .find("<title")
+        .and_then(|i| lower[i..].find('>').map(|j| i + j + 1))
+        .and_then(|start| lower[start..].find("</title>").map(|end| html[start..start + end].to_string()))
+        .map(|t| decode_entities(&t).split_whitespace().collect::<Vec<_>>().join(" "))
+        .unwrap_or_default();
+
+    let mut out = String::with_capacity(html.len() / 4);
+    let mut i = 0;
+    let bytes = html.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            let rest = &lower[i..];
+            // Skip whole elements whose content is never text.
+            let mut skipped = false;
+            for (open, close) in [("<script", "</script>"), ("<style", "</style>"), ("<noscript", "</noscript>"), ("<svg", "</svg>"), ("<!--", "-->")] {
+                if rest.starts_with(open) {
+                    match rest.find(close) {
+                        Some(j) => i += j + close.len(),
+                        None => i = bytes.len(),
+                    }
+                    skipped = true;
+                    break;
+                }
+            }
+            if skipped {
+                continue;
+            }
+            let end = rest.find('>').map(|j| i + j + 1).unwrap_or(bytes.len());
+            let tag = &lower[i..end];
+            let name: String = tag.trim_start_matches('<').trim_start_matches('/').chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+            if matches!(
+                name.as_str(),
+                "p" | "div" | "br" | "li" | "ul" | "ol" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "tr" | "td" | "th" | "section" | "article" | "header" | "footer" | "nav" | "main" | "aside" | "blockquote" | "pre" | "table" | "dd" | "dt" | "hr"
+            ) {
+                out.push('\n');
+            } else if !out.ends_with(' ') {
+                out.push(' ');
+            }
+            i = end;
+        } else {
+            // Copy a run of text up to the next tag.
+            let next = html[i..].find('<').map(|j| i + j).unwrap_or(bytes.len());
+            out.push_str(&html[i..next]);
+            i = next;
+        }
+    }
+    let decoded = decode_entities(&out);
+    // Collapse: runs of spaces to one, more than two newlines to two.
+    let mut text = String::with_capacity(decoded.len());
+    let mut newlines = 0;
+    let mut spaced = false;
+    for ch in decoded.chars() {
+        if ch == '\n' {
+            newlines += 1;
+            spaced = false;
+            if newlines <= 2 {
+                text.push('\n');
+            }
+        } else if ch.is_whitespace() {
+            if !spaced && !text.ends_with('\n') {
+                text.push(' ');
+            }
+            spaced = true;
+        } else {
+            newlines = 0;
+            spaced = false;
+            text.push(ch);
+        }
+    }
+    (title, text.trim().to_string())
+}
+
+fn decode_entities(s: &str) -> String {
+    s.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&#8217;", "'")
+        .replace("&#8216;", "'")
+        .replace("&#8220;", "\"")
+        .replace("&#8221;", "\"")
+        .replace("&ndash;", "-")
+        .replace("&mdash;", "-")
+}
+
+/// A JSON object out of a model reply that may wrap it in prose or a fence.
+fn json_loose(raw: &str) -> Option<Value> {
+    let t = raw.trim();
+    if let Ok(v) = serde_json::from_str::<Value>(t) {
+        return v.is_object().then_some(v);
+    }
+    let a = t.find('{')?;
+    let b = t.rfind('}')?;
+    if b <= a {
+        return None;
+    }
+    serde_json::from_str::<Value>(&t[a..=b]).ok().filter(|v| v.is_object())
+}
+
 /// Text of a tool-less model step (parts[].text joined).
 fn step_text(v: &Value) -> String {
     v.get("parts")
@@ -1036,14 +1172,23 @@ pub async fn meeting_research(app: AppHandle, state: State<'_, AppState>, urls: 
     let mut corpus = String::new();
     for url in &urls {
         let _ = app.emit("meeting-research-progress", format!("Reading {}", url));
-        match backend.agent_fetch(url).await {
-            Ok(text) if !text.trim().is_empty() => {
-                let body = truncate_chars(text.trim(), RESEARCH_PER_SOURCE_CHARS);
-                let title = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").chars().take(120).collect::<String>();
-                corpus.push_str(&format!("\n\n=== SOURCE: {} ===\n{}", url, body));
+        // The backend first (it extracts well and is rate-limited per user); this PC
+        // directly when the backend cannot read the page.
+        let fetched = match backend.agent_fetch_page(url, RESEARCH_PER_SOURCE_CHARS).await {
+            Ok(p) => Ok(p),
+            Err(first) => fetch_page_direct(url).await.map_err(|second| format!("{} / direct: {}", first, second)),
+        };
+        match fetched {
+            Ok(page) => {
+                let body = truncate_chars(page.text.trim(), RESEARCH_PER_SOURCE_CHARS);
+                let title = if page.title.trim().is_empty() {
+                    body.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").chars().take(120).collect::<String>()
+                } else {
+                    page.title.trim().chars().take(120).collect()
+                };
+                corpus.push_str(&format!("\n\n=== SOURCE: {} ({}) ===\n{}", url, title, body));
                 sources.push(SourceNote { url: url.clone(), title, chars: body.chars().count(), error: String::new(), fetched_at_ms: now_ms() });
             }
-            Ok(_) => sources.push(SourceNote { url: url.clone(), error: "Nothing readable on that page".into(), fetched_at_ms: now_ms(), ..Default::default() }),
             Err(e) => sources.push(SourceNote { url: url.clone(), error: e, fetched_at_ms: now_ms(), ..Default::default() }),
         }
     }
@@ -1054,15 +1199,29 @@ pub async fn meeting_research(app: AppHandle, state: State<'_, AppState>, urls: 
         return Err("None of the links could be read.".to_string());
     }
     let _ = app.emit("meeting-research-progress", "Writing the brief".to_string());
+    let empty = |s: &str| s.trim().is_empty();
+    let (about_empty, projects_empty, session_empty) =
+        (empty(&profile.about), empty(&profile.projects), empty(&profile.session_context));
     let system = "You prepare a private briefing for someone before a meeting, interview or call. You get the pages \
-they linked (job posts, company pages, product docs, profiles, repos) plus what they told you about themselves and the \
-session. Write ONLY the briefing, in markdown, in this shape:\n\
-## Sources\n- one line per source: what it is and the 2-4 facts that matter\n\
-## What matters for this session\n- 5-10 bullets: the facts, numbers, names, requirements, risks and talking points to have ready\n\
-## Questions they may ask / I should ask\n- up to 6\n\
-Be concrete and factual; never invent. Keep it under 500 words.";
+they linked (job posts, company pages, product docs, profiles, portfolios, repos) plus what they already wrote about \
+themselves and the session. Reply with ONLY a JSON object, no prose, no fence:\n\
+{\n\
+  \"brief\": markdown string -\n\
+    ## Sources (one line per source: what it is and the 2-4 facts that matter)\n\
+    ## What matters for this session (5-10 bullets: facts, numbers, names, requirements, risks, talking points)\n\
+    ## Questions they may ask / I should ask (up to 6),\n\
+  \"about\": string - ONLY when a page is about the user themselves (their portfolio, resume, profile, GitHub) AND the \
+field is marked EMPTY: 3-6 lines, first person, role, experience, skills, notable work. Else \"\".\n\
+  \"projects\": string - the user's projects / responsibilities / results found in their pages, ONLY if marked EMPTY. Else \"\".\n\
+  \"session\": string - ONLY if marked EMPTY and a page describes the company, role, product, agenda or counterpart: the \
+facts for this session in 4-8 lines. Else \"\".\n\
+}\n\
+Be concrete and factual; never invent; keep the brief under 500 words.";
     let user = format!(
-        "[ABOUT ME]\n{}\n\n[MY PROJECTS]\n{}\n\n[THIS SESSION]\n{}\n\n[LINKED PAGES]{}",
+        "[FIELDS] about: {} · projects: {} · session: {}\n\n[ABOUT ME]\n{}\n\n[MY PROJECTS]\n{}\n\n[THIS SESSION]\n{}\n\n[LINKED PAGES]{}",
+        if about_empty { "EMPTY" } else { "filled" },
+        if projects_empty { "EMPTY" } else { "filled" },
+        if session_empty { "EMPTY" } else { "filled" },
         truncate_chars(profile.about.trim(), 3000),
         truncate_chars(profile.projects.trim(), 3000),
         truncate_chars(profile.session_context.trim(), 3000),
@@ -1070,12 +1229,32 @@ Be concrete and factual; never invent. Keep it under 500 words.";
     );
     let contents = json!([{ "role": "user", "parts": [{ "text": user }] }]);
     let reply = backend.agent_step(system, contents, json!([]), None).await?;
-    let brief = step_text(&reply);
-    if brief.is_empty() {
+    let raw = step_text(&reply);
+    if raw.is_empty() {
         return Err("The model returned an empty brief - try again in a moment.".to_string());
     }
+    let field = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_str()).map(str::trim).unwrap_or("").to_string();
+    match json_loose(&raw) {
+        Some(v) => {
+            let brief = field(&v, "brief");
+            profile.research = if brief.is_empty() { raw.clone() } else { brief };
+            // Fill only what was empty - never overwrite what the user wrote.
+            let about = field(&v, "about");
+            if about_empty && !about.is_empty() {
+                profile.about = about;
+            }
+            let projects = field(&v, "projects");
+            if projects_empty && !projects.is_empty() {
+                profile.projects = projects;
+            }
+            let session = field(&v, "session");
+            if session_empty && !session.is_empty() {
+                profile.session_context = session;
+            }
+        }
+        None => profile.research = raw,
+    }
     profile.sources = sources;
-    profile.research = brief;
     save_profile(&profile)?;
     let _ = app.emit("meeting-profile", &profile);
     Ok(profile)
