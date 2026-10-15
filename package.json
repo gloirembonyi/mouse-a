@@ -6,7 +6,9 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build": "tauri build",
+    "release": "node scripts/release.mjs",
+    "version:set": "node scripts/bump-version.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

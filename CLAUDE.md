@@ -50,8 +50,14 @@ There are no automated tests in this repo currently.
 
 ## Cross-platform rules
 
-The app ships for Windows, macOS and Linux (`.github/workflows/build.yml` builds all three on every push;
-a `v*` tag publishes a draft release). Keep it that way:
+The app ships for Windows, macOS and Linux (`.github/workflows/build.yml` builds all three on every push).
+A `v*` tag is a release: the same workflow's `release` job publishes one GitHub release with every
+installer attached once ALL three builds succeed (never a half-filled one). Cut one with
+`npm run release -- 0.2.0` (bumps `tauri.conf.json`/`Cargo.toml`/`Cargo.lock`/`package.json` via
+`scripts/bump-version.mjs`, commits, tags, pushes) or from GitHub: Actions -> Release -> Run workflow.
+The build fails on a tag whose version does not match `tauri.conf.json`, so never tag by hand. The
+repo is private, so release assets need a login; set the `RELEASES_REPO` variable + `RELEASES_TOKEN`
+secret to mirror each release into a public repo for the landing page's download link. Keep it that way:
 
 - Anything Win32 lives behind `#[cfg(windows)]` with a `#[cfg(not(windows))]` counterpart in the same
   file that does the closest honest thing - never a silent no-op that makes a tool "succeed". Today:

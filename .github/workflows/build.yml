@@ -1,9 +1,15 @@
 name: Build Desktop App
 
-# Every push and pull request builds the installers for Linux, macOS (universal)
-# and Windows, so a change that only compiles on one OS is caught here, not by a
-# user. Pushing a tag like v1.2.3 also publishes a draft GitHub release with all
-# three sets of installers attached.
+# Every push and pull request builds the installers for Linux, macOS (universal) and
+# Windows, so a change that only compiles on one OS is caught here, not by a user.
+#
+# A v* tag is a release: the three builds run, and only when ALL of them succeed the
+# `release` job publishes one GitHub release with every installer attached and the
+# notes generated from the commits since the previous tag. Nothing is published while
+# a platform is still building, so a visitor never sees a half-filled release.
+#
+# How to cut a release: `npm run release -- 0.2.0` (bumps the version files, commits,
+# tags v0.2.0 and pushes) or Actions -> "Release" -> Run workflow -> version.
 
 on:
   push:
@@ -84,18 +90,25 @@ jobs:
         run: cargo test --lib
         working-directory: src-tauri
 
+      # On a tag the version files must agree with the tag, or users download a
+      # v0.2.0 whose About screen says 0.1.0 and the updater can never reason about it.
+      - name: Check the version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "$tag" != "$conf" ]; then
+            echo "::error::tag v$tag but src-tauri/tauri.conf.json says $conf - run 'npm run release -- $tag' instead of tagging by hand"
+            exit 1
+          fi
+
       - name: Build installers (${{ matrix.name }})
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
-          # Only a v* tag publishes; every other run just builds the bundles.
-          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('Mouse AI {0}', github.ref_name) || '' }}
-          releaseBody: "Installers for Windows (.msi/.exe), macOS (.dmg, universal) and Linux (.deb/.rpm/.AppImage)."
-          releaseDraft: true
-          prerelease: false
 
       - name: Upload ${{ matrix.name }} installer(s)
         uses: actions/upload-artifact@v4
@@ -105,9 +118,86 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm
             src-tauri/target/release/bundle/appimage/*.AppImage
-          if-no-files-found: warn
-          retention-days: 7
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    # Only a v* tag, and only after every platform built.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for the release notes)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download every installer
+        uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+
+      - name: List what will be attached
+        run: ls -la installers
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          prerelease=""
+          case "$TAG" in *-alpha*|*-beta*|*-rc*|*-pre*) prerelease="--prerelease" ;; esac
+          # The notes: GitHub's generated list of commits/PRs since the previous tag,
+          # under a fixed header that tells people which file to download.
+          cat > notes.md <<'EOF'
+          ## Downloads
+
+          | Platform | File |
+          |---|---|
+          | Windows 10/11 | `Mouse AI_*_x64-setup.exe` (installer) or `Mouse AI_*_x64_en-US.msi` |
+          | macOS 12+ (Apple Silicon and Intel) | `Mouse AI_*_universal.dmg` |
+          | Linux (Debian/Ubuntu) | `Mouse AI_*_amd64.deb` |
+          | Linux (Fedora/RHEL) | `Mouse AI-*.x86_64.rpm` |
+          | Linux (any) | `Mouse AI_*_amd64.AppImage` |
+
+          The installers are not code-signed yet: Windows SmartScreen shows "More info -> Run anyway"
+          and macOS needs a right-click -> Open the first time.
+
+          EOF
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG" --jq .body >> notes.md || true
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" installers/* --clobber
+            gh release edit "$TAG" --title "Mouse AI $TAG" --notes-file notes.md --draft=false $prerelease
+          else
+            gh release create "$TAG" installers/* --title "Mouse AI $TAG" --notes-file notes.md $prerelease
+          fi
+          echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"
+
+      # Optional public mirror. This repository is private, so its release assets
+      # need a GitHub login to download. Set the repository variable RELEASES_REPO
+      # (e.g. gloirembonyi/mouse-ai-releases, a public repo) and the secret
+      # RELEASES_TOKEN (a fine-grained PAT with "Contents: write" on that repo) and the
+      # same release is created there for the landing page's download link.
+      - name: Mirror to the public releases repo
+        if: vars.RELEASES_REPO != ''
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          TARGET: ${{ vars.RELEASES_REPO }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then echo "::error::RELEASES_REPO is set but the RELEASES_TOKEN secret is missing"; exit 1; fi
+          prerelease=""
+          case "$TAG" in *-alpha*|*-beta*|*-rc*|*-pre*) prerelease="--prerelease" ;; esac
+          if gh release view "$TAG" -R "$TARGET" >/dev/null 2>&1; then
+            gh release upload "$TAG" installers/* -R "$TARGET" --clobber
+            gh release edit "$TAG" -R "$TARGET" --title "Mouse AI $TAG" --notes-file notes.md --draft=false $prerelease
+          else
+            gh release create "$TAG" installers/* -R "$TARGET" --title "Mouse AI $TAG" --notes-file notes.md $prerelease
+          fi
+          echo "Mirrored to https://github.com/$TARGET/releases/tag/$TAG"

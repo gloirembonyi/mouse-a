@@ -1,0 +1,63 @@
+name: Release
+
+# Cut a release from the GitHub UI: Actions -> Release -> Run workflow -> version
+# (e.g. 0.2.0). It bumps the version in tauri.conf.json, Cargo.toml, Cargo.lock and
+# package.json, commits, tags v<version>, pushes, and starts "Build Desktop App" on
+# that tag, which builds all three platforms and publishes the release when they are
+# all done. Same thing as `npm run release -- 0.2.0` from a laptop.
+#
+# The tag is pushed with the workflow's own token, and GitHub never starts a workflow
+# from a tag pushed that way - hence the explicit `gh workflow run` at the end
+# (workflow_dispatch is the one trigger that does fire from the token).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the v (e.g. 0.2.0 or 0.2.0-beta.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust (to refresh Cargo.lock)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Bump, commit, tag, push
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/bump-version.mjs "$VERSION"
+          git add -A
+          git commit -m "chore(release): v$VERSION"
+          git tag -a "v$VERSION" -m "Mouse AI v$VERSION"
+          git push origin main
+          git push origin "v$VERSION"
+
+      - name: Start the build on the tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh workflow run build.yml --ref "v$VERSION"
+          echo "Building v$VERSION - follow it under Actions -> Build Desktop App. The release appears when all three platforms finish."
