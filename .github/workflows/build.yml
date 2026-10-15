@@ -141,8 +141,14 @@ jobs:
           path: installers
           merge-multiple: true
 
-      - name: List what will be attached
-        run: ls -la installers
+      # The artifacts unpack with their bundle sub-folders (release/bundle/msi/...,
+      # universal-apple-darwin/...); only the installer files themselves are attached.
+      - name: Collect the installer files
+        id: files
+        run: |
+          find installers -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) > files.txt
+          echo "Attaching:"; cat files.txt
+          if [ ! -s files.txt ]; then echo "::error::no installer files found in the artifacts"; exit 1; fi
 
       - name: Publish the GitHub release
         env:
@@ -170,11 +176,12 @@ jobs:
 
           EOF
           gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG" --jq .body >> notes.md || true
+          mapfile -t files < files.txt
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" installers/* --clobber
+            gh release upload "$TAG" "${files[@]}" --clobber
             gh release edit "$TAG" --title "Mouse AI $TAG" --notes-file notes.md --draft=false $prerelease
           else
-            gh release create "$TAG" installers/* --title "Mouse AI $TAG" --notes-file notes.md $prerelease
+            gh release create "$TAG" "${files[@]}" --title "Mouse AI $TAG" --notes-file notes.md $prerelease
           fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"
 
@@ -194,10 +201,11 @@ jobs:
           if [ -z "$GH_TOKEN" ]; then echo "::error::RELEASES_REPO is set but the RELEASES_TOKEN secret is missing"; exit 1; fi
           prerelease=""
           case "$TAG" in *-alpha*|*-beta*|*-rc*|*-pre*) prerelease="--prerelease" ;; esac
+          mapfile -t files < files.txt
           if gh release view "$TAG" -R "$TARGET" >/dev/null 2>&1; then
-            gh release upload "$TAG" installers/* -R "$TARGET" --clobber
+            gh release upload "$TAG" "${files[@]}" -R "$TARGET" --clobber
             gh release edit "$TAG" -R "$TARGET" --title "Mouse AI $TAG" --notes-file notes.md --draft=false $prerelease
           else
-            gh release create "$TAG" installers/* -R "$TARGET" --title "Mouse AI $TAG" --notes-file notes.md $prerelease
+            gh release create "$TAG" "${files[@]}" -R "$TARGET" --title "Mouse AI $TAG" --notes-file notes.md $prerelease
           fi
           echo "Mirrored to https://github.com/$TARGET/releases/tag/$TAG"
