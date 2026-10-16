@@ -182,6 +182,10 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
       `</defs>` +
       `<ellipse class="${p}-ground" cx="50" cy="92" rx="22" ry="4.5"${sty(`fill:${c.dark};opacity:.22`)}/>` +
       `<g class="${p}-body"${icon ? "" : ` filter="url(#${uid}-shadow)"`}>` +
+        `<g class="${p}-prop ${p}-headband">` +
+          `<path d="M11.5 46C11.5 -6 88.5 -6 88.5 46"${sty(`fill:none;stroke:${cup};stroke-width:${icon ? 6.5 : 5.2};stroke-linecap:round`)}/>` +
+          (icon ? "" : `<path d="M30 8.5C42 3 58 3 70 8.5"${sty("fill:none;stroke:#fff;stroke-width:1.5;stroke-linecap:round;opacity:.25")}/>`) +
+        `</g>` +
         `<g${felt ? ` filter="url(#${uid}-felt)"` : ""}${sty(`fill:url(#${uid}-shade)`)}>` +
           `<circle cx="50" cy="31" r="21"/><circle cx="31" cy="51" r="21"/><circle cx="69" cy="51" r="21"/>` +
           `<circle cx="50" cy="69" r="21"/><circle cx="50" cy="50" r="24"/>` +
@@ -193,8 +197,6 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
         `<g class="${p}-eyes-slot">${eyesMarkup(m, size, p, { sclera: false })}</g>` +
         // the headset
         `<g class="${p}-prop ${p}-headset">` +
-          `<path d="M12 46C12 8 88 8 88 46"${sty(`fill:none;stroke:${cup};stroke-width:${icon ? 6 : 4.6};stroke-linecap:round`)}/>` +
-          (icon ? "" : `<path d="M16 40C18 16 82 16 84 40"${sty("fill:none;stroke:#fff;stroke-width:1.4;stroke-linecap:round;opacity:.22")}/>`) +
           `<rect x="5" y="40" width="13" height="22" rx="6"${sty(`fill:${cup}`)}/>` +
           `<rect x="82" y="40" width="13" height="22" rx="6"${sty(`fill:${cup}`)}/>` +
           (icon ? "" : `<rect x="7.5" y="43" width="4" height="12" rx="2"${sty("fill:#fff;opacity:.2")}/>` +
