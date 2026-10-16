@@ -151,10 +151,87 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
    * @param {string} mood  one of MOODS
    * @param {{prefix?: string, variant?: "mascot"|"mark"|"glyph", title?: string}} [opts]
    */
+
+  // Kudu Pilot is not a kudu: it is the desktop's felt clover, wearing a call headset
+  // (band over the top, two ear cups, a mic boom to the mouth). Same moods, same eyes
+  // slot, same felt recipe as the desktop bots.
+  function cloverSvg(uid, size, mood, o) {
+    const p = o.prefix || "tm";
+    const m = normalizeMood(mood);
+    const t = tierOf(size);
+    const icon = t === "icon";
+    const ink = PALETTE.ink;
+    const c = { light: "#bfe0ff", base: "#5aa4ec", dark: "#2f6fc0" };
+    const cup = "#1d2440";
+    const felt = !icon;
+    const w = o.width || size, h = o.height || size;
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="${w}" height="${h}" focusable="false" ` +
+      (o.title ? `role="img" aria-label="${o.title}"` : `aria-hidden="true"`) + `>` +
+      `<defs>` +
+        `<radialGradient id="${uid}-shade" cx="36%" cy="30%" r="75%">` +
+          `<stop offset="0%" stop-color="${c.light}"/><stop offset="45%" stop-color="${c.base}"/><stop offset="100%" stop-color="${c.dark}"/>` +
+        `</radialGradient>` +
+        (felt ? `<filter id="${uid}-felt" x="-15%" y="-15%" width="130%" height="130%">` +
+          `<feTurbulence type="fractalNoise" baseFrequency="1.6" numOctaves="2" seed="3" result="noise"/>` +
+          `<feDisplacementMap in="SourceGraphic" in2="noise" scale="3.2" xChannelSelector="R" yChannelSelector="G"/>` +
+        `</filter>` : "") +
+        (icon ? "" : `<filter id="${uid}-shadow" x="-30%" y="-30%" width="160%" height="170%">` +
+          `<feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="${c.dark}" flood-opacity="0.2"/>` +
+        `</filter>`) +
+      `</defs>` +
+      `<ellipse class="${p}-ground" cx="50" cy="92" rx="22" ry="4.5"${sty(`fill:${c.dark};opacity:.22`)}/>` +
+      `<g class="${p}-body"${icon ? "" : ` filter="url(#${uid}-shadow)"`}>` +
+        `<g${felt ? ` filter="url(#${uid}-felt)"` : ""}${sty(`fill:url(#${uid}-shade)`)}>` +
+          `<circle cx="50" cy="31" r="21"/><circle cx="31" cy="51" r="21"/><circle cx="69" cy="51" r="21"/>` +
+          `<circle cx="50" cy="69" r="21"/><circle cx="50" cy="50" r="24"/>` +
+        `</g>` +
+        `<ellipse cx="38" cy="30" rx="10" ry="6" transform="rotate(-25 38 30)"${sty("fill:#fff;opacity:.28")}/>` +
+        (icon ? "" :
+          `<ellipse cx="34" cy="61" rx="4.4" ry="2.5"${sty("fill:#ff7aa0;opacity:.3")}/>` +
+          `<ellipse cx="66" cy="61" rx="4.4" ry="2.5"${sty("fill:#ff7aa0;opacity:.3")}/>`) +
+        `<g class="${p}-eyes-slot">${eyesMarkup(m, size, p, { sclera: false })}</g>` +
+        // the headset
+        `<g class="${p}-prop ${p}-headset">` +
+          `<path d="M12 46C12 8 88 8 88 46"${sty(`fill:none;stroke:${cup};stroke-width:${icon ? 6 : 4.6};stroke-linecap:round`)}/>` +
+          (icon ? "" : `<path d="M16 40C18 16 82 16 84 40"${sty("fill:none;stroke:#fff;stroke-width:1.4;stroke-linecap:round;opacity:.22")}/>`) +
+          `<rect x="5" y="40" width="13" height="22" rx="6"${sty(`fill:${cup}`)}/>` +
+          `<rect x="82" y="40" width="13" height="22" rx="6"${sty(`fill:${cup}`)}/>` +
+          (icon ? "" : `<rect x="7.5" y="43" width="4" height="12" rx="2"${sty("fill:#fff;opacity:.2")}/>` +
+                       `<rect x="84.5" y="43" width="4" height="12" rx="2"${sty("fill:#fff;opacity:.2")}/>`) +
+          `<g class="${p}-mic">` +
+            `<path d="M12 62c0 13 10 20 26 20"${sty(`fill:none;stroke:${cup};stroke-width:${icon ? 4.5 : 3};stroke-linecap:round`)}/>` +
+            `<ellipse cx="41" cy="82" rx="4.4" ry="3.6"${sty(`fill:${cup}`)}/>` +
+            (icon ? "" : `<circle cx="39.8" cy="81" r="1.1"${sty("fill:#fff;opacity:.45")}/>`) +
+          `</g>` +
+        `</g>` +
+      `</g>` +
+      `</svg>`
+    );
+  }
+
   function buildSvg(uid, size, mood, opts) {
     const o = opts || {};
+    if (o.character === "pilot" && (!o.variant || o.variant === "mascot" || o.variant === "body")) return cloverSvg(uid, size, mood, o);
     const p = o.prefix || "tm";
     const variant = o.variant || "mascot";
+    // The landing page mark: the same white kudu as the "Ask Kudu" glyph, on the brand tile.
+    if (variant === "mark-white") {
+      const inner = buildSvg(uid, size, "still", { prefix: p, variant: "glyph" })
+        .replace(/^<svg[^>]*>/, "").replace(/<\/svg>$/, "");
+      const w = o.width || size, h = o.height || size;
+      return (
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="${w}" height="${h}" focusable="false" ` +
+        (o.title ? `role="img" aria-label="${o.title}"` : `aria-hidden="true"`) + `>` +
+        `<defs><linearGradient id="${uid}-tile" x1="0" y1="0" x2="0" y2="1">` +
+          `<stop offset="0%" stop-color="${PALETTE.tile[0]}"/><stop offset="100%" stop-color="${PALETTE.tile[1]}"/>` +
+        `</linearGradient></defs>` +
+        `<rect x="0" y="0" width="100" height="100" rx="22" style="fill:url(#${uid}-tile)"/>` +
+        `<rect x="1" y="1" width="98" height="49" rx="21" style="fill:#fff;opacity:.08"/>` +
+        `<g transform="translate(8 7) scale(.84)" style="color:#ffffff">${inner}</g>` +
+        `</svg>`
+      );
+    }
     const ch = CHARACTERS[o.character] || CHARACTERS.kudu;
     const prop = variant === "glyph" ? null : ch.prop;
     const m = normalizeMood(mood);
@@ -456,7 +533,8 @@ ${h} .${k("mouth")}{transform-box:fill-box;transform-origin:center;}
 .${k("waking")} .${k("eyes")}{animation:${k("wake-blink")} .8s ease-out 1!important;}
 ${h} .${k("prop")}{transform-box:view-box;}
 ${h} .${k("pencil")}{transform-origin:24px 37px;}
-${h} .${k("mic")}{transform-box:view-box;transform-origin:31px 61px;}
+${h} .${k("mic")}{transform-box:view-box;transform-origin:12px 62px;}
+.${k("pilot")}.${k("idle")} .${k("mic")}{animation:${k("mic-bob")} 3.6s ease-in-out infinite;}
 .${k("quill")}.${k("working")} .${k("pencil")}{animation:${k("pencil-write")} .6s ease-in-out infinite;}
 .${k("quill")}.${k("thinking")} .${k("pencil")}{animation:${k("pencil-tap")} 2.4s ease-in-out infinite;}
 .${k("scout")}.${k("working")} .${k("ear-l")}{animation:${k("ear-scan-l")} 1.4s ease-in-out infinite;}

@@ -25,7 +25,6 @@ import {
 import { emitTo } from "@tauri-apps/api/event";
 import { Markdown } from "../components/chat/Markdown";
 import { BotAvatar } from "../components/ui/BotAvatar";
-import { BrandMark } from "../components/ui/primitives";
 import { AgentPanel, CuesView, InsertBar } from "./CopilotTools";
 import { useCopilotAgent, useInsert } from "./copilotHooks";
 import { ACTION_LABELS, AUTO_ANSWER_KEY, lastTheirTurn, looksLikeQuestion, useMeeting, type AssistCard } from "../hooks/useMeeting";
@@ -314,11 +313,7 @@ export function CopilotBar() {
           onClick={() => setExpanded((v) => !v)}
           title={live ? "Listening - click to show or hide" : "Kudu Pilot"}
         >
-          {live ? (
-            <BotAvatar kind="clover" mood={busy ? "thinking" : speaking ? "listening" : "idle"} size={28} />
-          ) : (
-            <BrandMark size={28} mood="idle" />
-          )}
+          <BotAvatar kind="clover" mood={live ? (busy ? "thinking" : speaking ? "listening" : "idle") : "still"} size={28} title="Kudu Pilot" />
         </button>
 
         <button type="button" className="cp-chip" onClick={() => setExpanded((v) => !v)}>

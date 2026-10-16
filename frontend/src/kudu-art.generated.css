@@ -48,7 +48,8 @@
 .bot-waking .bot-eyes{animation:bot-wake-blink .8s ease-out 1!important;}
 .bot .bot-prop{transform-box:view-box;}
 .bot .bot-pencil{transform-origin:24px 37px;}
-.bot .bot-mic{transform-box:view-box;transform-origin:31px 61px;}
+.bot .bot-mic{transform-box:view-box;transform-origin:12px 62px;}
+.bot-pilot.bot-idle .bot-mic{animation:bot-mic-bob 3.6s ease-in-out infinite;}
 .bot-quill.bot-working .bot-pencil{animation:bot-pencil-write .6s ease-in-out infinite;}
 .bot-quill.bot-thinking .bot-pencil{animation:bot-pencil-tap 2.4s ease-in-out infinite;}
 .bot-scout.bot-working .bot-ear-l{animation:bot-ear-scan-l 1.4s ease-in-out infinite;}

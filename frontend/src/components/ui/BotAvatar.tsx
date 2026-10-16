@@ -20,8 +20,8 @@ export type BotKind = "kudu" | "agent" | "connect" | "lens" | "pilot" | "scout" 
 export type BotMood = "idle" | "still" | "thinking" | "working" | "listening" | "happy" | "sleeping" | "error";
 export type BotVariant = "mascot" | "body" | "mark" | "glyph";
 
-const LEGACY: Record<string, string> = { ghost: "kudu" };
-const DRAWN = new Set(["clover", "flower", "square"]);
+const LEGACY: Record<string, string> = { ghost: "kudu", clover: "pilot" };
+const DRAWN = new Set(["flower", "square"]);
 export function characterOf(kind: BotKind): string {
   const c = LEGACY[kind] || kind;
   return c in CHARACTERS ? c : "kudu";
@@ -214,7 +214,9 @@ export function BotAvatar({
     if (!slot) return;
     const headPx = variant === "body" ? size * 0.62 : size;
     const dark = !!(CHARACTERS as Record<string, { dark?: boolean }>)[character]?.dark || character === "cloak";
-    slot.innerHTML = eyesMarkup(variant === "mark" ? "still" : mood, headPx, "bot", dark && headPx >= 20 ? { sclera: true } : undefined);
+    slot.innerHTML = character === "pilot"
+      ? eyesMarkup(mood, size, "bot", { sclera: false })
+      : eyesMarkup(variant === "mark" ? "still" : mood, headPx, "bot", dark && headPx >= 20 ? { sclera: true } : undefined);
   }, [mood, size, variant, character]);
 
   const prevMood = useRef(mood);
