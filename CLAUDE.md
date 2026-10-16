@@ -4,25 +4,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Mouse AI Desktop - a Windows desktop AI assistant built with Tauri 2 (Rust backend + React/TypeScript
-frontend). It talks to an external **Thothai backend** (`../backend-Thothai`, a sibling repo, not part
-of this codebase) which holds the Gemini API key(s) and does all model inference. This repo only ever
+Kudu Desktop - a Windows desktop AI assistant built with Tauri 2 (Rust backend + React/TypeScript
+frontend). It talks to an external backend, **Kudu Core** (`../backend-Thothai`, a sibling repo, not part
+of this codebase), which holds the Gemini API key(s) and does all model inference. This repo only ever
 runs *tools* locally (shell commands, file I/O, mouse/keyboard control, screen capture) - the model
 itself never runs here.
 
+Brand names (Oct 2026): the assistant is **Kudu**; this app is **Kudu Desktop**; the browser extension is
+**Kudu Connect**; the cursor overlay is **Kudu Lens** (pill label "Ask Kudu"); the meeting copilot is
+**Kudu Pilot** (its floating window is "the Pilot bar"); web research is **Kudu Scout**; the
+hidden-from-screen-share mode is **Kudu Cloak**; the backend is **Kudu Core**. Only user-visible and
+model-facing strings carry these names - the Tauri identifier (`com.thothai.mouseai`), window labels
+(`main`/`overlay`/`copilot`/`shield`), the Cargo package (`mouse-ai-desktop`), the `%APPDATA%/mouse-ai`
+config folder and its files, `.mouse-ai/notes.md`, `MOUSE_AI_*` env vars, `mouse-ai-*` localStorage keys,
+Tauri command/event names, the bridge protocol and the `mouse-ai-<os>` CI artifacts deliberately keep
+their old internal names.
+
 Four windows are built from `frontend/`: the main chat/IDE window (`index.html`, React), a small
 always-on-top hover overlay (`overlay.html`, plain JS, see `frontend/public/overlay.js`) that pops up
-near the cursor, the "Mouse AI is working" banner (`shield.html`, plain JS, shown by `shield.rs` for
+near the cursor, the "Kudu is working" banner (`shield.html`, plain JS, shown by `shield.rs` for
 the length of every local agent run, with Stop), and the in-call copilot bar (`copilot.html`, React, `frontend/src/copilot/`) - a
 floating Cluely-style pill + glass panel (Assist / What should I say? / Follow-ups / Recap, live
 insights, auto-answer, Solve screen) that `meeting_start` shows over the call. Ctrl+Shift+\ toggles it; while a
 call is live, Ctrl+Shift+Enter (suggest) and Ctrl+Shift+S (solve what's on screen) are routed to it instead of the
-main window. Ctrl+Alt+Arrows nudge the bar - registered only while it is visible (`set_move_keys` in `meeting.rs`). The bar is shown with a raw `ShowWindow(SW_SHOWNOACTIVATE)` so it never steals focus from the call; because tao only applies visibility *changes*, it must also be hidden with a raw `ShowWindow(SW_HIDE)` (`hide_copilot`) and its visibility read with `IsWindowVisible` - `w.hide()` alone is a no-op for it. All Mouse AI windows (main, overlay,
+main window. Ctrl+Alt+Arrows nudge the bar - registered only while it is visible (`set_move_keys` in `meeting.rs`). The bar is shown with a raw `ShowWindow(SW_SHOWNOACTIVATE)` so it never steals focus from the call; because tao only applies visibility *changes*, it must also be hidden with a raw `ShowWindow(SW_HIDE)` (`hide_copilot`) and its visibility read with `IsWindowVisible` - `w.hide()` alone is a no-op for it. All Kudu Desktop windows (main, overlay,
 copilot, shield) are excluded from screen capture by default (`WDA_EXCLUDEFROMCAPTURE` via
 `set_content_protected`). The switch is `prefs.hide_from_screen_share` (persisted, default on, applied by
 `prefs::apply` through `meeting::set_stealth`); `stealth_set` in `meeting.rs` writes it and emits
 `stealth-changed`, and the same toggle appears in Settings (DesktopSection) and the copilot bar's menu. The
-browser extension's Undercover can open here instead of in a Chrome popup: the `open_copilot` bridge frame
+browser extension's Kudu Cloak (formerly Undercover) can open here instead of in a Chrome popup: the `open_copilot` bridge frame
 (paired only, `bridge.rs`) shows the copilot bar and emits `copilot-context {url,title,text,selection}` to
 it; the bar shows the page as a chip and sends it along with the next question.
 
@@ -77,7 +87,7 @@ secret to mirror each release into a public repo for the landing page's download
 
 ### Split of responsibility: backend does the thinking, this app does the doing
 
-The Gemini model runs entirely on the Thothai backend via HTTP (`/api/agent/step`, `/api/chat`, etc. -
+The Gemini model runs entirely on Kudu Core via HTTP (`/api/agent/step`, `/api/chat`, etc. -
 see `src-tauri/src/backend.rs`, which mirrors the browser extension's `shared/backend-client.js`).
 This app sends conversation state + tool results and gets back either plain text or a list of
 `functionCalls` to execute. There is no Gemini key anywhere in this codebase - the backend rotates
@@ -173,10 +183,10 @@ progress (up to 120 steps / 30 min). Key details baked into these files:
 | `lib.rs` | App entry: Tauri builder, system tray, global shortcuts, window setup, invoke_handler registration |
 | `commands.rs` | Tauri `#[command]` IPC endpoints exposed to the frontend; owns `AppState` (backend client, ai_active, conversation_id, overlay_pinned) |
 | `agent/` | The local agent loop (`drive.rs`), tools (`exec/*`, `tools/*`), ledger + checkpoints, prompt fallback, retry - see `agent/mod.rs` |
-| `backend.rs` | HTTP client for the Thothai backend (auth, chat, agent step, conversation history) |
+| `backend.rs` | HTTP client for Kudu Core (auth, chat, agent step, conversation history) |
 | `mouse.rs` | Cursor position/context, accessible-element inspection under the cursor (Win32 UI Automation) |
 | `capture.rs` | Screenshot capture (full screen, region, window-or-around-point) |
-| `hover.rs` | Global hover-dwell watcher - shows the overlay's "Ask AI" pill when the mouse pauses over something; `clamp_overlay_into_monitor` is called by `expand_overlay` after every resize so the panel (and its input row) never grows off-screen |
+| `hover.rs` | Global hover-dwell watcher - shows the overlay's "Ask Kudu" pill (Kudu Lens) when the mouse pauses over something; `clamp_overlay_into_monitor` is called by `expand_overlay` after every resize so the panel (and its input row) never grows off-screen |
 | `shield.rs` | The "working" banner window + the yield-to-user rule: `input.rs` stamps `OUR_LAST_INPUT_TICK` on every SendInput, `user_idle_ms()` compares it with `GetLastInputInfo`, and `drive.rs` calls `wait_for_user_idle` before any UI tool so the agent waits (and says so) while the person is using the mouse or keyboard instead of fighting them. BlockInput was rejected: it needs admin and locks the user out. While any run is active, Esc is a global hotkey that cancels every run (`request_cancel_all`, also behind the banner's Stop and `agent_cancel_all`); keystrokes within 400 ms of the agent's own SendInput are ignored so its own `press_key escape` cannot stop it |
 | `input.rs` | Synthesized mouse/keyboard input for the agent's computer-use tools |
 | `explorer.rs` | Windows Explorer / file-context helpers used by tools |
@@ -184,7 +194,7 @@ progress (up to 120 steps / 30 min). Key details baked into these files:
 | `terminal.rs` | PTY sessions keyed by id (one per terminal tab): spawn/write/resize/kill; output as `pty-output {id,data}` with UTF-8 split handling |
 | `git_diff.rs` | Git status/diff for the IDE dock's changes pane |
 | `mcp.rs` | MCP client: launches configured servers as stdio subprocesses, speaks JSON-RPC 2.0 (`initialize` → `tools/list` → `tools/call`). Strictly additive/fail-safe - a broken MCP server is skipped, never breaks the core agent loop |
-| `bridge.rs` | Localhost WebSocket (127.0.0.1:47821) to the Thothai browser extension - the transport for agent handoffs |
+| `bridge.rs` | Localhost WebSocket (127.0.0.1:47821) to the Kudu Connect browser extension - the transport for agent handoffs |
 | `link.rs` | Two-way agent link on top of the bridge: pairing code (`%APPDATA%/mouse-ai/bridge.json`), browser→desktop `desktop_task` runs (source `browser:<id>`), the shared task board (`bridge-task` events → Agents view) and the watcher that probes/fails stalled handoffs |
 | `meeting.rs` | Meeting copilot (profile = `meeting_profile.json`: about/projects/session/style plus `sources` + `research` written by `meeting_research` - every link fetched through the backend's `/api/agent/fetch`, then one tool-less `agent_step` writes the brief - and `skip_context`, the "Use my context" switch shown in the meeting view and the copilot bar; `meeting-profile` event keeps both in sync): two-sided audio capture → Whisper chunks → transcript; assist actions (answers stream from the backend's `/api/agent/stream` as `meeting-answer-delta`, falling back to `/api/agent/step`); the copilot bar window, stealth, move keys |
 | `copilot.rs` | The bar's hands-on tools: "Fix it" runs `agent::run_task` under source `copilot` with transcript + active project as context; `copilot_insert` pastes (clipboard restored) or naturally types text into the last non-Mouse-AI foreground window, tracked by a 250 ms watcher |
@@ -245,7 +255,7 @@ Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/confi
     (`cancel.rs` STEER registry); `drive.rs` folds it in as a `[USER UPDATE]` user turn before the
     next model call, and when a message lands just as the model finishes it continues instead of
     returning. False = nothing running, so the UIs queue the text as the next task (main window
-    `useChat` queuedRef, overlay `queuedAfterRun`). The composer and the Ask AI box stay editable
+    `useChat` queuedRef, overlay `queuedAfterRun`). The composer and the Ask Kudu box stay editable
     while a run is on; Stop shows only when there is nothing to send.
   - **watch_video** (tools/decl.rs → exec/web.rs → `backend.agent_video` → `/api/agent/video`): the
     model watches a public YouTube video and returns timestamped notes / transcript / an answer. It
@@ -253,7 +263,7 @@ Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/confi
   - **GUI steps yield.** `wait_for_user_idle` gives up after 25 s of user activity and the tool
     returns an error telling the model to do non-GUI work and retry later, instead of clicking into
     what the person is doing.
-  - **Ask AI as a collector.** An empty thread shows quick actions (Summarize this, Key facts, Make a
+  - **Ask Kudu as a collector.** An empty thread shows quick actions (Summarize this, Key facts, Make a
     checklist, What is this?) that attach `@window` and ask. Under every answer: "Save to <project>"
     appends to `<active project>/.mouse-ai/notes.md` (`project_notes_append`; the active project is the
     main window's `mouse-ai-active-project` localStorage key, shared across windows) and "To meeting"

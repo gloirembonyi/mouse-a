@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Integrated terminal backend, IDE dock's Terminal tab.
+// Kudu Desktop - Integrated terminal backend, IDE dock's Terminal tab.
 // Real PTYs (not piped subprocesses) via `portable-pty` - gives interactive
 // programs (vim, npm's progress bars, prompts) a proper terminal to render
 // into, which a plain stdout pipe can't do. Several sessions can run at once

@@ -87,7 +87,7 @@ export const onAiState = (cb: (active: boolean) => void) =>
   listen<boolean>("ai-state", (e) => cb(e.payload));
 export const onCaptureAnalyze = (cb: () => void) => listen("capture-analyze", () => cb());
 export const onQuickAsk = (cb: () => void) => listen("quick-ask", () => cb());
-/** The overlay's "Continue in Mouse AI": open this conversation in the chat view. */
+/** The overlay's "Continue in Kudu Desktop": open this conversation in the chat view. */
 export const onOpenConversation = (cb: (id: string) => void) =>
   listen<string>("open-conversation", (e) => cb(e.payload));
 
@@ -303,14 +303,14 @@ export const copilotInsert = (text: string, mode: "paste" | "type") =>
 export const copilotInsertCancel = () => invoke<void>("copilot_insert_cancel");
 export const onCopilotAssist = (cb: (action: MeetingAction) => void) =>
   listen<MeetingAction>("copilot-assist", (e) => cb(e.payload));
-/** Whether Mouse AI's windows are hidden from screen share / recordings. */
+/** Whether Kudu Desktop's windows are hidden from screen share / recordings. */
 export const stealthGet = () => invoke<boolean>("stealth_get");
 export const stealthSet = (enabled: boolean) => invoke<boolean>("stealth_set", { enabled });
-/** How Mouse AI sits on the desktop (src-tauri/src/prefs.rs). */
+/** How Kudu Desktop sits on the desktop (src-tauri/src/prefs.rs). */
 export interface WindowPrefs {
   hide_from_taskbar: boolean;
   start_in_background: boolean;
-  /** Every Mouse AI window is excluded from screen capture. Persisted; on by default. */
+  /** Every Kudu Desktop window is excluded from screen capture. Persisted; on by default. */
   hide_from_screen_share: boolean;
 }
 /** A page the browser extension handed to the copilot bar (bridge.rs `open_copilot`). */

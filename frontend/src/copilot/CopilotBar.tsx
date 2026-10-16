@@ -95,7 +95,7 @@ export function CopilotBar() {
   const [doMode, setDoMode] = useState(false);
   const [view, setView] = useState<"answers" | "cues">("answers");
   const [opacity, setOpacity] = useState(() => Number(localStorage.getItem(LS.opacity)) || 1);
-  /** A page handed over from the browser extension (Undercover → Mouse AI). */
+  /** A page handed over from the browser extension (Kudu Cloak → Kudu Desktop). */
   const [pageCtx, setPageCtx] = useState<CopilotContext | null>(null);
   const agent = useCopilotAgent();
   const ins = useInsert();
@@ -126,7 +126,7 @@ export function CopilotBar() {
     fitRef.current();
   }, [menuOpen, pageCtx]);
 
-  // Undercover from the browser: the extension sends the page; the bar opens on it.
+  // Kudu Cloak from the browser: the extension sends the page; the bar opens on it.
   useEffect(() => {
     const un = onCopilotContext((c) => {
       setPageCtx(c);
@@ -312,10 +312,10 @@ export function CopilotBar() {
           className="cp-avatar"
           style={{ "--lvl": live ? Math.max(levels.mic, levels.system) : 0 } as React.CSSProperties}
           onClick={() => setExpanded((v) => !v)}
-          title={live ? "Listening - click to show or hide" : "Mouse AI copilot"}
+          title={live ? "Listening - click to show or hide" : "Kudu Pilot"}
         >
           {live ? (
-            <BotAvatar kind="clover" mood={busy ? "thinking" : speaking ? "listening" : "idle"} size={28} />
+            <BotAvatar kind="pilot" mood={busy ? "thinking" : speaking ? "listening" : "idle"} size={28} />
           ) : (
             <BrandMark size={28} mood="idle" />
           )}
@@ -800,7 +800,7 @@ function MoreMenu(props: {
           props.onClose();
         }}
       >
-        Open full copilot (transcript & notes)
+        Open Kudu Pilot (transcript & notes)
       </button>
     </div>
   );

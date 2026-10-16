@@ -182,7 +182,7 @@ export default function App() {
     [chat, conversations],
   );
 
-  // The cursor overlay's "Continue in Mouse AI" hands its conversation over.
+  // The cursor overlay's "Continue in Kudu Desktop" hands its conversation over.
   const openThreadRef = useRef(handleOpenThread);
   openThreadRef.current = handleOpenThread;
   useEffect(() => {
@@ -247,7 +247,7 @@ export default function App() {
   const activeThread = conversations.threads.find((t) => t.id === conversations.activeId);
   const title =
     view === "meeting"
-      ? "Meeting copilot"
+      ? "Kudu Pilot"
       : view === "agents"
         ? "Agents"
         : view === "settings"

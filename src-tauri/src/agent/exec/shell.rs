@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - run_command: PowerShell with timeouts, cancellation and output capture.
+// Kudu Desktop agent - run_command: PowerShell with timeouts, cancellation and output capture.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]

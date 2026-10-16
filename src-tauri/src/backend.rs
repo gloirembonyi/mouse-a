@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Thothai Backend HTTP Client
+// Kudu Desktop - Kudu Core (backend) HTTP client
 // Mirrors the extension's shared/backend-client.js but in Rust.
 // Session + backend URL persist to a small config file so sign-in
 // survives app restarts.
@@ -364,9 +364,9 @@ impl BackendClient {
 
     fn friendly_network_error(e: &reqwest::Error) -> String {
         if e.is_timeout() && !e.is_connect() {
-            "The AI timed out - Thothai's models are very busy right now. Try again in a moment.".to_string()
+            "The AI timed out - Kudu's models are very busy right now. Try again in a moment.".to_string()
         } else if e.is_connect() || e.is_timeout() {
-            "Can't reach the Thothai backend. Check your internet, or set a working Backend URL in Settings.".to_string()
+            "Can't reach Kudu Core. Check your internet, or set a working Backend URL in Settings.".to_string()
         } else {
             format!("Network error: {}", e)
         }
@@ -490,7 +490,7 @@ impl BackendClient {
         Ok(data)
     }
 
-    /// Send a chat message to the Thothai backend. Gemini key selection (including
+    /// Send a chat message to Kudu Core. Gemini key selection (including
     /// rotating across multiple shared keys) is entirely the backend's job now -
     /// see backend-Thothai/src/lib/gemini-request.js - so no apiKey is ever sent
     /// from here.
@@ -498,7 +498,7 @@ impl BackendClient {
         let token = self
             .get_session_token()
             .await
-            .ok_or("Not signed in - open the Mouse AI window (tray icon) and sign in first.")?;
+            .ok_or("Not signed in - open the Kudu Desktop window (tray icon) and sign in first.")?;
         let url = format!("{}/api/chat", self.base_url.read().await);
 
         let resp = self
@@ -562,7 +562,7 @@ impl BackendClient {
         let token = self
             .get_session_token()
             .await
-            .ok_or("Not signed in - open the Mouse AI window and try again.")?;
+            .ok_or("Not signed in - open the Kudu Desktop window and try again.")?;
         let url = format!("{}/api/agent/step", self.base_url.read().await);
 
         let mut body = serde_json::json!({
@@ -645,7 +645,7 @@ impl BackendClient {
         let token = self
             .get_session_token()
             .await
-            .ok_or("Not signed in - open the Mouse AI window and try again.")?;
+            .ok_or("Not signed in - open the Kudu Desktop window and try again.")?;
         let url = format!("{}/api/agent/stream", self.base_url.read().await);
         let body = serde_json::json!({ "system": system, "contents": contents, "model": default_gemini_model() });
         let mut resp = self

@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Mouse Position & Context Detection
+// Kudu Desktop - Mouse Position & Context Detection
 // Uses Windows API to track cursor position and detect what's under it.
 
 use serde::Serialize;
@@ -144,7 +144,7 @@ pub fn context_at_point(x: i32, y: i32) -> CursorContext {
     context_for_hwnd(hwnd, x, y)
 }
 
-/// Context for a remembered window handle (the Ask AI pill's target), so the
+/// Context for a remembered window handle (the Ask Kudu pill's target), so the
 /// answer is about the window the user hovered even when the cursor is now over
 /// the overlay itself.
 #[cfg(windows)]
@@ -457,7 +457,7 @@ pub fn sample_window_content(_x: i32, _y: i32, _w: u32, _h: u32) -> Vec<ContentN
 }
 
 /// True when the top-level window at the given global point belongs to THIS
-/// process (Mouse AI's own overlay/main window). The always-on-top overlay
+/// process (Kudu Desktop's own overlay/main window). The always-on-top overlay
 /// floats above the app the agent is trying to drive, so without this check
 /// the agent can click its own panel - or type into its own input box - and
 /// believe it acted on the target app.
@@ -482,7 +482,7 @@ pub fn is_own_process_at(_x: i32, _y: i32) -> bool {
 }
 
 /// True when keyboard focus is currently on one of THIS process's own windows
-/// - the state in which type_text/press_key would land in Mouse AI's own UI
+/// - the state in which type_text/press_key would land in Kudu Desktop's own UI
 /// instead of the app the user meant.
 #[cfg(windows)]
 pub fn is_own_process_foreground() -> bool {
@@ -613,7 +613,7 @@ pub fn focus_hwnd(_hwnd_raw: isize) -> Result<(), String> {
 /// `title_contains` (case-insensitive). While ON, the window stays visible and
 /// still takes mouse clicks (Stop keeps working), but it can never seize
 /// keyboard focus - so the user watching or scrolling the overlay mid-run no
-/// longer redirects the agent's keystrokes into Mouse AI's own UI.
+/// longer redirects the agent's keystrokes into Kudu Desktop's own UI.
 #[cfg(windows)]
 pub fn set_own_window_no_activate(title_contains: &str, enable: bool) {
     use winapi::shared::minwindef::{BOOL, LPARAM, TRUE};

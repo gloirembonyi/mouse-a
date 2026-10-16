@@ -4,10 +4,10 @@ import { BotAvatar, type BotMood } from "./BotAvatar";
 // Small shared building blocks so every view uses the same button sizes,
 // key hints and switches instead of re-styling them inline.
 
-/** The Thothai logo - the ghost mascot (same art as the app icon,
- *  src-tauri/icons/source/thothai-ghost.svg), still unless told otherwise. */
+/** The Kudu logo - the kudu mascot (same art as the app icon, synced from the
+ *  extension's shared/kudu-art.js), still unless told otherwise. */
 export function BrandMark({ size = 22, className, mood = "still" }: { size?: number; className?: string; mood?: BotMood }) {
-  return <BotAvatar kind="ghost" mood={mood} size={size} className={className} title="Thothai" />;
+  return <BotAvatar kind="kudu" mood={mood} size={size} className={className} title="Kudu" />;
 }
 
 export function Kbd({ children, className }: { children: React.ReactNode; className?: string }) {

@@ -1,4 +1,4 @@
-// Mouse AI Desktop - the "working" banner and the yield-to-user rule.
+// Kudu Desktop - the "working" banner and the yield-to-user rule.
 //
 // Two halves of one idea: while the agent drives the mouse and keyboard, the user must
 // (1) see it, unmistakably, with Stop in reach, and (2) never have to fight it. The
@@ -147,7 +147,7 @@ pub fn show(app: &AppHandle, source: &str, task: &str) {
     let _ = w.set_always_on_top(true);
     let _ = w.show();
     // Never steal focus from the app the agent is driving.
-    let _ = crate::mouse::set_own_window_no_activate("mouse ai working", true);
+    let _ = crate::mouse::set_own_window_no_activate("kudu desktop working", true);
     if ACTIVE.fetch_add(1, Ordering::SeqCst) == 0 {
         let app2 = app.clone();
         std::thread::spawn(move || apply_esc_hotkey(&app2, true));

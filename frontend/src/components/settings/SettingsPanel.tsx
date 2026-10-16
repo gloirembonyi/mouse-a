@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import clsx from "clsx";
 import { LogOut, Monitor, Moon, Power, Sun, X } from "lucide-react";
 import {
@@ -26,11 +27,11 @@ interface SettingsPanelProps {
 }
 
 const SHORTCUTS: { keys: string[]; label: string }[] = [
-  { keys: ["Ctrl", "Shift", "Space"], label: "Ask at cursor (anywhere)" },
-  { keys: ["Ctrl", "Shift", "Q"], label: "Toggle hover mode" },
+  { keys: ["Ctrl", "Shift", "Space"], label: "Kudu Lens: ask at cursor (anywhere)" },
+  { keys: ["Ctrl", "Shift", "Q"], label: "Toggle Kudu Lens" },
   { keys: ["Ctrl", "Shift", "S"], label: "Screenshot & analyze" },
-  { keys: ["Ctrl", "Shift", "Enter"], label: "Meeting copilot: what should I say?" },
-  { keys: ["Ctrl", "Shift", "\\"], label: "Show / hide the in-call copilot bar (anywhere)" },
+  { keys: ["Ctrl", "Shift", "Enter"], label: "Kudu Pilot: what should I say?" },
+  { keys: ["Ctrl", "Shift", "\\"], label: "Show / hide the Pilot bar (anywhere)" },
   { keys: ["Ctrl", "N"], label: "New chat" },
   { keys: ["Ctrl", "K"], label: "Search chats" },
   { keys: ["Ctrl", "B"], label: "Toggle sidebar" },
@@ -47,9 +48,11 @@ export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPa
   const [backendStatus, setBackendStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [mcpJson, setMcpJson] = useState("");
   const [mcpStatus, setMcpStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [appVersion, setAppVersion] = useState("0.0.0");
 
   useEffect(() => {
     getBackendUrl().then(setBackendUrlInput).catch(() => {});
+    getVersion().then(setAppVersion).catch(() => {});
     getMcpServers()
       .then((json) => {
         if (json && json.trim() !== "[]") setMcpJson(json);
@@ -158,7 +161,7 @@ export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPa
 
           <Section
             title="Browser link"
-            description="Pair the Thothai browser extension so the browser agent and Mouse AI can hand each other tasks."
+            description="Pair Kudu Connect, the browser extension, so the browser agent and Kudu Desktop can hand each other tasks."
           >
             <LinkCard agents={agents} />
           </Section>
@@ -178,7 +181,7 @@ export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPa
             </div>
           </Section>
 
-          <Section title="Backend" description="The Thothai server that runs the models. Leave as-is unless you self-host.">
+          <Section title="Backend" description="The Kudu Core server that runs the models. Leave as-is unless you self-host.">
             <input
               value={backendUrl}
               onChange={(e) => setBackendUrlInput(e.target.value)}
@@ -212,13 +215,13 @@ export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPa
 
           <Section title="About">
             <p className="text-[12.5px] text-text-muted">
-              Mouse AI v0.2.0 - Thothai for the Windows desktop. The ✕ button hides the window to the system tray; Mouse AI keeps
+              Kudu Desktop v{appVersion} - the assistant for your whole desktop. The ✕ button hides the window to the system tray; Kudu keeps
               listening for its shortcuts in the background.
             </p>
             <div>
               <Button onClick={() => quitApp().catch(() => {})} danger>
                 <Power size={13} />
-                Quit Mouse AI
+                Quit Kudu Desktop
               </Button>
             </div>
           </Section>

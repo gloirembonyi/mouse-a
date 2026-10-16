@@ -150,7 +150,7 @@ export function Sidebar(props: SidebarProps) {
         )}
         <NavRow
           icon={<Headphones size={15} />}
-          label="Meeting copilot"
+          label="Kudu Pilot"
           active={props.meetingActive}
           onClick={props.onOpenMeeting}
           hint={
@@ -178,7 +178,7 @@ export function Sidebar(props: SidebarProps) {
             ) : (
               <span
                 className={clsx("h-1.5 w-1.5 rounded-full", props.browserLinked ? "bg-success" : "bg-border-strong")}
-                title={props.browserLinked ? "Browser agent linked" : "Browser agent not connected"}
+                title={props.browserLinked ? "Kudu Connect linked" : "Kudu Connect not connected"}
               />
             )
           }
@@ -186,9 +186,9 @@ export function Sidebar(props: SidebarProps) {
         <NavRow icon={<Code2 size={15} />} label="Editor" active={props.ideDockOpen} onClick={props.onToggleIdeDock} />
         <NavRow
           icon={<MousePointer2 size={15} />}
-          label="Hover mode"
+          label="Kudu Lens"
           onClick={props.onToggleHoverMode}
-          hint={<Switch on={props.aiActive} onChange={props.onToggleHoverMode} label="Toggle hover mode (Ctrl+Shift+Q)" />}
+          hint={<Switch on={props.aiActive} onChange={props.onToggleHoverMode} label="Toggle Kudu Lens (Ctrl+Shift+Q)" />}
         />
       </div>
 
@@ -204,7 +204,7 @@ export function Sidebar(props: SidebarProps) {
                 title={s.running ? "Still working - click to watch" : "Finished - click to see the result"}
                 className="group flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left transition hover:bg-bg-hover"
               >
-                <BotAvatar kind="ghost" mood={s.running ? "working" : "happy"} size={20} />
+                <BotAvatar kind="kudu" mood={s.running ? "working" : "happy"} size={20} />
                 <span className="min-w-0 flex-1 truncate text-[13px] text-text-primary">{s.title || "New chat"}</span>
                 {s.needsYou ? (
                   <span className="flex-shrink-0 rounded-full bg-warning px-1.5 text-[10px] font-semibold text-black">Needs you</span>

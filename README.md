@@ -1,17 +1,17 @@
-# Mouse AI Desktop
+# Kudu Desktop
 
-A desktop AI assistant for Windows, macOS and Linux, powered by the **Thothai backend** (`../backend-Thothai`).
+Kudu's desktop AI assistant for Windows, macOS and Linux, running on **Kudu Core** (the backend, `../backend-Thothai`).
 Built with Tauri 2 (Rust + React/TypeScript). Point your mouse at anything on screen and ask the AI about it.
 
 ## Features
 
-- **Agent mode** - describe a task and Mouse AI actually does it on your PC: runs terminal
+- **Agent mode** - describe a task and Kudu actually does it on your PC: runs terminal
   commands, reads/writes/searches files, researches the web, and drives the mouse & keyboard
   (click, type, scroll) to operate apps and fill browser forms - reporting a live activity log
   and the result back in the window you asked from. Toggle **🤖 Agent** in the main window, or the
   **🤖** button in the cursor overlay.
 - **Ask at Cursor** - `Ctrl+Shift+Space` anywhere: an input panel opens at your cursor about whatever you're pointing at (screenshot + accessible element text are sent as context).
-- **Hover Mode** - `Ctrl+Shift+Q`: pause the mouse over anything and a floating **✦ Ask AI** pill appears.
+- **Kudu Lens** - `Ctrl+Shift+Q`: pause the mouse over anything and a floating **✦ Ask Kudu** pill (the Kudu Lens pill) appears.
 - **Screenshot Analyze** - `Ctrl+Shift+S`: captures around the cursor and analyzes it in the main window.
 - **MCP support** - add external [MCP](https://modelcontextprotocol.io) servers in Settings; their
   tools are added to the agent automatically.
@@ -33,7 +33,7 @@ refused automatically.
 ## Gemini API keys
 
 There is no Gemini key configuration in this app at all - every chat/agent call goes through the
-Thothai backend, which holds the only Gemini key(s) and rotates across up to 5 shared keys
+Kudu Core, which holds the only Gemini key(s) and rotates across up to 5 shared keys
 (`GEMINI_API_KEY`, `GEMINI_API_KEY_2`..`_5` on the backend) when one is rate-limited or overloaded.
 See `backend-Thothai/src/lib/gemini-request.js`. To raise the effective rate limit, add more shared
 keys on the backend deployment - there's nothing to configure here.
@@ -46,13 +46,13 @@ and attaches them to a draft release when you push a `v*` tag.
 
 | Feature | Windows | macOS | Linux |
 | --- | --- | --- | --- |
-| Chat, agent tools (files, shell, web, MCP), Ask AI overlay, bridge to the browser extension | yes | yes | yes |
+| Chat, agent tools (files, shell, web, MCP), Kudu Lens overlay, bridge to the browser extension | yes | yes | yes |
 | Shell for `run_command` / terminal | PowerShell 5.1 | bash (`$SHELL` in the terminal) | bash (`$SHELL` in the terminal) |
 | Mouse/keyboard control (click, type, press_key) | SendInput | CGEvent via `enigo` - grant **Accessibility** | X11 via `enigo` - needs an X11 session (Wayland: limited) |
-| Screenshots (`capture_screen`, Ask AI context) | yes | grant **Screen Recording** | yes (X11) |
+| Screenshots (`capture_screen`, Kudu Lens context) | yes | grant **Screen Recording** | yes (X11) |
 | Element-level tools (`find_elements`, `click_element`, `set_value`), window under the cursor | UI Automation | frontmost app/title only (`osascript`) | frontmost app/title only (`xdotool`) |
-| Meeting copilot: microphone | yes | grant **Microphone** | yes |
-| Meeting copilot: the other participants (system audio) | WASAPI loopback | needs a virtual device (e.g. BlackHole) selected as the input | needs a PulseAudio/PipeWire monitor selected as the input |
+| Kudu Pilot: microphone | yes | grant **Microphone** | yes |
+| Kudu Pilot: the other participants (system audio) | WASAPI loopback | needs a virtual device (e.g. BlackHole) selected as the input | needs a PulseAudio/PipeWire monitor selected as the input |
 | Hide windows from screen share | yes | yes | no (not supported by the platform) |
 | Global hotkeys, tray, Esc-to-stop | yes | yes | yes |
 
@@ -79,9 +79,9 @@ npm run dev        # = tauri dev (builds Rust, opens the app)
 npm run build      # = tauri build → src-tauri/target/release/bundle/
 ```
 
-## Connecting to the Thothai backend
+## Connecting to Kudu Core
 
-The app talks to the same backend as the Thothai browser extension. Default URL:
+The app talks to the same backend (Kudu Core) as the Kudu Connect browser extension. Default URL:
 `https://backend-thothai.vercel.app` - change it in **Settings → Backend URL**
 (use **Test connection** to verify), or set the `MOUSE_AI_BACKEND_URL` env var.
 Session + URL persist in `%APPDATA%/mouse-ai/config.json`.
@@ -110,6 +110,6 @@ A different OAuth client can be used via the `MOUSE_AI_GOOGLE_CLIENT_ID` env var
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+Shift+Space` | Ask at cursor (anywhere) |
-| `Ctrl+Shift+Q` | Toggle hover mode |
+| `Ctrl+Shift+Q` | Toggle Kudu Lens |
 | `Ctrl+Shift+S` | Screenshot & analyze |
 | `Esc` | Dismiss overlay |

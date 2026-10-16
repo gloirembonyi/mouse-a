@@ -1,9 +1,9 @@
-// Mouse AI Desktop - Read-only document viewers for the editor dock.
+// Kudu Desktop - Read-only document viewers for the editor dock.
 // Turns Office files into something the webview can render without shipping
 // a JS document stack: .docx -> a small HTML fragment (only tags emitted here,
 // every piece of document text escaped, so it is safe to inject), .pptx ->
 // per-slide text, spreadsheets (xlsx/xls/ods via calamine) -> a capped cell
-// grid. fs_extract_text gives "Ask AI about this file" a plain-text version
+// grid. fs_extract_text gives "Ask Kudu about this file" a plain-text version
 // of the same formats. Everything is local; nothing is sent anywhere here.
 use std::collections::HashMap;
 use std::io::{Read, Seek};
@@ -899,7 +899,7 @@ pub async fn doc_read_sheet(path: String, sheet: Option<String>) -> Result<Sheet
     .await
 }
 
-// ── Plain text for the chat ("Ask AI about this file") ─────────────
+// ── Plain text for the chat ("Ask Kudu about this file") ─────────────
 
 fn cap_text(mut s: String) -> String {
     if s.len() > MAX_TEXT_CHARS {

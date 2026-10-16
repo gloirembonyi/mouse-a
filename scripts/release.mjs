@@ -38,7 +38,7 @@ if (dry || sh("git status --porcelain")) {
 } else {
   console.log(`(version files already at ${version} - tagging HEAD)`);
 }
-run(`git tag -a v${version} -m "Mouse AI v${version}"`);
+run(`git tag -a v${version} -m "Kudu Desktop v${version}"`);
 run("git push origin main");
 run(`git push origin v${version}`);
 

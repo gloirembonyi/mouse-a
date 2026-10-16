@@ -1,3 +1,5 @@
+> Brand note (Oct 2026): the products are now Kudu / Kudu Connect / Kudu Desktop; names below are historical.
+
 # Thothai - Master Strategy, Architecture & Path to a $10B Company
 
 > **What this document is.** A single, grounded reference that treats the four repositories

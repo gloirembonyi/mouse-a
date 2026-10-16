@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - tool execution: dispatch plus the small tools that fit nowhere else.
+// Kudu Desktop agent - tool execution: dispatch plus the small tools that fit nowhere else.
 
 #[allow(unused_imports)]
 use crate::agent::*;
@@ -115,7 +115,7 @@ pub(crate) async fn clipboard_tool(write: Option<&str>) -> ToolOutcome {
 
 pub(crate) fn notify_tool(app: &AppHandle, args: &Value) -> ToolOutcome {
     use tauri_plugin_notification::NotificationExt;
-    let title = args.get("title").and_then(|p| p.as_str()).unwrap_or("Mouse AI");
+    let title = args.get("title").and_then(|p| p.as_str()).unwrap_or("Kudu");
     let message = args.get("message").and_then(|p| p.as_str()).unwrap_or("");
     match app.notification().builder().title(title).body(message).show() {
         Ok(()) => ToolOutcome::text("Notification shown."),

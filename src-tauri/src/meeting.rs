@@ -1,9 +1,9 @@
-// Mouse AI Desktop - Meeting & Interview Copilot
+// Kudu Desktop - Meeting & Interview Copilot
 //
 // Live transcription + context-aware assistance for meetings, interviews and
 // interview practice. Same split as the agent: this file does the *doing*
 // (audio capture, chunking, silence detection, prompt assembly) and the
-// Thothai backend does the *thinking* - every model call goes through
+// Kudu Core does the *thinking* - every model call goes through
 // /api/agent/step (no tools), so there is still no Gemini key in this app.
 //
 // Audio pipeline:
@@ -958,7 +958,7 @@ fn mode_label(mode: &str) -> &'static str {
 
 fn system_prompt(mode: &str, profile: &MeetingProfile) -> String {
     let mut s = format!(
-        "You are Thothai's meeting and interview copilot. The user is in {}. You see a rolling transcript \
+        "You are Kudu Pilot, the meeting and interview copilot. The user is in {}. You see a rolling transcript \
 (THEM = other participants, ME = the user, COACH = practice questions you asked, NOTE = text the user typed) \
 plus the user's own background notes.\n\n\
 Rules:\n\
@@ -1008,7 +1008,7 @@ then the reasoning. Keep it to what can be said in 30-60 seconds.\n");
 /// fetch is server-side and behind rate limits). HTML becomes plain text here.
 pub(crate) async fn fetch_page_direct(url: &str) -> Result<crate::backend::FetchedPage, String> {
     let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) MouseAI/1.0")
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) KuduDesktop/1.0")
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| e.to_string())?;
@@ -1260,7 +1260,7 @@ Be concrete and factual; never invent; keep the brief under 500 words.";
     Ok(profile)
 }
 
-/// Append text to one of the profile fields (Ask AI's "Add to meeting context").
+/// Append text to one of the profile fields (Ask Kudu's "Add to meeting context").
 #[tauri::command]
 pub fn meeting_context_append(app: AppHandle, field: String, text: String) -> Result<MeetingProfile, String> {
     let text = text.trim();
@@ -1688,11 +1688,11 @@ pub async fn meeting_save_notes(
 // A small always-on-top window (`copilot`, copilot.html) that floats over
 // the call - Assist / What should I say? / Follow-ups / Recap plus live
 // insights - so the user never has to leave the meeting app. Like the other
-// Mouse AI windows it is excluded from screen capture by default
+// Kudu Desktop windows it is excluded from screen capture by default
 // (WDA_EXCLUDEFROMCAPTURE), so it doesn't show up in a shared screen or a
 // recording; the user can turn that off.
 
-/// Hide Mouse AI's windows from screen share / recordings.
+/// Hide Kudu Desktop's windows from screen share / recordings.
 static STEALTH: AtomicBool = AtomicBool::new(true);
 /// The bar is centered at the top on its first show; after that it stays
 /// wherever the user dragged it.

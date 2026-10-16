@@ -1,8 +1,8 @@
-// Mouse AI Desktop - window preferences
+// Kudu Desktop - window preferences
 //
 // How the app sits on the desktop: whether the main window has a taskbar
 // button, and whether it opens on launch or starts quietly in the tray. With
-// both on, Mouse AI lives only behind the tray icon (the "^" overflow on the
+// both on, Kudu Desktop lives only behind the tray icon (the "^" overflow on the
 // taskbar) and its hotkeys.
 //
 // Its own file rather than config.json, for the same reason as the meeting
@@ -21,7 +21,7 @@ pub struct WindowPrefs {
     /// Don't open the main window at launch; run in the tray.
     #[serde(default)]
     pub start_in_background: bool,
-    /// Every Mouse AI window (main, Ask AI overlay, copilot bar, working banner) is
+    /// Every Kudu Desktop window (main, Ask Kudu overlay, copilot bar, working banner) is
     /// excluded from screen capture: shares and recordings never show it. On by
     /// default; the setting is remembered across launches.
     #[serde(default = "default_true")]

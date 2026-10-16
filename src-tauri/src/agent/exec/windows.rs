@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - screen, windows, app content, open.
+// Kudu Desktop agent - screen, windows, app content, open.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]

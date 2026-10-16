@@ -6,7 +6,7 @@ import { BrandMark, IconButton } from "../ui/primitives";
 interface TitleBarProps {
   aiActive: boolean;
   onToggleAi: () => void;
-  /** Shown centered, e.g. the open chat or "Meeting copilot". */
+  /** Shown centered, e.g. the open chat or "Kudu Pilot". */
   title?: string;
   sidebarOpen?: boolean;
   onOpenSidebar?: () => void;
@@ -38,11 +38,11 @@ export function TitleBar({
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
         <BrandMark size={18} />
         <span data-tauri-drag-region className="text-[13px] font-semibold tracking-[-0.01em]">
-          Mouse AI
+          Kudu Desktop
         </span>
         <button
           onClick={onToggleAi}
-          title={aiActive ? "Hover mode is on: pause your mouse on anything to ask. Click to turn off (Ctrl+Shift+Q)" : "Hover mode is off. Click to turn on (Ctrl+Shift+Q)"}
+          title={aiActive ? "Kudu Lens is on: pause your mouse on anything to ask. Click to turn off (Ctrl+Shift+Q)" : "Kudu Lens is off. Click to turn on (Ctrl+Shift+Q)"}
           className={clsx(
             "ml-1 flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-medium transition",
             aiActive

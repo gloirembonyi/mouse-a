@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - mouse and keyboard tools.
+// Kudu Desktop agent - mouse and keyboard tools.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]
@@ -7,7 +7,7 @@ use crate::agent::*;
 // ── Last target window ───────────────────────────────────────────
 // The window the agent last clicked or explicitly focused, kept so
 // type_text/press_key can hand keyboard focus BACK to it when focus has
-// drifted onto Mouse AI's own UI (typically: the user touched the overlay
+// drifted onto Kudu Desktop's own UI (typically: the user touched the overlay
 // mid-run to watch the log). Without this the step fails with a corrective
 // error and burns a whole model round-trip on something the app can fix
 // itself in milliseconds.
@@ -40,7 +40,7 @@ pub(crate) fn resolve_point(args: &Value, screen: &Option<ScreenMapping>) -> Res
 }
 
 /// The agent's own always-on-top overlay floats above whatever app it's
-/// driving - a click aimed "at the page" can actually land on Mouse AI's own
+/// driving - a click aimed "at the page" can actually land on Kudu Desktop's own
 /// panel, and typing right after the user pressed Enter often goes into Mouse
 /// AI's own input box. Both look like success to the model while doing nothing
 /// to the target app (the classic "I created the note!" when nothing saved).
@@ -51,7 +51,7 @@ pub(crate) async fn reject_own_window_at(x: i32, y: i32) -> Option<ToolOutcome> 
         .unwrap_or(false);
     if own {
         Some(ToolOutcome::err(
-            "those coordinates land on Mouse AI's OWN floating panel, which is covering that part \
+            "those coordinates land on Kudu Desktop's OWN floating panel, which is covering that part \
 of the target app - the action was NOT performed. Aim at a point on the target app itself; if the \
 element you need is hidden behind the panel, pick the same element elsewhere on screen, scroll it \
 into a visible spot, or focus_window the target app and work from a fresh screenshot.",
@@ -61,7 +61,7 @@ into a visible spot, or focus_window the target app and work from a fresh screen
     }
 }
 
-/// Keyboard-focus gate for type_text/press_key. When focus is on Mouse AI's
+/// Keyboard-focus gate for type_text/press_key. When focus is on Kudu Desktop's
 /// own window (the user touched the overlay mid-run), first try to hand focus
 /// back to the last window the agent clicked or focused - only if that isn't
 /// possible does the step fail with the corrective error. Returns an optional
@@ -82,14 +82,14 @@ pub(crate) async fn ensure_target_focused() -> Result<Option<String>, Box<ToolOu
                 .unwrap_or(true);
             if !still_own {
                 return Ok(Some(format!(
-                    "focus had drifted to Mouse AI's own window - auto-refocused \"{}\" first",
+                    "focus had drifted to Kudu Desktop's own window - auto-refocused \"{}\" first",
                     label
                 )));
             }
         }
     }
     Err(Box::new(ToolOutcome::err(
-        "keyboard focus is currently on Mouse AI's OWN window, so the keystrokes would go into \
+        "keyboard focus is currently on Kudu Desktop's OWN window, so the keystrokes would go into \
 the assistant's UI instead of the target app - nothing was typed. First click on the target app or \
 focus_window it, verify focus from the attached screenshot, then type.",
     )))

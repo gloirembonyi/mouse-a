@@ -135,18 +135,18 @@ export function ChatView(props: ChatViewProps) {
         : {
             icon: <FolderSearch size={15} />,
             title: "Add a project",
-            body: "Point Mouse AI at a folder you work in",
+            body: "Point Kudu at a folder you work in",
             run: props.onAddProject,
           },
       {
         icon: <Globe size={15} />,
-        title: "Research the web",
+        title: "Scout the web",
         body: "Latest news on a topic, with sources",
         run: () => chat.send("Search the web for today's most important AI news and summarize it with sources."),
       },
       {
         icon: <Headphones size={15} />,
-        title: "Meeting copilot",
+        title: "Kudu Pilot",
         body: "Live transcript and answers",
         run: props.onOpenMeeting,
       },
@@ -158,8 +158,8 @@ export function ChatView(props: ChatViewProps) {
         <div className="brand-wash scrollbar-thin flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-8">
           <div className="animate-fade-up flex w-full max-w-[760px] flex-col items-center">
             <div className="mb-5 flex items-end gap-1">
-              <BotAvatar kind="ghost" mood="idle" size={64} title="Mouse AI" />
-              <BotAvatar kind="flower" mood={props.browserLinked ? "idle" : "sleeping"} size={38} title={props.browserLinked ? "Browser agent linked" : "Browser agent not connected"} />
+              <BotAvatar kind="kudu" mood="idle" size={72} variant="body" title="Kudu" />
+              <BotAvatar kind="connect" mood={props.browserLinked ? "idle" : "sleeping"} size={38} title={props.browserLinked ? "Kudu Connect linked" : "Kudu Connect not connected"} />
             </div>
             <h1 className="mb-1.5 text-center text-[26px] font-semibold tracking-[-0.02em]">
               {activeProject ? (
@@ -200,7 +200,7 @@ export function ChatView(props: ChatViewProps) {
                 <Kbd>Ctrl</Kbd>
                 <Kbd>Shift</Kbd>
                 <Kbd>Q</Kbd>
-                hover mode
+                Kudu Lens
               </span>
               <span className="flex items-center gap-1.5">
                 <Kbd>Ctrl</Kbd>

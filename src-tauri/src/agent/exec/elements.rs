@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - element-level tools (find_elements / click_element / set_value).
+// Kudu Desktop agent - element-level tools (find_elements / click_element / set_value).
 //
 // The reliable way to drive a desktop app is by the names of its controls, not by
 // pixels on a screenshot. These tools walk the foreground window's UI Automation tree
@@ -46,8 +46,8 @@ pub(crate) async fn find_elements_tool(args: &Value) -> ToolOutcome {
         include_text: args.get("include_text").and_then(|v| v.as_bool()).unwrap_or(false),
     };
     let fg = foreground_context_async().await;
-    if fg.process_name.to_lowercase().contains("mouse-ai") || fg.window_title.to_lowercase().contains("mouse ai") {
-        return ToolOutcome::err("the foreground window is Mouse AI itself - focus_window the app you want to inspect first");
+    if fg.process_name.to_lowercase().contains("mouse-ai") || fg.window_title.to_lowercase().contains("kudu") {
+        return ToolOutcome::err("the foreground window is Kudu Desktop itself - focus_window the app you want to inspect first");
     }
     let query_text = q.text.clone();
     match tokio::task::spawn_blocking(move || uia::find_elements(&q)).await {

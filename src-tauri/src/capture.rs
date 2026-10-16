@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Screen Capture Module
+// Kudu Desktop - Screen Capture Module
 // Captures screen regions using the `screenshots` crate for cross-platform support.
 //
 // Coordinate contract: all public functions here take GLOBAL (virtual desktop)
@@ -105,7 +105,7 @@ pub fn capture_window_or_around_point(cx: i32, cy: i32, fallback_radius: u32) ->
 }
 
 /// Like `capture_window_or_around_point`, but for a remembered window handle
-/// first: the window itself is rendered (PrintWindow), so the always-on-top Ask AI
+/// first: the window itself is rendered (PrintWindow), so the always-on-top Ask Kudu
 /// panel sitting over it never ends up in the picture. 0 = no handle, use the point.
 pub fn capture_target_or_around_point(target: isize, cx: i32, cy: i32, fallback_radius: u32) -> Result<String, String> {
     if target != 0 {
@@ -287,7 +287,7 @@ const THUMB_MAX_SIDE: u32 = 360;
 
 /// Screen under the cursor for the meeting copilot: (model-quality base64
 /// JPEG without the data-URL prefix, small thumbnail data URL for the UI).
-/// Mouse AI's own windows are content-protected, so they never appear in it.
+/// Kudu Desktop's own windows are content-protected, so they never appear in it.
 pub fn capture_meeting_screen() -> Result<(String, String), String> {
     let (cx, cy) = crate::mouse::get_cursor_position();
     let image = screen_at(cx, cy)?

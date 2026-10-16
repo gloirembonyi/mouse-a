@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - tools: declarations, classes, outcome type.
+// Kudu Desktop agent - tools: declarations, classes, outcome type.
 
 mod decl;
 mod meta;

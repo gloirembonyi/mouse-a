@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for Mouse AI Desktop",
+  "description": "Capabilities for Kudu Desktop",
   "windows": [
     "main",
     "overlay",

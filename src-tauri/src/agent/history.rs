@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - conversation slimming and compaction.
+// Kudu Desktop agent - conversation slimming and compaction.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]

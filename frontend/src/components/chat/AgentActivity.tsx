@@ -201,13 +201,13 @@ function ConfirmPrompt({ message, requestId }: { message: string; requestId: str
   const [decided, setDecided] = useState<"allow" | "deny" | null>(null);
   const allowRef = useRef<HTMLButtonElement>(null);
 
-  // Rust phrases the app gate as: First action on "<window (process)>" this task - let Mouse AI control it?
+  // Rust phrases the app gate as: First action on "<window (process)>" this task - let Kudu control it?
   const appMatch = /^First action on "(.+)" this task/.exec(message);
-  const title = appMatch ? "Let Mouse AI control this app?" : "Approve this action?";
+  const title = appMatch ? "Let Kudu control this app?" : "Approve this action?";
   const subject = appMatch ? appMatch[1] : message;
   const hint = appMatch
     ? "It will click and type in this window for the rest of the task. Esc stops it at any time."
-    : "Mouse AI asks before anything it cannot undo.";
+    : "Kudu asks before anything it cannot undo.";
 
   const decide = async (approved: boolean) => {
     if (decided) return;

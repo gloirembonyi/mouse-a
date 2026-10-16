@@ -63,7 +63,7 @@ export function AgentsView({ agents, onClose }: AgentsViewProps) {
             {/* The team */}
             <div className="flex items-center gap-4">
               <TeamMember
-                name="Mouse AI"
+                name="Kudu Desktop"
                 role="Desktop agent"
                 kind={AGENT_BOT.desktop}
                 mood={fromBrowser ? "working" : toBrowser ? "thinking" : "idle"}
@@ -71,7 +71,7 @@ export function AgentsView({ agents, onClose }: AgentsViewProps) {
               />
               <LinkLine active={anyRunning} linked={linked} reverse={fromBrowser && !toBrowser} />
               <TeamMember
-                name="Thothai"
+                name="Kudu Connect"
                 role="Browser agent"
                 kind={AGENT_BOT.browser}
                 mood={!linked ? "sleeping" : toBrowser ? "working" : fromBrowser ? "thinking" : "idle"}
@@ -79,7 +79,7 @@ export function AgentsView({ agents, onClose }: AgentsViewProps) {
               />
             </div>
             <p className="mt-5 max-w-[460px] text-center text-[12.5px] text-text-muted">
-              Each agent hands the other what it does best - the browser agent does web work, Mouse AI does the
+              Each agent hands the other what it does best - Kudu Connect does web work, Kudu Desktop does the
               terminal, files and apps on your PC - and the watcher keeps an eye on every handoff.
             </p>
           </div>
@@ -103,11 +103,11 @@ export function AgentsView({ agents, onClose }: AgentsViewProps) {
             </div>
             {ordered.length === 0 ? (
               <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border-default px-6 py-8 text-center">
-                <BotAvatar kind="square" mood="sleeping" size={40} />
+                <BotAvatar kind="agent" mood="sleeping" size={44} variant="body" />
                 <p className="text-[12.5px] text-text-secondary">No handoffs yet</p>
                 <p className="max-w-[380px] text-[12px] text-text-muted">
                   Try “Find the cheapest flight to Kigali next Friday and save the options to a file on my Desktop” -
-                  the browser does the search, Mouse AI writes the file.
+                  the browser does the search, Kudu writes the file.
                 </p>
               </div>
             ) : (
@@ -135,7 +135,7 @@ function TeamMember({
 }) {
   return (
     <div className="flex w-[120px] flex-col items-center gap-2">
-      <BotAvatar kind={kind} mood={mood} size={64} />
+      <BotAvatar kind={kind} mood={mood} size={72} variant="body" />
       <div className="text-center">
         <div className="text-[13px] font-semibold">{name}</div>
         <div className="flex items-center justify-center gap-1 text-[11px] text-text-muted">
@@ -209,8 +209,8 @@ export function LinkCard({ agents }: { agents: ReturnType<typeof useAgents> }) {
             {state === "paired"
               ? "Both agents can hand each other tasks."
               : state === "unpaired"
-                ? "Mouse AI can send the browser web tasks. Pair to let the browser send tasks here too."
-                : "Open Chrome/Edge with the Thothai extension, then turn on “Connect to Mouse AI” in its Settings."}
+                ? "Kudu Desktop can send the browser web tasks. Pair to let the browser send tasks here too."
+                : "Open Chrome/Edge with the Kudu Connect extension, then turn on “Connect to Kudu Desktop” in its Settings."}
           </div>
         </div>
         <IconButton title="Refresh" size="sm" onClick={agents.refreshInfo}>
@@ -239,14 +239,14 @@ export function LinkCard({ agents }: { agents: ReturnType<typeof useAgents> }) {
         </button>
       </div>
       <p className="text-[11.5px] text-text-muted">
-        Paste it into the extension: popup → Settings → Mouse AI desktop link → Desktop pairing code.
+        Paste it into the extension: popup → Settings → Kudu Desktop link → Desktop pairing code.
       </p>
 
       <label className="flex cursor-pointer items-center justify-between gap-3 border-t border-border-soft pt-3">
         <span>
           <span className="block text-[12.5px] font-medium">Accept tasks from the browser agent</span>
           <span className="block text-[11.5px] text-text-muted">
-            Lets it ask Mouse AI to run commands, save files and use apps. Risky steps still ask you first.
+            Lets it ask Kudu to run commands, save files and use apps. Risky steps still ask you first.
           </span>
         </span>
         <Switch on={info.accept_tasks} onChange={agents.setAccept} label="Accept tasks from the browser agent" />
@@ -292,7 +292,7 @@ function TaskCard({ task, agents }: { task: LinkTask; agents: ReturnType<typeof 
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
-            <span className="text-[11px] text-text-muted">{fromBrowser ? "Browser asked Mouse AI" : "Mouse AI asked the browser"}</span>
+            <span className="text-[11px] text-text-muted">{fromBrowser ? "Browser asked Kudu" : "Kudu asked the browser"}</span>
             <span className={clsx("rounded-full px-2 py-px text-[10.5px] font-medium", style.className)}>{style.label}</span>
             <span className="ml-auto text-[11px] tabular-nums text-text-muted">{formatDuration(elapsed)}</span>
           </span>

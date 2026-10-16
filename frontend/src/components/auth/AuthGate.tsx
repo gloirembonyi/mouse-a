@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import { signInWithToken, startGoogleSignIn, withTimeout } from "../../lib/tauri";
-import { BrandMark } from "../ui/primitives";
+import { BotAvatar } from "../ui/BotAvatar";
 import type { User } from "../../lib/types";
 
 interface AuthGateProps {
@@ -59,22 +59,22 @@ export function AuthGate({ status, error, onRetry, onSignedIn }: AuthGateProps) 
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-10 text-center">
-      <BrandMark size={52} className="mb-1" />
-      <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Welcome to Mouse AI</h2>
+      <BotAvatar kind="kudu" mood="idle" size={84} variant="body" className="mb-1" />
+      <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Welcome to Kudu Desktop</h2>
       <p className="max-w-[300px] text-[13px] text-text-muted">
-        Your desktop AI assistant powered by Thothai. Hover, capture, and ask anything.
+        Your desktop AI assistant by Kudu. Hover, capture, and ask anything.
       </p>
 
       <div className="flex w-full max-w-[260px] flex-col gap-1.5">
         <Hint keys="Ctrl+Shift+Space" label="Ask at Cursor" />
-        <Hint keys="Ctrl+Shift+Q" label="Toggle Hover Mode" />
+        <Hint keys="Ctrl+Shift+Q" label="Toggle Kudu Lens" />
         <Hint keys="Ctrl+Shift+S" label="Screenshot Analyze" />
       </div>
 
       {status === "connecting" && (
         <div className="flex items-center gap-2 text-[12.5px]">
           <ThinkingOrb state="connecting" size={20} theme="auto" aria-label="Connecting" />
-          <span className="shimmer-text font-medium">Connecting to Thothai…</span>
+          <span className="shimmer-text font-medium">Connecting to Kudu Core…</span>
         </div>
       )}
       {error && <div className="w-full rounded-md bg-danger-soft px-3 py-2 text-xs text-danger">{error}</div>}

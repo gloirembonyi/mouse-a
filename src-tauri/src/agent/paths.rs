@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - scratch dir and path resolution (~, %VAR%, Documents\x).
+// Kudu Desktop agent - scratch dir and path resolution (~, %VAR%, Documents\x).
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]

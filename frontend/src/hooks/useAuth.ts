@@ -23,7 +23,7 @@ export function useAuth() {
       }
       throw new Error("Couldn't start a session.");
     } catch (err) {
-      setError(`Can't reach the Thothai backend: ${err instanceof Error ? err.message : String(err)}`);
+      setError(`Can't reach Kudu Core: ${err instanceof Error ? err.message : String(err)}`);
       setStatus("error");
     }
   }, []);

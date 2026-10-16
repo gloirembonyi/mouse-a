@@ -1,8 +1,8 @@
-// Mouse AI Desktop - Google OAuth loopback flow
+// Kudu Desktop - Google OAuth loopback flow
 // Opens the user's default browser on Google's OAuth consent screen (implicit
-// flow, same web client the Thothai extension uses) and catches the redirect
+// flow, same web client the Kudu Connect extension uses) and catches the redirect
 // on a tiny localhost HTTP listener. The access token never leaves the machine
-// except to be exchanged with the Thothai backend for a session.
+// except to be exchanged with Kudu Core for a session.
 //
 // One-time Google Cloud Console setup (same OAuth web client as the extension):
 // add  http://127.0.0.1:8917/callback  to its Authorized redirect URIs.
@@ -213,7 +213,7 @@ fn urldecode(s: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
-const CALLBACK_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Mouse AI - Signing in…</title></head>
+const CALLBACK_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Kudu Desktop - Signing in…</title></head>
 <body style="font-family:system-ui;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh">
 <p>Finishing sign-in…</p>
 <script>
@@ -223,9 +223,9 @@ const CALLBACK_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8">
 </script>
 </body></html>"#;
 
-const SUCCESS_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Mouse AI - Signed in</title></head>
+const SUCCESS_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Kudu Desktop - Signed in</title></head>
 <body style="font-family:system-ui;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column">
-<h2>✅ Signed in to Mouse AI</h2><p>You can close this tab and return to the app.</p>
+<h2>✅ Signed in to Kudu Desktop</h2><p>You can close this tab and return to the app.</p>
 </body></html>"#;
 
 fn error_page(err: &str) -> String {
@@ -235,9 +235,9 @@ fn error_page(err: &str) -> String {
         .take(200)
         .collect();
     format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"><title>Mouse AI - Sign-in failed</title></head>
+        r#"<!doctype html><html><head><meta charset="utf-8"><title>Kudu Desktop - Sign-in failed</title></head>
 <body style="font-family:system-ui;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column">
-<h2>⚠️ Sign-in failed</h2><p>{}</p><p>Return to the Mouse AI app and try again.</p>
+<h2>⚠️ Sign-in failed</h2><p>{}</p><p>Return to Kudu Desktop and try again.</p>
 </body></html>"#,
         safe
     )

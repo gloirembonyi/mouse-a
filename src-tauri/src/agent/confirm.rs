@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - human confirmations and the per-app allow/deny gate.
+// Kudu Desktop agent - human confirmations and the per-app allow/deny gate.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]
@@ -102,13 +102,13 @@ pub(crate) async fn guard_target_app(
     } else {
         format!("{} ({})", window_title, process_name)
     };
-    let message = format!("First action on \"{}\" this task - let Mouse AI control it?", label);
+    let message = format!("First action on \"{}\" this task - let Kudu control it?", label);
     if confirm(app, source, &message).await {
         trusted.insert(key);
         Ok(())
     } else {
         Err(format!(
-            "Denied: the user has not approved Mouse AI controlling \"{}\" for this task.",
+            "Denied: the user has not approved Kudu controlling \"{}\" for this task.",
             process_name
         ))
     }

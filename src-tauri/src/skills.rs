@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Skills + real Word documents.
+// Kudu Desktop - Skills + real Word documents.
 //
 // Skills are playbooks the agent loads on demand (the same idea as Claude Code's
 // skills / claw-code's Skill tool): the system prompt only lists each skill's name
@@ -99,7 +99,7 @@ or write_file the CSV text. Default location: Documents.\n\
     ),
     (
         "browser-teamwork",
-        "Split a job between this PC and the Thothai browser agent (web + local in one task)",
+        "Split a job between this PC and Kudu Connect, the browser agent (web + local in one task)",
         "1. Web parts (sites, forms, logged-in pages, extraction) → delegate_to_browser with a self-contained \
 instruction, the URL, what 'done' means, and any data it needs in `context` (it can't read the PC).\n\
 2. Independent parts run in parallel: delegate_to_browser(background=true), keep working locally, then \

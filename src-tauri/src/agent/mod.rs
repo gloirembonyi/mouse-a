@@ -1,6 +1,6 @@
-// Mouse AI Desktop - Local Agent Loop
+// Kudu Desktop - Local Agent Loop
 //
-// Turns Mouse AI from "answer one question about the screen" into an agent that
+// Turns Kudu Desktop from "answer one question about the screen" into an agent that
 // can DO things: run commands, read/write files, research the web, and drive the
 // UI (click/type) to complete a whole task the user described - then report back
 // to whichever window they asked from.
@@ -110,7 +110,7 @@ pub async fn run_task(
     autonomous: bool,
     conversation_id: Option<String>,
     user_image_data_url: Option<String>,
-    // Window the request was about (the Ask AI pill's target); 0 = the point.
+    // Window the request was about (the Ask Kudu pill's target); 0 = the point.
     target_hwnd: isize,
 ) -> Result<String, String> {
     // Runs can overlap (a browser-requested task alongside a chat task), and
@@ -247,11 +247,11 @@ continue from where it left off - do not redo steps that are already complete.\n
     emit(app, source, "plan", "Understanding your request…");
 
     // While the agent runs, the overlay must never seize keyboard focus - the
-    // user watching/scrolling the live log used to pull focus onto Mouse AI's
+    // user watching/scrolling the live log used to pull focus onto Kudu Desktop's
     // own window, sending the agent's keystrokes into its own UI instead of
     // the target app. WS_EX_NOACTIVATE keeps the overlay visible and clickable
     // (Stop still works) but unfocusable until the run ends.
-    let _ = tokio::task::spawn_blocking(|| mouse::set_own_window_no_activate("mouse ai overlay", true)).await;
+    let _ = tokio::task::spawn_blocking(|| mouse::set_own_window_no_activate("kudu lens", true)).await;
 
     // Drive the loop, then always shut the MCP servers down (whatever the outcome).
     // The working banner: visible for the whole run, gone the moment it ends.
@@ -267,6 +267,6 @@ continue from where it left off - do not redo steps that are already complete.\n
         Ok(_) if cancel_requested(source) => {}
         _ => checkpoint::clear(source),
     }
-    let _ = tokio::task::spawn_blocking(|| mouse::set_own_window_no_activate("mouse ai overlay", false)).await;
+    let _ = tokio::task::spawn_blocking(|| mouse::set_own_window_no_activate("kudu lens", false)).await;
     result
 }

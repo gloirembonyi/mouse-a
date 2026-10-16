@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - run checkpoints, so "continue" actually continues.
+// Kudu Desktop agent - run checkpoints, so "continue" actually continues.
 //
 // Every tool round saves the ledger (plan, notes, step log, data) to
 // %APPDATA%/mouse-ai/runs/<source>.json. When the next task from the same source is a

@@ -1,4 +1,4 @@
-// Mouse AI Desktop - in-call copilot: hands-on tools.
+// Kudu Desktop - in-call copilot: hands-on tools.
 //
 // meeting.rs listens and answers; this module lets the copilot bar *act*
 // while the user is presenting, without anything showing up on the shared
@@ -154,7 +154,7 @@ pub async fn copilot_agent_run(
     let point: Option<(i32, i32)> = None;
     let (cx, cy) = point.unwrap_or_else(crate::mouse::get_cursor_position);
     let text = crate::agent::run_task(&app, &state.backend, &full, cx, cy, AGENT_SOURCE, true, None, None, 0).await?;
-    let summary = if task.trim().is_empty() { "Copilot: fix my demo" } else { task.trim() };
+    let summary = if task.trim().is_empty() { "Kudu Pilot: fix my demo" } else { task.trim() };
     let _ = state.backend.log_agent_run(None, summary, &text).await;
     Ok(CopilotAgentResult { text })
 }

@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - ToolOutcome.
+// Kudu Desktop agent - ToolOutcome.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]

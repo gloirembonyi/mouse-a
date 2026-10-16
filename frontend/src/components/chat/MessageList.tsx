@@ -103,7 +103,7 @@ function MessageItem({ message, latest }: { message: UiMessage; latest: boolean 
   if (message.kind === "thinking") {
     return (
       <div className="animate-fade-up flex items-center gap-3">
-        <BotAvatar kind="ghost" mood="thinking" size={28} title="Mouse AI is thinking" />
+        <BotAvatar kind="kudu" mood="thinking" size={28} title="Kudu is thinking" />
         <span className="shimmer-text text-[13.5px] font-medium">Thinking…</span>
       </div>
     );
@@ -113,7 +113,7 @@ function MessageItem({ message, latest }: { message: UiMessage; latest: boolean 
     return (
       <div className="animate-fade-up flex min-w-0 gap-3">
         <BotAvatar
-          kind="ghost"
+          kind="kudu"
           mood={message.status === "running" ? "working" : message.status === "failed" ? "error" : "still"}
           size={28}
           className="mt-1.5"
@@ -137,7 +137,7 @@ function AssistantMessage({ content, latest }: { content: string; latest: boolea
   };
   return (
     <div className="animate-fade-up group flex min-w-0 gap-3">
-      <BotAvatar kind="ghost" mood={latest ? "idle" : "still"} size={28} className="mt-0.5" />
+      <BotAvatar kind="kudu" mood={latest ? "idle" : "still"} size={28} className="mt-0.5" />
       <div className="min-w-0 flex-1">
       <div className="text-[14px] leading-[1.7] text-text-primary">
         <Markdown>{content}</Markdown>

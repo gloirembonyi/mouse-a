@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - tool classes, failure detection, recovery hints, labels.
+// Kudu Desktop agent - tool classes, failure detection, recovery hints, labels.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]

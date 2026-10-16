@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Computer-use input synthesis
+// Kudu Desktop - Computer-use input synthesis
 //
 // Lets the agent physically drive the machine: move+click the mouse, type text,
 // and press key combos - via the Win32 SendInput API. This is what makes the
@@ -299,7 +299,7 @@ mod unix {
     fn with(f: impl FnOnce(&mut Enigo) -> Result<(), enigo::InputError>) -> Result<(), String> {
         let mut e = Enigo::new(&Settings::default()).map_err(|e| {
             format!(
-                "input unavailable: {} (on macOS allow Mouse AI under System Settings > Privacy & Security > Accessibility; on Linux an X11 session is required)",
+                "input unavailable: {} (on macOS allow Kudu Desktop under System Settings > Privacy & Security > Accessibility; on Linux an X11 session is required)",
                 e
             )
         })?;

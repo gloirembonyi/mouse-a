@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - the local fallback system prompt and opening-turn context.
+// Kudu Desktop agent - the local fallback system prompt and opening-turn context.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]
@@ -11,7 +11,7 @@ use crate::agent::*;
 // looking (the worst one, because the user believes it).
 pub(crate) fn system_prompt(autonomous: bool) -> String {
     let mut s = [
-        "You are Mouse AI, an autonomous agent running on the user's Windows PC. You complete real jobs by",
+        "You are Kudu, the desktop agent running on the user's Windows PC. You complete real jobs by",
         "calling tools: shell commands, file reads/edits, web research, the browser extension, and mouse/",
         "keyboard control. Keep going until the job is actually done and verified - not until you've tried once.",
         "",
@@ -138,7 +138,7 @@ destructive operations (mass deletion, disk formatting, shutting down the machin
 /// Build the initial context block describing what's on screen right now, so
 /// "this file / this window / what I'm looking at" resolves correctly.
 pub(crate) fn initial_context_block(cx: i32, cy: i32, target_hwnd: isize) -> String {
-    // The window the request was about. With the Ask AI panel open, the point under
+    // The window the request was about. With the Ask Kudu panel open, the point under
     // the cursor is the panel itself (our own process) - never describe that.
     let own_under_cursor = mouse::is_own_process_at(cx, cy);
     let ctx = if target_hwnd != 0 {
@@ -277,7 +277,7 @@ read_app_content on the browser window) and call watch_video with it FIRST. Neve
     }
 }
 
-/// `<project>/.mouse-ai/notes.md`: what the user saved for this project with Ask AI
+/// `<project>/.mouse-ai/notes.md`: what the user saved for this project with Ask Kudu
 /// (facts they corrected, data they gathered). Goes into the first turn so the model
 /// starts with it instead of rediscovering or contradicting it.
 pub(crate) fn project_notes_block(project: &str) -> Option<String> {

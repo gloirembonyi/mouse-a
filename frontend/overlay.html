@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mouse AI Overlay</title>
+  <title>Kudu Lens</title>
   <!-- Kept as a plain static page (not part of the React rewrite) - it's a
        small, already-working hover popup; ported verbatim from src/overlay.*
        as a second Vite entry point via public/overlay.css + public/overlay.js. -->
@@ -13,9 +13,9 @@
   <div id="root">
     <button id="pill" hidden>
       <span class="pill-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4.5 11.2C4.5 6.9 7.9 3.5 12 3.5s7.5 3.4 7.5 7.7v7.6c0 .7-.8 1.1-1.3.6l-1.2-1a.8.8 0 0 0-1 0l-1.5 1.2a.8.8 0 0 1-1 0l-1.5-1.2a.8.8 0 0 0-1 0l-1.5 1.2a.8.8 0 0 1-1 0L7 18.4a.8.8 0 0 0-1 0l-.2.2c-.5.4-1.3.1-1.3-.6z"/><ellipse cx="9.7" cy="11" rx="1.15" ry="1.45" fill="#12223a"/><ellipse cx="14.3" cy="11" rx="1.15" ry="1.45" fill="#12223a"/></svg>
+        <!-- kudu-glyph:begin --><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="24" height="24" focusable="false" aria-hidden="true"><g class="tm-body"><g class="tm-head"><g class="tm-horns"><g class="tm-horn tm-horn-l"><path d="M43 36C41 29 32 27 32 19 32 12 41 12 39 5" style="fill:none;stroke:currentColor;stroke-width:7.5;stroke-linecap:round;stroke-linejoin:round"/></g><g class="tm-horn tm-horn-r"><path d="M57 36C59 29 68 27 68 19 68 12 59 12 61 5" style="fill:none;stroke:currentColor;stroke-width:7.5;stroke-linecap:round;stroke-linejoin:round"/></g></g><g class="tm-ear tm-ear-l"><path d="M34 46C22 42 8 30 11 16 22 15 36 27 38 44Z" style="fill:currentColor;"/></g><g class="tm-ear tm-ear-r"><path d="M66 46C78 42 92 30 89 16 78 15 64 27 62 44Z" style="fill:currentColor;"/></g><g class="tm-face"><path d="M30 44c0-8 9-13 20-13s20 5 20 13c0 12-6 26-10 36-3 8-6 13-10 13s-7-5-10-13C36 70 30 56 30 44z" style="fill:currentColor;"/></g><g class="tm-eyes-slot"><g class="tm-eyes" style="fill:#1d2440;stroke:none"><ellipse cx="38.5" cy="50" rx="5.08" ry="6.2"/><ellipse cx="61.5" cy="50" rx="5.08" ry="6.2"/></g></g><g class="tm-nose"><ellipse cx="50" cy="86" rx="4.2" ry="2.8" style="fill:#1d2440;opacity:1"/></g></g></g></svg><!-- kudu-glyph:end -->
       </span>
-      <span class="pill-label">Ask AI</span>
+      <span class="pill-label">Ask Kudu</span>
       <span id="pill-context"></span>
       <span class="pill-kbd" aria-hidden="true">↵</span>
     </button>
@@ -23,19 +23,19 @@
     <div id="panel" hidden>
       <header id="panel-header" data-tauri-drag-region>
         <span class="panel-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4.5 11.2C4.5 6.9 7.9 3.5 12 3.5s7.5 3.4 7.5 7.7v7.6c0 .7-.8 1.1-1.3.6l-1.2-1a.8.8 0 0 0-1 0l-1.5 1.2a.8.8 0 0 1-1 0l-1.5-1.2a.8.8 0 0 0-1 0l-1.5 1.2a.8.8 0 0 1-1 0L7 18.4a.8.8 0 0 0-1 0l-.2.2c-.5.4-1.3.1-1.3-.6z"/><ellipse cx="9.7" cy="11" rx="1.15" ry="1.45" fill="#12223a"/><ellipse cx="14.3" cy="11" rx="1.15" ry="1.45" fill="#12223a"/></svg>
+          <!-- kudu-glyph:begin --><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="24" height="24" focusable="false" aria-hidden="true"><g class="tm-body"><g class="tm-head"><g class="tm-horns"><g class="tm-horn tm-horn-l"><path d="M43 36C41 29 32 27 32 19 32 12 41 12 39 5" style="fill:none;stroke:currentColor;stroke-width:7.5;stroke-linecap:round;stroke-linejoin:round"/></g><g class="tm-horn tm-horn-r"><path d="M57 36C59 29 68 27 68 19 68 12 59 12 61 5" style="fill:none;stroke:currentColor;stroke-width:7.5;stroke-linecap:round;stroke-linejoin:round"/></g></g><g class="tm-ear tm-ear-l"><path d="M34 46C22 42 8 30 11 16 22 15 36 27 38 44Z" style="fill:currentColor;"/></g><g class="tm-ear tm-ear-r"><path d="M66 46C78 42 92 30 89 16 78 15 64 27 62 44Z" style="fill:currentColor;"/></g><g class="tm-face"><path d="M30 44c0-8 9-13 20-13s20 5 20 13c0 12-6 26-10 36-3 8-6 13-10 13s-7-5-10-13C36 70 30 56 30 44z" style="fill:currentColor;"/></g><g class="tm-eyes-slot"><g class="tm-eyes" style="fill:#1d2440;stroke:none"><ellipse cx="38.5" cy="50" rx="5.08" ry="6.2"/><ellipse cx="61.5" cy="50" rx="5.08" ry="6.2"/></g></g><g class="tm-nose"><ellipse cx="50" cy="86" rx="4.2" ry="2.8" style="fill:#1d2440;opacity:1"/></g></g></g></svg><!-- kudu-glyph:end -->
         </span>
         <div class="panel-titles" data-tauri-drag-region>
-          <span id="panel-app">Mouse AI</span>
+          <span id="panel-app">Kudu</span>
           <span id="panel-element"></span>
         </div>
         <button id="btn-history" class="ghost-btn" title="Chat history" aria-label="Chat history">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
         </button>
-        <button id="btn-agent" class="ghost-btn" title="Agent mode: let Mouse AI act on your PC to do the task" aria-label="Agent mode">
+        <button id="btn-agent" class="ghost-btn" title="Agent mode: let Kudu act on your PC to do the task" aria-label="Agent mode">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5 13.9 8l5.6 1.9-5.6 1.9L12 17.5 10.1 11.8 4.5 9.9 10.1 8 12 2.5Z"/><path d="M19 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>
         </button>
-        <button id="btn-open-app" class="ghost-btn" title="Open Mouse AI window" aria-label="Open main window">
+        <button id="btn-open-app" class="ghost-btn" title="Open Kudu Desktop window" aria-label="Open main window">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-8 8"/><path d="M3 21l8-8"/></svg>
         </button>
         <button id="btn-close" class="ghost-btn" title="Close (Esc)" aria-label="Close">
@@ -47,7 +47,7 @@
            mouse/keyboard mid-run. The panel also gets an animated border. -->
       <div id="working-indicator" hidden>
         <span class="working-dot"></span>
-        <span class="working-text">Mouse AI is working - please don't move the mouse or type</span>
+        <span class="working-text">Kudu is working - please don't move the mouse or type</span>
       </div>
 
       <!-- Chat history browser (populated on demand from the backend). -->
@@ -82,7 +82,7 @@
         <button id="btn-mention" title="Attach context: @screen, @window, @clipboard, @file, @web" aria-label="Attach context">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>
         </button>
-        <input id="question" type="text" placeholder="Ask anything or tell Mouse AI what to do…  @ to attach" autocomplete="off" spellcheck="false" />
+        <input id="question" type="text" placeholder="Ask anything or tell Kudu what to do…  @ to attach" autocomplete="off" spellcheck="false" />
         <button id="btn-analyze" title="Explain what's here" aria-label="Explain what's here">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>

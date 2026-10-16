@@ -1,4 +1,4 @@
-// Mouse AI Desktop - MCP (Model Context Protocol) client
+// Kudu Desktop - MCP (Model Context Protocol) client
 //
 // Lets the agent use tools from external MCP servers (filesystem, GitHub, Slack,
 // Notion, databases, …) alongside its built-in tools. Two transports:

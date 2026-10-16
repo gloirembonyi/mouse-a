@@ -10,7 +10,7 @@ import {
   type WindowPrefs,
 } from "../../lib/tauri";
 
-/** How Mouse AI sits on the desktop: taskbar button, launch behavior and
+/** How Kudu Desktop sits on the desktop: taskbar button, launch behavior and
  *  screen-share visibility. The tray menu flips the same switches. */
 export function DesktopSection() {
   const [prefs, setPrefs] = useState<WindowPrefs>({ hide_from_taskbar: false, start_in_background: false, hide_from_screen_share: true });
@@ -43,12 +43,12 @@ export function DesktopSection() {
       <div>
         <h3 className="text-[13.5px] font-semibold">Desktop</h3>
         <p className="mt-0.5 text-[12px] text-text-muted">
-          Mouse AI keeps running in the tray (the ^ arrow next to the clock) when its window is closed.
+          Kudu Desktop keeps running in the tray (the ^ arrow next to the clock) when its window is closed.
         </p>
       </div>
       <Row
         title="Show in taskbar"
-        hint="Off: no taskbar button - open Mouse AI from the tray icon or a shortcut."
+        hint="Off: no taskbar button - open Kudu Desktop from the tray icon or a shortcut."
         on={!prefs.hide_from_taskbar}
         onChange={(v) => update({ hide_from_taskbar: !v })}
       />
@@ -60,7 +60,7 @@ export function DesktopSection() {
       />
       <Row
         title="Hide from screen share"
-        hint="No Mouse AI window (this one, the Ask AI overlay, the copilot bar, the working banner) appears in shared screens or recordings. Remembered across launches."
+        hint="No Kudu Desktop window (this one, the Kudu Lens overlay, the Pilot bar, the working banner) appears in shared screens or recordings. Remembered across launches."
         on={stealth}
         onChange={(v) => void stealthSet(v).then(setStealth)}
       />

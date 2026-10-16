@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - the run loop (observe -> decide -> act -> verify) and progress tracking.
+// Kudu Desktop agent - the run loop (observe -> decide -> act -> verify) and progress tracking.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]
@@ -269,7 +269,7 @@ pub(crate) async fn drive_loop(
     // end of the run), so the UI can show "Explored 12 files, 3 searches"
     // instead of 12 separate raw tool-call rows.
     let mut phase = PhaseCounts::default();
-    // Processes the user has already approved Mouse AI controlling THIS run -
+    // Processes the user has already approved Kudu Desktop controlling THIS run -
     // see `guard_target_app`. Empty at the start of every task, never persisted.
     let mut trusted_apps: HashSet<String> = HashSet::new();
     let mut iteration: usize = 0;
@@ -997,6 +997,7 @@ mod agent_loop_tests {
         assert!(is_retryable_step_error("Agent step failed (408): timeout"));
         assert!(!is_retryable_step_error("Agent step failed (400): bad request"));
         assert!(!is_retryable_step_error("Agent step failed (429): You exceeded your current quota"));
+        assert!(is_retryable_step_error("Can't reach Kudu Core. Check your internet…"));
         assert!(is_retryable_step_error("Can't reach the Thothai backend. Check your internet…"));
         assert!(is_retryable_step_error("Network error: error sending request for url"));
         assert!(!is_retryable_step_error("Session expired — please try again."));

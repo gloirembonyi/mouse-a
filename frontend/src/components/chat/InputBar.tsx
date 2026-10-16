@@ -36,7 +36,7 @@ interface InputBarProps {
   activeProject: Project | null;
   onSelectProject: (path: string | null) => void;
   onAddProject: () => void;
-  /** Attachments pushed in from elsewhere (e.g. the editor's "Ask AI"). */
+  /** Attachments pushed in from elsewhere (e.g. the editor's "Ask Kudu"). */
   injected: Attachment[];
   onInjectedConsumed: () => void;
 }
@@ -273,8 +273,8 @@ export function InputBar({
             placeholder={
               agentMode
                 ? activeProject
-                  ? `Ask Mouse AI to do anything in ${activeProject.name}…`
-                  : "Ask Mouse AI to do anything…"
+                  ? `Ask Kudu to do anything in ${activeProject.name}…`
+                  : "Ask Kudu to do anything…"
                 : "Ask anything…"
             }
             className="max-h-[220px] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[14px] leading-relaxed text-text-primary outline-none placeholder:text-text-muted"

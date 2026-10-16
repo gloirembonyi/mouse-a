@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Agent link: pairing, the shared task board, and the watcher.
+// Kudu Desktop - Agent link: pairing, the shared task board, and the watcher.
 //
 // bridge.rs is the transport (the localhost WebSocket to the browser
 // extension). This module is what turns it into ONE system of two agents:
@@ -263,11 +263,11 @@ pub fn handle_desktop_task(v: &Value, paired: bool) {
         bridge().send_json(json!({ "v": 1, "type": "desktop_result", "id": id, "ok": false, "error": msg }));
     };
     if !paired {
-        reject("This browser isn't paired with Mouse AI. Copy the pairing code from Mouse AI → Settings → Browser link into the extension's settings.");
+        reject("This browser isn't paired with Kudu Desktop. Copy the pairing code from Kudu Desktop → Settings → Browser link into the extension's settings.");
         return;
     }
     if !accepts_tasks() {
-        reject("Mouse AI is set to not accept tasks from the browser (Settings → Browser link).");
+        reject("Kudu Desktop is set to not accept tasks from the browser (Settings → Browser link).");
         return;
     }
     if task.is_empty() {
@@ -301,7 +301,7 @@ pub fn handle_desktop_task(v: &Value, paired: bool) {
         task_step(&id, "plan", "Starting on the desktop");
         let source = format!("browser:{}", id);
         let mut prompt = String::from(
-            "[This task was handed to you by the Thothai BROWSER agent, which is working on a larger job in the user's browser. \
+            "[This task was handed to you by Kudu Connect, the browser agent, which is working on a larger job in the user's browser. \
 Do the PC-side part (terminal, files, folders, apps), then answer with a concise result the browser agent can use \
 (paths written, command output, values found). Do not delegate back to the browser.]\n\n",
         );

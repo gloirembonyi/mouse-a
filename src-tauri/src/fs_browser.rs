@@ -1,4 +1,4 @@
-// Mouse AI Desktop - File browser + editor backend commands.
+// Kudu Desktop - File browser + editor backend commands.
 // Backs the IDE dock's Editor tab: a lazy-loading file tree plus read/write
 // for the CodeMirror pane. Deliberately separate from agent.rs's read_file/
 // write_file/list_directory tool functions - those take raw JSON tool-call

@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - model-call resilience.
+// Kudu Desktop agent - model-call resilience.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]
@@ -64,6 +64,7 @@ pub(crate) fn is_retryable_step_error(err: &str) -> bool {
         || [
             "network error",
             "reach the thothai backend",
+            "reach kudu core",
             "econnreset",
             "connection",
             "timed out",

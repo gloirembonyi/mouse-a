@@ -1,4 +1,4 @@
-// Mouse AI "working" banner (shield.html). Mirrors agent-progress for whichever run is
+// Kudu Desktop "working" banner (shield.html). Mirrors agent-progress for whichever run is
 // driving the screen, shows the current step, and offers Stop. Shown/hidden by the Rust
 // side (shield.rs) around every local agent run.
 (function () {

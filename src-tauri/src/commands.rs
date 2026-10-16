@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Tauri IPC Commands
+// Kudu Desktop - Tauri IPC Commands
 // These are the commands exposed to the JavaScript frontend via Tauri's invoke system.
 
 use crate::backend::{BackendClient, ChatRequest};
@@ -183,7 +183,7 @@ pub fn ask_at_cursor(app: AppHandle) {
 
 // The header ✕ / window close intentionally only hides to the tray (see
 // lib.rs's on_window_event) - this is the one explicit way to actually exit,
-// surfaced as a "Quit Mouse AI" button in Settings since the tray menu isn't
+// surfaced as a "Quit Kudu Desktop" button in Settings since the tray menu isn't
 // discoverable from inside the app itself.
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
@@ -433,7 +433,7 @@ fn raise_main_window(app: &AppHandle) {
     }
 }
 
-/// "Continue in Mouse AI": bring the main window up and open the conversation
+/// "Continue in Kudu Desktop": bring the main window up and open the conversation
 /// the overlay was just talking in, so the thread continues there instead of
 /// landing the user in whatever chat the window last showed.
 #[tauri::command]
@@ -453,12 +453,12 @@ pub async fn open_in_main(
     Ok(())
 }
 
-/// Where Ask AI's "Save to project" goes: a markdown file inside the project the
+/// Where Ask Kudu's "Save to project" goes: a markdown file inside the project the
 /// agent can read (prompt.rs `project_notes_block` puts it in every run's first turn).
 fn project_notes_path(project: &str) -> Result<std::path::PathBuf, String> {
     let dir = std::path::Path::new(project.trim());
     if project.trim().is_empty() || !dir.is_dir() {
-        return Err("Pick a project folder in Mouse AI first (Projects in the sidebar).".to_string());
+        return Err("Pick a project folder in Kudu Desktop first (Projects in the sidebar).".to_string());
     }
     Ok(dir.join(".mouse-ai").join("notes.md"))
 }
@@ -477,7 +477,7 @@ pub async fn project_notes_append(project: String, title: String, text: String) 
         let fresh = !path.exists();
         let mut body = String::new();
         if fresh {
-            body.push_str("# Mouse AI notes\n\nThings saved with the Ask AI button for this project. The agent reads this file.\n");
+            body.push_str("# Kudu notes\n\nThings saved with the Ask Kudu button for this project. The agent reads this file.\n");
         }
         let title = title.trim();
         body.push_str(&format!(
@@ -925,7 +925,7 @@ pub async fn ensure_session(state: State<'_, AppState>) -> Result<AuthState, Str
 
 /// Full browser-based Google sign-in: opens the consent screen in the default
 /// browser, catches the redirect on a localhost listener, then exchanges the
-/// access token for a Thothai backend session.
+/// access token for a Kudu Core session.
 #[tauri::command]
 pub async fn start_google_signin(
     app: AppHandle,

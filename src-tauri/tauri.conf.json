@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Mouse AI",
+  "productName": "Kudu Desktop",
   "version": "0.1.0",
   "identifier": "com.thothai.mouseai",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Mouse AI",
+        "title": "Kudu Desktop",
         "width": 960,
         "height": 700,
         "resizable": true,
@@ -30,7 +30,7 @@
       {
         "label": "overlay",
         "url": "overlay.html",
-        "title": "Mouse AI Overlay",
+        "title": "Kudu Lens",
         "width": 380,
         "height": 64,
         "resizable": true,
@@ -50,7 +50,7 @@
       {
         "label": "copilot",
         "url": "copilot.html",
-        "title": "Mouse AI Copilot",
+        "title": "Kudu Pilot",
         "width": 680,
         "height": 60,
         "resizable": false,
@@ -66,7 +66,7 @@
       {
         "label": "shield",
         "url": "shield.html",
-        "title": "Mouse AI Working",
+        "title": "Kudu Desktop Working",
         "width": 460,
         "height": 48,
         "resizable": false,

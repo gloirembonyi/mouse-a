@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Git status/diff backend for the IDE dock's Changes tab.
+// Kudu Desktop - Git status/diff backend for the IDE dock's Changes tab.
 // Shells out to the system `git` binary rather than pulling in git2 - this
 // only needs `status --porcelain` + `diff --numstat`/`diff`, which a couple
 // of subprocess calls cover without the extra dependency weight.

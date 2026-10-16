@@ -165,11 +165,11 @@ jobs:
 
           | Platform | File |
           |---|---|
-          | Windows 10/11 | `Mouse AI_*_x64-setup.exe` (installer) or `Mouse AI_*_x64_en-US.msi` |
-          | macOS 12+ (Apple Silicon and Intel) | `Mouse AI_*_universal.dmg` |
-          | Linux (Debian/Ubuntu) | `Mouse AI_*_amd64.deb` |
-          | Linux (Fedora/RHEL) | `Mouse AI-*.x86_64.rpm` |
-          | Linux (any) | `Mouse AI_*_amd64.AppImage` |
+          | Windows 10/11 | `Kudu Desktop_*_x64-setup.exe` (installer) or `Kudu Desktop_*_x64_en-US.msi` |
+          | macOS 12+ (Apple Silicon and Intel) | `Kudu Desktop_*_universal.dmg` |
+          | Linux (Debian/Ubuntu) | `Kudu Desktop_*_amd64.deb` |
+          | Linux (Fedora/RHEL) | `Kudu Desktop-*.x86_64.rpm` |
+          | Linux (any) | `Kudu Desktop_*_amd64.AppImage` |
 
           The installers are not code-signed yet: Windows SmartScreen shows "More info -> Run anyway"
           and macOS needs a right-click -> Open the first time.
@@ -179,9 +179,9 @@ jobs:
           mapfile -t files < files.txt
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${files[@]}" --clobber
-            gh release edit "$TAG" --title "Mouse AI $TAG" --notes-file notes.md --draft=false $prerelease
+            gh release edit "$TAG" --title "Kudu Desktop $TAG" --notes-file notes.md --draft=false $prerelease
           else
-            gh release create "$TAG" "${files[@]}" --title "Mouse AI $TAG" --notes-file notes.md $prerelease
+            gh release create "$TAG" "${files[@]}" --title "Kudu Desktop $TAG" --notes-file notes.md $prerelease
           fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"
 
@@ -204,8 +204,8 @@ jobs:
           mapfile -t files < files.txt
           if gh release view "$TAG" -R "$TARGET" >/dev/null 2>&1; then
             gh release upload "$TAG" "${files[@]}" -R "$TARGET" --clobber
-            gh release edit "$TAG" -R "$TARGET" --title "Mouse AI $TAG" --notes-file notes.md --draft=false $prerelease
+            gh release edit "$TAG" -R "$TARGET" --title "Kudu Desktop $TAG" --notes-file notes.md --draft=false $prerelease
           else
-            gh release create "$TAG" "${files[@]}" -R "$TARGET" --title "Mouse AI $TAG" --notes-file notes.md $prerelease
+            gh release create "$TAG" "${files[@]}" -R "$TARGET" --title "Kudu Desktop $TAG" --notes-file notes.md $prerelease
           fi
           echo "Mirrored to https://github.com/$TARGET/releases/tag/$TAG"

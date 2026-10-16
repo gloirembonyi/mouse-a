@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - the built-in tool declarations (Gemini function schemas).
+// Kudu Desktop agent - the built-in tool declarations (Gemini function schemas).
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]
@@ -296,7 +296,7 @@ pub(crate) fn tool_declarations() -> Value {
         },
         {
             "name": "delegate_to_browser",
-            "description": "Delegate a WEB task to the connected Thothai browser extension, which drives the page through the DOM (far more reliable than clicking a browser by screen coordinates). Use this for anything on a website: filling and submitting a form, reading/extracting content from a page, searching a site, clicking through a web flow. By default this waits for the browser to finish and returns its result. Set background=true to fire it off and keep working locally, then call check_browser_task later to collect the result.",
+            "description": "Delegate a WEB task to the connected Kudu Connect browser extension, which drives the page through the DOM (far more reliable than clicking a browser by screen coordinates). Use this for anything on a website: filling and submitting a form, reading/extracting content from a page, searching a site, clicking through a web flow. By default this waits for the browser to finish and returns its result. Set background=true to fire it off and keep working locally, then call check_browser_task later to collect the result.",
             "parameters": {
                 "type": "object",
                 "properties": {

@@ -1,4 +1,4 @@
-// Mouse AI Desktop - UI Automation (element-level targeting for the agent).
+// Kudu Desktop - UI Automation (element-level targeting for the agent).
 //
 // Until now the agent could only click screenshot coordinates and type into whatever
 // had focus, and could only READ the screen through a 12x10 MSAA point sample. This

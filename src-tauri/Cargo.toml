@@ -1,8 +1,8 @@
 [package]
 name = "mouse-ai-desktop"
 version = "0.1.0"
-description = "Mouse AI - System-wide AI assistant powered by Thothai"
-authors = ["Thothai"]
+description = "Kudu Desktop - the system-wide AI assistant by Kudu"
+authors = ["Kudu"]
 edition = "2021"
 
 [lib]

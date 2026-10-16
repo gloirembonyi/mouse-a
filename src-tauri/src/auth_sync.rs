@@ -1,4 +1,4 @@
-// Mouse AI Desktop - one login across the desktop app and the browser extension.
+// Kudu Desktop - one login across the desktop app and the browser extension.
 //
 // Over the paired localhost bridge (bridge.rs), whichever client is signed in
 // with a real account shares it with the other one - but never by sending its

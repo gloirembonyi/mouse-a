@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./kudu-art.generated.css";
 /* Font <link> lives in index.html/overlay.html - a CSS @import here would have
    to precede Tailwind's own @import, which expands into non-import rules and
    makes any @import after it invalid per the CSS spec. */
@@ -323,103 +324,7 @@ a:focus-visible {
   }
 }
 
-/* ── Bot avatars (components/ui/BotAvatar.tsx) ─────────────────── */
-.bot svg {
-  overflow: visible;
-}
-.bot .bot-body {
-  transform-box: fill-box;
-  transform-origin: 50% 100%;
-}
-.bot .bot-eyes {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: bot-blink 4.2s infinite;
-  translate: var(--bot-ex, 0) var(--bot-ey, 0);
-}
-/* Grounded shadow: stays on the floor, shrinks as the body lifts. */
-.bot .bot-ground { transform-box: fill-box; transform-origin: center; transition: opacity 0.3s ease; }
-.bot-idle .bot-ground { animation: bot-ground-bob 3.2s ease-in-out infinite; }
-.bot-working .bot-ground { animation: bot-ground-hop 0.9s cubic-bezier(0.3, 0, 0.3, 1) infinite; }
-.bot-happy .bot-ground { animation: bot-ground-hop 1.4s ease-in-out 2; }
-.bot-listening .bot-ground { animation: bot-ground-pulse 1.6s ease-in-out infinite; }
-.bot-sleeping .bot-ground { opacity: 0.1; }
-.bot .bot-mouth { transform-box: fill-box; transform-origin: center; }
-.bot-thinking .bot-mouth { animation: bot-mouth-hum 2.4s ease-in-out infinite; }
-.bot-listening .bot-mouth { animation: bot-mouth-soft 1.6s ease-in-out infinite; }
-@keyframes bot-ground-bob { 0%, 100% { transform: scale(1); opacity: 0.22; } 50% { transform: scale(0.93); opacity: 0.16; } }
-@keyframes bot-ground-hop { 0%, 100% { transform: scale(1); opacity: 0.22; } 15% { transform: scale(1.06); opacity: 0.26; } 45% { transform: scale(0.7); opacity: 0.1; } 75% { transform: scale(1.04); opacity: 0.24; } }
-@keyframes bot-ground-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
-@keyframes bot-mouth-hum { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.25, 0.85); } }
-@keyframes bot-mouth-soft { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(1.12); } }
-@media (prefers-reduced-motion: reduce) {
-  .bot .bot-body, .bot .bot-eyes, .bot .bot-ground, .bot .bot-mouth { animation: none !important; }
-}
-.bot-still .bot-eyes {
-  animation: none;
-}
-.bot-idle .bot-body {
-  animation: bot-bob 3.2s ease-in-out infinite;
-}
-.bot-thinking .bot-body {
-  animation: bot-sway 2.4s ease-in-out infinite;
-}
-.bot-thinking .bot-eyes {
-  animation:
-    bot-look 2.4s ease-in-out infinite,
-    bot-blink 4.2s infinite;
-}
-.bot-working .bot-body {
-  animation: bot-hop 0.9s cubic-bezier(0.3, 0, 0.3, 1) infinite;
-}
-.bot-listening .bot-body {
-  animation: bot-pulse 1.6s ease-in-out infinite;
-}
-.bot-happy .bot-body {
-  animation: bot-hop 1.4s ease-in-out 2;
-}
-.bot-sleeping .bot-body {
-  animation: bot-breathe 4s ease-in-out infinite;
-}
-.bot-error .bot-body {
-  animation: bot-shake 0.5s ease-in-out 2;
-}
-@keyframes bot-blink {
-  0%, 92%, 100% { transform: scaleY(1); }
-  95% { transform: scaleY(0.1); }
-}
-@keyframes bot-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-3%); }
-}
-@keyframes bot-sway {
-  0%, 100% { transform: rotate(-4deg); }
-  50% { transform: rotate(4deg); }
-}
-@keyframes bot-look {
-  0%, 100% { translate: 0 0; }
-  30% { translate: 4% -5%; }
-  65% { translate: -4% -4%; }
-}
-@keyframes bot-hop {
-  0%, 100% { transform: translateY(0) scale(1, 1); }
-  15% { transform: translateY(0) scale(1.06, 0.93); }
-  45% { transform: translateY(-9%) scale(0.96, 1.05); }
-  75% { transform: translateY(0) scale(1.04, 0.96); }
-}
-@keyframes bot-pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.06); }
-}
-@keyframes bot-breathe {
-  0%, 100% { transform: scale(1, 1); }
-  50% { transform: scale(1.02, 0.97); }
-}
-@keyframes bot-shake {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-4%); }
-  75% { transform: translateX(4%); }
-}
+/* Bot avatars: every rule lives in src/kudu-art.generated.css (imported at the top). */
 
 @keyframes link-flow {
   to {

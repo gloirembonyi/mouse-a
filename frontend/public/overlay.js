@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Hover Overlay Logic
+// Kudu Desktop - Hover Overlay Logic (Kudu Lens)
 // Runs inside the transparent always-on-top overlay window. Rust shows this
 // window next to the cursor on hover-dwell and sends context via events.
 
@@ -74,7 +74,7 @@ let agentRunning = false; // an agent_run is in flight - the send button doubles
 let runSource = null; // "overlay:<n>" of the in-flight run; agent-progress is filtered on it
 let runSeq = 0;
 let threadTurns = 0; // turns rendered in #agent-log (the conversation thread)
-let lastConversationId = null; // the backend conversation the thread is in ("Continue in Mouse AI")
+let lastConversationId = null; // the backend conversation the thread is in ("Continue in Kudu Desktop")
 let lastCollapseAt = 0;
 const THREAD_KEEP_MS = 5 * 60 * 1000; // reopen within this and the thread continues
 
@@ -126,8 +126,8 @@ function onAiToast(active) {
   pill.hidden = true;
   panel.hidden = true;
   toast.textContent = active
-    ? "🖱️✨ Mouse AI active - pause your mouse on anything to ask"
-    : "Mouse AI off";
+    ? "🖱️✨ Kudu Lens active - pause your mouse on anything to ask"
+    : "Kudu Lens off";
   toast.hidden = false;
   scheduleAutoHide(TOAST_AUTOHIDE_MS);
 }
@@ -325,7 +325,7 @@ async function showPanel({ resize }) {
   toast.hidden = true;
   panel.hidden = false;
 
-  panelApp.textContent = appSummary(hover) || "Mouse AI";
+  panelApp.textContent = appSummary(hover) || "Kudu";
   panelElement.textContent = truncate(elementSummary(hover), 60);
   answerEl.hidden = true;
   answerEl.innerHTML = "";
@@ -420,7 +420,7 @@ function toggleAgentMode() {
 }
 
 function placeholderFor() {
-  return agentMode ? "Ask anything or tell Mouse AI what to do…  @ to attach" : "Ask about what's under your mouse…  @ to attach";
+  return agentMode ? "Ask anything or tell Kudu what to do…  @ to attach" : "Ask about what's under your mouse…  @ to attach";
 }
 
 // The panel only ever showed the ANSWER, never what was actually asked - easy
@@ -766,7 +766,7 @@ function renderTranscript(title, messages) {
   const rows = messages
     .map((m) => {
       const isUser = m.role === "user";
-      const who = isUser ? "You" : "Mouse AI";
+      const who = isUser ? "You" : "Kudu";
       const cls = isUser ? "transcript-user" : "transcript-ai";
       const text = isUser ? cleanUserText(m.content) : (m.content || "");
       if (!text.trim()) return "";
@@ -1090,10 +1090,10 @@ function withTimeout(promise, ms) {
 function friendlyError(err) {
   const msg = String(err?.message || err);
   if (/not signed in/i.test(msg)) {
-    return "You're not signed in. Click ⤢ to open the Mouse AI window and sign in first.";
+    return "You're not signed in. Click ⤢ to open the Kudu Desktop window and sign in first.";
   }
   if (/can't reach|network|timed out|connect/i.test(msg)) {
-    return "Can't reach the Thothai backend. Check your internet or the Backend URL in Settings (⤢ → ⚙).";
+    return "Can't reach Kudu Core. Check your internet or the Backend URL in Settings (⤢ → ⚙).";
   }
   if (/empty response/i.test(msg)) {
     return "The model didn't respond after several tries - it may be under heavy load. Try again in a moment.";
@@ -1352,7 +1352,7 @@ function renderMarkdown(text) {
   return out.join("");
 }
 
-// The main window's active project (same origin, same localStorage - the copilot bar
+// The main window's active project (same origin, same localStorage - the Pilot bar
 // reads it the same way). Where "Save to project" goes.
 function activeProject() {
   const p = localStorage.getItem("mouse-ai-active-project") || "";
@@ -1360,9 +1360,9 @@ function activeProject() {
   return { path: p, name: p.split(/[\\/]/).filter(Boolean).pop() || p };
 }
 
-/** Copy / save / open-in-app row under every finished answer. Ask AI is the collector:
+/** Copy / save / open-in-app row under every finished answer. Ask Kudu is the collector:
  *  what it gathered and you corrected can go to the project's notes (the agent reads
- *  them) or into the meeting copilot's context. */
+ *  them) or into the Kudu Pilot context. */
 function answerActionsHtml() {
   const proj = activeProject();
   const save = proj
@@ -1371,8 +1371,8 @@ function answerActionsHtml() {
   return `<div class="answer-actions">
     <button type="button" data-act="copy-answer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span></button>
     ${save}
-    <button type="button" data-act="save-meeting" title="Add to the meeting copilot's context (This session)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 10l4.5-2.5v9L15 14"/><rect x="3" y="6" width="12" height="12" rx="2"/></svg><span>To meeting</span></button>
-    <button type="button" data-act="open-app"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg><span>Continue in Mouse AI</span></button>
+    <button type="button" data-act="save-meeting" title="Add to the Kudu Pilot context (This session)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 10l4.5-2.5v9L15 14"/><rect x="3" y="6" width="12" height="12" rx="2"/></svg><span>To meeting</span></button>
+    <button type="button" data-act="open-app"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg><span>Continue in Kudu Desktop</span></button>
   </div>`;
 }
 
@@ -1443,7 +1443,7 @@ function renderInlineMarkdown(text) {
 }
 
 // ── Quick actions ──────────────────────────────────────────
-// Ask AI as a collector: one tap gathers what is in front of you (the window under
+// Ask Kudu as a collector: one tap gathers what is in front of you (the window under
 // the cursor is attached) and shapes it; the answer can then be corrected and saved.
 const quickRow = document.getElementById("quick-row");
 const QUICK = [

@@ -1,6 +1,6 @@
-// Mouse AI Desktop - Global Hover-Dwell Watcher
+// Kudu Desktop - Global Hover-Dwell Watcher
 // While AI mode is active, watches the cursor system-wide. When the mouse
-// pauses over something (dwell), it shows the floating "Ask AI" overlay next
+// pauses over something (dwell), it shows the floating "Ask Kudu" overlay next
 // to the cursor and sends it the context of what's being hovered.
 
 use crate::commands::AppState;
@@ -102,7 +102,7 @@ pub fn spawn_hover_watcher(app: AppHandle) {
 
             let ctx = mouse::get_cursor_context();
 
-            // Never trigger while hovering Mouse AI's own windows.
+            // Never trigger while hovering Kudu Desktop's own windows.
             if !own_exe.is_empty() && ctx.process_name.to_lowercase() == own_exe {
                 continue;
             }

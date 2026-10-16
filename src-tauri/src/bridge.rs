@@ -1,9 +1,9 @@
-// Mouse AI Desktop - Browser bridge (WebSocket server).
+// Kudu Desktop - Browser bridge (WebSocket server).
 //
 // The desktop app is the ORCHESTRATOR. When an agent task needs something done
 // on the web - open a page, fill a form, read a site - it can't do that itself
 // reliably (screenshot+coordinate automation is fragile in a browser). Instead
-// it delegates that piece to the Thothai browser extension over a local
+// it delegates that piece to the Kudu Connect extension over a local
 // WebSocket the desktop hosts here. The extension runs its DOM-level browser
 // agent, streams progress back (shown inline in the desktop's own step log),
 // and returns the final result - so the desktop and browser act as one system.
@@ -133,7 +133,7 @@ impl Bridge {
         if !self.is_connected() {
             return Err(
                 "No browser extension is connected. Open a Chromium browser (Chrome/Edge/Comet) \
-with the Thothai extension installed and signed in, then try again."
+with the Kudu Connect extension installed and signed in, then try again."
                     .to_string(),
             );
         }
@@ -270,7 +270,7 @@ async fn bind_first_free() -> Option<TcpListener> {
 
 async fn handle_connection(stream: tokio::net::TcpStream, app: AppHandle) {
     // Plain HTTP request (no WebSocket upgrade) = the extension's reachability
-    // probe. Answering it lets the extension check "is Mouse AI running?" with
+    // probe. Answering it lets the extension check "is Kudu Desktop running?" with
     // a fetch before opening a WebSocket - a refused WebSocket is logged by
     // Chrome as an extension error on every retry when the app is closed.
     {
@@ -434,7 +434,7 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
                     "type": "copilot_opened",
                     "id": id,
                     "ok": ok,
-                    "error": if ok { Value::Null } else { json!("The extension isn't paired with Mouse AI.") },
+                    "error": if ok { Value::Null } else { json!("The extension isn't paired with Kudu Desktop.") },
                 })
                 .to_string(),
             ));
@@ -447,7 +447,7 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
             let result = if bridge().is_paired() {
                 crate::fs_browser::reveal_path(path)
             } else {
-                Err("This browser isn't paired with Mouse AI.".to_string())
+                Err("This browser isn't paired with Kudu Desktop.".to_string())
             };
             let _ = tx.send(Message::Text(
                 json!({ "v": 1, "type": "reveal_result", "id": id, "ok": result.is_ok(), "error": result.err() }).to_string(),

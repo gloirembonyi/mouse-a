@@ -147,7 +147,7 @@ export function TerminalPane({ cwd, visible, onAskAI }: TerminalPaneProps) {
           className="flex h-7 items-center gap-1 rounded-md px-2 text-[11.5px] text-text-secondary transition hover:bg-accent-soft hover:text-accent"
         >
           <Sparkles size={12} />
-          Ask AI
+          Ask Kudu
         </button>
         <IconButton title="Clear" size="sm" onClick={() => current.get(active)?.clear()}>
           <Eraser size={13} />

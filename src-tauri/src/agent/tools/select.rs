@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - which tools to put in front of the model for THIS task.
+// Kudu Desktop agent - which tools to put in front of the model for THIS task.
 //
 // Port of the browser agent's selectTools: the full catalog (31 built-ins + skills +
 // MCP) is ~10 KB of JSON re-sent on every step, and offering download_file or

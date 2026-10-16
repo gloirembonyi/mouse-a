@@ -84,11 +84,11 @@ export function MeetingView({ meeting, onClose }: MeetingViewProps) {
       {/* Header */}
       <div className="flex h-12 flex-shrink-0 items-center gap-3 border-b border-border-soft px-4">
         <BotAvatar
-          kind="clover"
+          kind="pilot"
           mood={status.live ? (meeting.levels.mic > 0.15 || meeting.levels.system > 0.15 ? "listening" : "idle") : "still"}
           size={26}
         />
-        <h2 className="text-[14px] font-semibold">Meeting copilot</h2>
+        <h2 className="text-[14px] font-semibold">Kudu Pilot</h2>
         {status.live && <LiveClock startedAt={status.started_at_ms} />}
         <div className="ml-auto flex items-center gap-1.5">
           <button
@@ -97,7 +97,7 @@ export function MeetingView({ meeting, onClose }: MeetingViewProps) {
               "flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] transition hover:bg-bg-hover",
               hasProfile ? "text-text-secondary" : "text-warning",
             )}
-            title="What the copilot knows about you"
+            title="What Kudu Pilot knows about you"
           >
             <UserCircle2 size={14} />
             {hasProfile ? "My context" : "Add my context"}
@@ -213,7 +213,7 @@ function SetupScreen(props: {
   return (
     <div className="scrollbar-thin flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 py-10">
       <div className="animate-fade-up flex w-full max-w-[620px] flex-col items-center">
-        <BotAvatar kind="clover" mood="idle" size={72} className="mb-5" title="Meeting copilot" />
+        <BotAvatar kind="pilot" mood="idle" size={88} variant="body" className="mb-5" title="Kudu Pilot" />
         <h1 className="mb-1.5 text-center text-[24px] font-semibold tracking-[-0.02em]">Your second brain for calls</h1>
         <p className="mb-8 max-w-[440px] text-center text-[13px] text-text-muted">
           Live transcript of both sides, and answers that only use your real experience. Visible to you, never to the other side.
@@ -404,7 +404,7 @@ function TranscriptPane({ meeting, mode }: { meeting: ReturnType<typeof useMeeti
           <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
             {status.live && (
               <BotAvatar
-                kind="clover"
+                kind="pilot"
                 mood={levels.mic > 0.15 || levels.system > 0.15 ? "listening" : "idle"}
                 size={56}
                 title="Listening"
@@ -528,7 +528,7 @@ function CopilotPane({
   };
 
   const targets: { id: InputTarget; label: string }[] = [
-    { id: "ask", label: "Ask AI" },
+    { id: "ask", label: "Ask Kudu" },
     ...(mode !== "practice" ? [{ id: "them" as const, label: "They said" }] : []),
     { id: "me", label: mode === "practice" ? "My answer" : "I said" },
     { id: "note", label: "Note" },
@@ -713,7 +713,7 @@ function AnswerCard({
       )}
       {card.pending ? (
         <div className="flex items-center gap-2.5 py-1 text-[13px]">
-          <BotAvatar kind="clover" mood="thinking" size={26} />
+          <BotAvatar kind="pilot" mood="thinking" size={26} />
           <span className="shimmer-text font-medium">
             {card.action === "screen" ? "Reading your screen…" : "Writing your answer…"}
           </span>
@@ -840,7 +840,7 @@ function ContextDrawer({
           <div className="flex flex-col gap-1.5 rounded-xl border border-border-soft bg-bg-card p-3">
             <span className="text-[12px] font-medium text-text-secondary">Links to read</span>
             <span className="text-[11.5px] text-text-muted">
-              Job post, company page, product docs, a profile, a repo. Mouse AI fetches each one and writes a brief it will answer from.
+              Job post, company page, product docs, a profile, a repo. Kudu Scout fetches each one and writes a brief Kudu Pilot will answer from.
             </span>
             <textarea
               value={links}
@@ -874,7 +874,7 @@ function ContextDrawer({
               </ul>
             )}
           </div>
-          {field("research", "Research brief", "Written from the links above. Edit anything that is off; the copilot treats this as fact.", 8)}
+          {field("research", "Research brief", "Written from the links above. Edit anything that is off; Kudu Pilot treats this as fact.", 8)}
           <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-border-soft bg-bg-card px-3 py-2.5">
             <span className="flex flex-col">
               <span className="text-[13px]">Use my context in answers</span>
@@ -913,7 +913,7 @@ function CopilotBarToggle({ live }: { live: boolean }) {
   const [on, setOn] = useState(copilotBarEnabled);
   return (
     <span className="flex items-center gap-2">
-      <label className="flex cursor-pointer items-center gap-1.5" title="Float a compact copilot over your call - invisible to screen share (Ctrl+Shift+\)">
+      <label className="flex cursor-pointer items-center gap-1.5" title="Float the Pilot bar over your call - invisible to screen share (Ctrl+Shift+\)">
         <Switch
           on={on}
           onChange={(v) => {

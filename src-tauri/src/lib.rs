@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Main Application Entry Point
+// Kudu Desktop - Main Application Entry Point
 // Sets up Tauri with system tray, global shortcuts, and all plugins.
 
 mod agent;
@@ -186,11 +186,11 @@ pub fn run() {
         ])
         .setup(|app| {
             // ── System Tray ──────────────────────────────────────
-            let quit = MenuItem::with_id(app, "quit", "Quit Mouse AI", true, None::<&str>)?;
-            let ask = MenuItem::with_id(app, "ask", "Ask at Cursor (Ctrl+Shift+Space)", true, None::<&str>)?;
-            let toggle = MenuItem::with_id(app, "toggle", "Toggle Hover Mode (Ctrl+Shift+Q)", true, None::<&str>)?;
-            let show = MenuItem::with_id(app, "show", "Open Mouse AI", true, None::<&str>)?;
-            let copilot = MenuItem::with_id(app, "copilot", r"Meeting Copilot Bar (Ctrl+Shift+\)", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit Kudu Desktop", true, None::<&str>)?;
+            let ask = MenuItem::with_id(app, "ask", "Ask Kudu at cursor… (Ctrl+Shift+Space)", true, None::<&str>)?;
+            let toggle = MenuItem::with_id(app, "toggle", "Toggle Kudu Lens (Ctrl+Shift+Q)", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Open Kudu Desktop", true, None::<&str>)?;
+            let copilot = MenuItem::with_id(app, "copilot", r"Kudu Pilot bar (Ctrl+Shift+\)", true, None::<&str>)?;
             let taskbar = tauri::menu::CheckMenuItem::with_id(
                 app,
                 "taskbar",
@@ -207,7 +207,7 @@ pub fn run() {
             let _tray = TrayIconBuilder::new()
                 .icon(Image::from_bytes(include_bytes!("../icons/32x32.png"))?)
                 .menu(&menu)
-                .tooltip("Mouse AI - Thothai Desktop Assistant")
+                .tooltip("Kudu Desktop")
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "quit" => {
                         app.exit(0);
@@ -265,7 +265,7 @@ pub fn run() {
             // Ctrl+Shift+S - screenshot & analyze in the main window.
             let capture_shortcut =
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyS);
-            // Ctrl+Shift+Q - toggle hover mode (auto "Ask AI" pill on dwell).
+            // Ctrl+Shift+Q - toggle hover mode (auto "Ask Kudu" pill on dwell).
             let hover_mode_shortcut =
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyQ);
             // Ctrl+Shift+Enter - meeting copilot: "What should I say?"
@@ -374,7 +374,7 @@ pub fn run() {
                 }
             }));
 
-            // Keep Mouse AI out of screen shares / recordings by default.
+            // Keep Kudu Desktop out of screen shares / recordings by default.
             meeting::apply_stealth(app.handle());
             copilot::start_foreground_watch();
 
@@ -394,7 +394,7 @@ pub fn run() {
             hover::spawn_hover_watcher(app.handle().clone());
 
             // ── Browser bridge (WebSocket server for the extension) ──
-            // Lets the desktop agent delegate web tasks to the Thothai browser
+            // Lets the desktop agent delegate web tasks to the Kudu Connect browser
             // extension in real time. Runs for the whole app lifetime.
             link::start(app.handle().clone());
             let bridge_app = app.handle().clone();
@@ -412,5 +412,5 @@ pub fn run() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("error while running Mouse AI Desktop");
+        .expect("error while running Kudu Desktop");
 }

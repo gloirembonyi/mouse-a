@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - web search/fetch and browser delegation.
+// Kudu Desktop agent - web search/fetch and browser delegation.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]

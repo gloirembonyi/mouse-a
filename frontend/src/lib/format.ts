@@ -28,7 +28,7 @@ export function friendlyError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
   if (/not signed in/i.test(msg)) return "You're not signed in. Open Settings to sign in first.";
   if (/can't reach|network|timed out|connect/i.test(msg))
-    return "Can't reach the Thothai backend. Check your internet or the Backend URL in Settings.";
+    return "Can't reach Kudu Core. Check your internet or the Backend URL in Settings.";
   if (/empty response/i.test(msg))
     return "The model didn't respond after several tries - it may be under heavy load. Try again in a moment.";
   if (/step limit/i.test(msg))
@@ -60,7 +60,7 @@ export function threadTitle(raw?: string): string {
     const asked = /asked[:\s]+["“]?([^"”]+)/i.exec(t)?.[1]?.trim();
     return asked ? `Hover · ${asked}` : "Hover question";
   }
-  if (/^thothai chat$/i.test(t)) return "New chat";
+  if (/^(thothai|kudu) chat$/i.test(t)) return "New chat";
   return t;
 }
 

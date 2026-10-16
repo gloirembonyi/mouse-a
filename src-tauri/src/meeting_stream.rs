@@ -1,4 +1,4 @@
-// Mouse AI Desktop - live (streaming) transcription for the meeting copilot.
+// Kudu Desktop - live (streaming) transcription for the meeting copilot.
 //
 // The chunked path in meeting.rs cuts a clip at every pause and sends it to Whisper,
 // so the first word of a sentence cannot appear until the speaker stops. This module

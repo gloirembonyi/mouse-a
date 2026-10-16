@@ -1,4 +1,4 @@
-// Mouse AI Desktop - Windows Explorer folder-content context
+// Kudu Desktop - Windows Explorer folder-content context
 //
 // The accessible name/role under the cursor (e.g. "list item", a bare file
 // name) can't answer "what's in this folder?" or "what language is this

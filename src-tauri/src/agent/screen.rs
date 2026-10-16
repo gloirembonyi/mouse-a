@@ -1,4 +1,4 @@
-// Mouse AI desktop agent - screenshots, coordinate mapping, verification shots.
+// Kudu Desktop agent - screenshots, coordinate mapping, verification shots.
 // Split out of the former single agent.rs; see agent/mod.rs for the module map.
 
 #[allow(unused_imports)]

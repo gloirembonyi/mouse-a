@@ -317,7 +317,7 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
               className="ml-0.5 flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-text-secondary transition hover:bg-accent-soft hover:text-accent"
             >
               <Sparkles size={12} />
-              Ask AI
+              Ask Kudu
             </button>
           )}
           {isText && (
