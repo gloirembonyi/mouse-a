@@ -8,8 +8,8 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
     face: { light: "#ffffff", base: "#dfe5f2", dark: "#a9b4cc" },
     muzzle: "#c3cfe0",
     chevron: "#ffffff",
-    earInner: "#f1d6ad",
-    horn: { light: "#f6dea4", base: "#d9a650", dark: "#9c6f22" },
+    earInner: "#ffd9e0",
+    horn: { light: "#f4e6cc", base: "#8a5a35", dark: "#4a2e1a" },
     tile: ["#769fcd", "#436391"],
     eyeHighlight: "#ffffff",
   };
@@ -18,15 +18,17 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
   // `prop` is the small thing that says what the product does. Base "kudu" has no prop.
   // `fur` is the plush colour (light / base / dark of one hue) for face, ears and body;
   // `dark: true` fur gets white-sclera eyes so they stay readable.
+  // Bold plush colours, one hue each, saturated like a dot: light = lit fur, base = the
+  // colour you name it by, dark = the shadow side. The brand kudu stays ivory.
   const CHARACTERS = {
-    kudu:    { accent: "#5578a8", prop: null,      label: "Kudu",         fur: { light: "#ffffff", base: "#dfe5f2", dark: "#a9b4cc" } },
-    agent:   { accent: "#344f77", prop: "scarf",   label: "Kudu Agent",   fur: { light: "#dbe9fa", base: "#97b9de", dark: "#5578a8" } },
-    connect: { accent: "#1f6e58", prop: "scarf",   label: "Kudu Connect", fur: { light: "#d7f3e8", base: "#7fd3b5", dark: "#2b8a6e" } },
-    lens:    { accent: "#5d4f8a", prop: "monocle", label: "Kudu Lens",    fur: { light: "#ece4fa", base: "#bda7e6", dark: "#7c6aa8" } },
-    pilot:   { accent: "#2d63b8", prop: "headset", label: "Kudu Pilot",   fur: { light: "#dcebff", base: "#93bdf2", dark: "#3b7dd8" } },
-    scout:   { accent: "#3f7a2e", prop: "scarf",   label: "Kudu Scout",   fur: { light: "#e8f3d6", base: "#b5d98a", dark: "#5f9a42" } },
-    quill:   { accent: "#b94d40", prop: "pencil",  label: "Kudu Quill",   fur: { light: "#fde6df", base: "#f5ab9b", dark: "#d26a5c" } },
-    cloak:   { accent: "#1f2638", prop: "mask",    label: "Kudu Cloak",   fur: { light: "#7d86a3", base: "#4a5470", dark: "#2b3450" }, dark: true },
+    kudu:    { accent: "#5578a8", prop: null,      label: "Kudu",         fur: { light: "#ffe2bd", base: "#f2a65a", dark: "#c9712c" } },
+    agent:   { accent: "#1f4a99", prop: "scarf",   label: "Kudu Agent",   fur: { light: "#b9d3ff", base: "#4f86e6", dark: "#2653b0" } },
+    connect: { accent: "#0f6b55", prop: "scarf",   label: "Kudu Connect", fur: { light: "#b3f3dd", base: "#2fcf9f", dark: "#128a69" } },
+    lens:    { accent: "#4a33b8", prop: "monocle", label: "Kudu Lens",    fur: { light: "#dccfff", base: "#9b7bff", dark: "#6346d9" } },
+    pilot:   { accent: "#1565c0", prop: "headset", label: "Kudu Pilot",   fur: { light: "#b8e0ff", base: "#45aaff", dark: "#1a78d4" } },
+    scout:   { accent: "#4d7d10", prop: "scarf",   label: "Kudu Scout",   fur: { light: "#ecff9e", base: "#bfe83a", dark: "#7fa818" } },
+    quill:   { accent: "#b8234f", prop: "pencil",  label: "Kudu Quill",   fur: { light: "#ffd1dc", base: "#ff6f96", dark: "#d93a66" } },
+    cloak:   { accent: "#161c2b", prop: "mask",    label: "Kudu Cloak",   fur: { light: "#6f7a96", base: "#3a4660", dark: "#1c2335" }, dark: true },
   };
 
   // 100x100 viewBox. A greater kudu's head: a long face that tapers to the muzzle,
@@ -112,8 +114,8 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
     }
     // Eyes carry the feeling: wide when listening, narrowed and set when working, lifted
     // when thinking (they also drift up via the look-up keyframe), plain otherwise.
-    const r = mood === "listening" ? 6.6 : mood === "working" ? 4.9 : t === "icon" ? 6.2 : 5.6;
-    const erx = (r * (mood === "working" ? 1 : 0.82)).toFixed(2);
+    const r = mood === "listening" ? 7.2 : mood === "working" ? 5.4 : t === "icon" ? 6.4 : 6.3;
+    const erx = (r * (mood === "working" ? 1 : 0.86)).toFixed(2);
     const ey = mood === "thinking" ? y - 1.5 : y;
     // Glossy eyes: a white ring (the dot's look), a pupil shaded like a sphere, one big
     // highlight top-left and a small bounce light bottom-right.
@@ -169,15 +171,15 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
 
     const faceFill = glyph ? "currentColor" : `url(#${uid}-shade)`;
     const darkFur = !!ch.dark && !glyph;
-    const rim = glyph ? "" : `stroke:${ink};stroke-opacity:.32;stroke-width:${icon ? 2.2 : 1.6};stroke-linejoin:round;`;
+    const rim = glyph ? "" : icon ? `stroke:${ink};stroke-opacity:.3;stroke-width:2.2;stroke-linejoin:round;` : `stroke:${(ch.fur || PALETTE.face).dark};stroke-opacity:.35;stroke-width:1.2;stroke-linejoin:round;`;
     const hornStroke = glyph ? "currentColor" : `url(#${uid}-horn)`;
     const hornW = icon ? 7.5 : mark ? 8 : 6.4;
 
     const defs = glyph ? "" :
       `<defs>` +
-        `<radialGradient id="${uid}-shade" cx="36%" cy="30%" r="75%">` +
+        `<radialGradient id="${uid}-shade" cx="34%" cy="26%" r="78%">` +
           `<stop offset="0%" stop-color="${fur.light}"/>` +
-          `<stop offset="45%" stop-color="${fur.base}"/>` +
+          `<stop offset="38%" stop-color="${fur.base}"/>` +
           `<stop offset="100%" stop-color="${fur.dark}"/>` +
         `</radialGradient>` +
         // The 3D: a blurred alpha relief lit by one soft light (diffuse) with a small
@@ -186,11 +188,11 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
         (!icon
           ? `<filter id="${uid}-plush" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">` +
               `<feGaussianBlur in="SourceAlpha" stdDeviation="${figure ? 2.2 : 2.6}" result="relief"/>` +
-              `<feDiffuseLighting in="relief" surfaceScale="${figure ? 7 : 6}" diffuseConstant="1.3" lighting-color="#ffffff" result="diff">` +
+              `<feDiffuseLighting in="relief" surfaceScale="${figure ? 7 : 6}" diffuseConstant="1.05" lighting-color="#fffaf2" result="diff">` +
                 `<feDistantLight azimuth="235" elevation="62"/>` +
               `</feDiffuseLighting>` +
-              `<feComposite in="diff" in2="SourceGraphic" operator="arithmetic" k1="1" k2="0" k3="0.06" k4="0" result="lit"/>` +
-              `<feSpecularLighting in="relief" surfaceScale="${figure ? 7 : 6}" specularConstant="0.32" specularExponent="14" lighting-color="#ffffff" result="spec">` +
+              `<feComposite in="diff" in2="SourceGraphic" operator="arithmetic" k1="0.72" k2="0" k3="0.34" k4="0" result="lit"/>` +
+              `<feSpecularLighting in="relief" surfaceScale="${figure ? 7 : 6}" specularConstant="0.26" specularExponent="9" lighting-color="#ffffff" result="spec">` +
                 `<fePointLight x="26" y="4" z="120"/>` +
               `</feSpecularLighting>` +
               `<feComposite in="spec" in2="SourceAlpha" operator="in" result="specIn"/>` +
@@ -206,9 +208,9 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
             `<filter id="${uid}-soft" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="2.2"/></filter>`
           : "") +
         (figure
-          ? `<radialGradient id="${uid}-body" cx="40%" cy="25%" r="80%">` +
+          ? `<radialGradient id="${uid}-body" cx="38%" cy="22%" r="82%">` +
               `<stop offset="0%" stop-color="${fur.light}"/>` +
-              `<stop offset="50%" stop-color="${fur.base}"/>` +
+              `<stop offset="42%" stop-color="${fur.base}"/>` +
               `<stop offset="100%" stop-color="${fur.dark}"/>` +
             `</radialGradient>`
           : "") +
@@ -230,9 +232,9 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
           : "") +
         (figure
           ? `<filter id="${uid}-fuzz" x="-25%" y="-25%" width="150%" height="150%">` +
-              `<feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" seed="11" result="hair"/>` +
-              `<feDisplacementMap in="SourceGraphic" in2="hair" scale="9" xChannelSelector="R" yChannelSelector="G" result="shag"/>` +
-              `<feGaussianBlur in="shag" stdDeviation="0.35"/>` +
+              `<feTurbulence type="fractalNoise" baseFrequency="${size >= 120 ? 0.9 : 1.3}" numOctaves="3" seed="11" result="hair"/>` +
+              `<feDisplacementMap in="SourceGraphic" in2="hair" scale="${size >= 120 ? 9 : 5.5}" xChannelSelector="R" yChannelSelector="G" result="shag"/>` +
+              (size >= 120 ? `<feGaussianBlur in="shag" stdDeviation="0.35"/>` : `<feOffset in="shag" dx="0" dy="0"/>`) +
             `</filter>` +
             `<filter id="${uid}-nap" x="-20%" y="-20%" width="140%" height="140%">` +
               `<feTurbulence type="fractalNoise" baseFrequency="1.3" numOctaves="2" seed="5" result="n"/>` +
@@ -329,12 +331,12 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
         (prop === "headset" ? propBack : "") +
         ear("l", PATHS.earL, PATHS.earLInner) +
         ear("r", PATHS.earR, PATHS.earRInner) +
-        (prop === "scarf" ? propBack : "") +
+        (prop === "scarf" && !figure ? propBack : "") +
         `<g class="${p}-face"${!icon && !glyph ? ` filter="url(#${uid}-plush)"` : ""}>` +
           `<path d="${PATHS.face}"${sty(`fill:${faceFill};${rim}`)}/>` +
-          (icon || glyph ? "" : `<ellipse cx="${PATHS.muzzle.cx}" cy="${PATHS.muzzle.cy}" rx="${PATHS.muzzle.rx}" ry="${PATHS.muzzle.ry}"${sty(ch.fur && o.character !== "kudu" ? `fill:#fff;opacity:${darkFur ? ".22" : ".38"}` : `fill:${PALETTE.muzzle};opacity:.5`)}/>`) +
+          (icon || glyph ? "" : `<ellipse cx="${PATHS.muzzle.cx}" cy="${PATHS.muzzle.cy}" rx="${PATHS.muzzle.rx}" ry="${PATHS.muzzle.ry}"${sty(ch.fur && o.character !== "kudu" ? `fill:${fur.light};opacity:${darkFur ? ".35" : ".55"}` : `fill:${PALETTE.muzzle};opacity:.5`)}/>`) +
         `</g>` +
-        (icon || glyph ? "" : `<ellipse cx="${PATHS.shine.cx}" cy="${PATHS.shine.cy}" rx="${PATHS.shine.rx}" ry="${PATHS.shine.ry}" transform="rotate(${PATHS.shine.rotate} ${PATHS.shine.cx} ${PATHS.shine.cy})"${sty("fill:#fff;opacity:.28")}/>`) +
+        (icon || glyph ? "" : `<ellipse cx="${PATHS.shine.cx}" cy="${PATHS.shine.cy}" rx="${PATHS.shine.rx}" ry="${PATHS.shine.ry}" transform="rotate(${PATHS.shine.rotate} ${PATHS.shine.cx} ${PATHS.shine.cy})"${sty("fill:#fff;opacity:.16")}/>`) +
         (prop === "mask" ? propFront : "") +
         (icon ? "" : `<path class="${p}-chevron" d="${PATHS.chevron}"${sty(`fill:none;stroke:${glyph ? ink : PALETTE.chevron};stroke-width:${t === "small" ? 4 : 3.6};stroke-linecap:round;stroke-linejoin:round;opacity:${glyph ? ".55" : ".95"}`)}/>`) +
         `<g class="${p}-eyes-slot">${eyesMarkup(mark ? "still" : m, glyph ? 16 : size, p, eyeOpts)}</g>` +
@@ -345,6 +347,16 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
         `</g>` +
       `</g>`;
 
+    // On the figure the scarf is a neckerchief between body and head (unscaled); the
+    // head-only mascot wears it at the chin instead (propBack, inside the head).
+    const neckScarf = figure && prop === "scarf"
+      ? `<g class="${p}-prop ${p}-scarf">` +
+          `<path d="M35 60c4-4 26-4 30 0 1.5 3.5 1 6-1 7.5-9 1.6-19 1.6-28 0-2-1.5-2.5-4-1-7.5z"${sty(`fill:${ch.accent}`)}/>` +
+          `<path d="M60 65l7 9"${sty(`fill:none;stroke:${ch.accent};stroke-width:5.5;stroke-linecap:round`)}/>` +
+          `<path d="M37 61c5-2.5 21-2.5 26 0"${sty("fill:none;stroke:#fff;stroke-width:1.6;stroke-linecap:round;opacity:.25")}/>` +
+        `</g>`
+      : "";
+
     // The felt body: a hairy halo behind (the fuzz you see on a plush edge) and the body
     // itself with a finer nap; the belly patch is a lighter, softer felt.
     const torso = figure
@@ -352,7 +364,7 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
           `<path d="${PATHS.body}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.75`)}/>` +
           `<g filter="url(#${uid}-plush)">` +
             `<path d="${PATHS.body}"${sty(`fill:url(#${uid}-body);${rim}`)}/>` +
-            `<ellipse cx="${PATHS.belly.cx}" cy="${PATHS.belly.cy}" rx="${PATHS.belly.rx}" ry="${PATHS.belly.ry}" transform="rotate(-12 ${PATHS.belly.cx} ${PATHS.belly.cy})"${sty(`fill:#fff;opacity:${darkFur ? ".16" : ".4"}`)}/>` +
+            `<ellipse cx="${PATHS.belly.cx}" cy="${PATHS.belly.cy}" rx="${PATHS.belly.rx}" ry="${PATHS.belly.ry}" transform="rotate(-12 ${PATHS.belly.cx} ${PATHS.belly.cy})"${sty(`fill:${fur.light};opacity:${darkFur ? ".3" : ".55"}`)}/>` +
           `</g>` +
         `</g>`
       : "";
@@ -363,6 +375,7 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
         torso +
         (figure
           ? `<ellipse cx="50" cy="59" rx="15" ry="4.5" filter="url(#${uid}-soft)"${sty(`fill:${ink};opacity:.28`)}/>` +
+            neckScarf +
             `<g transform="translate(${(50 - 50 * HEAD_SCALE).toFixed(1)} 5) scale(${HEAD_SCALE})">` +
               `<path d="${PATHS.face}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.7`)}/>` +
               `<path d="${PATHS.earL}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.6`)}/>` +
