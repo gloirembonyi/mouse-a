@@ -902,25 +902,22 @@ pub async fn delete_conversation(state: State<'_, AppState>, id: String) -> Resu
 
 // ── Auth Commands ────────────────────────────────────────────────
 
-/// Called on app startup instead of gating on a login screen: if there's
-/// already a session (guest or Google), keep it; otherwise silently
-/// provision an anonymous guest session so the app is usable right away.
-/// Google sign-in (`start_google_signin`) stays available separately for
-/// anyone who wants to link a real account later.
+/// Called on app startup: keep a real (Google) session if there is one. Kudu Desktop
+/// no longer creates anonymous guest accounts - plans, history and the Kudu Connect
+/// link all belong to a real account - so a missing session means "show sign-in",
+/// and a leftover guest session from an older build is revoked.
 #[tauri::command]
 pub async fn ensure_session(state: State<'_, AppState>) -> Result<AuthState, String> {
     if state.backend.is_signed_in().await {
-        return Ok(AuthState {
-            signed_in: true,
-            user: state.backend.get_current_user().await,
-        });
+        let user = state.backend.get_current_user().await;
+        if user.as_ref().is_some_and(|u| u.id.starts_with("guest_")) {
+            state.backend.revoke_session().await;
+            *state.conversation_id.write().await = None;
+            return Ok(AuthState { signed_in: false, user: None });
+        }
+        return Ok(AuthState { signed_in: true, user });
     }
-
-    let response = state.backend.guest_sign_in().await?;
-    Ok(AuthState {
-        signed_in: response.success,
-        user: response.user,
-    })
+    Ok(AuthState { signed_in: false, user: None })
 }
 
 /// Full browser-based Google sign-in: opens the consent screen in the default

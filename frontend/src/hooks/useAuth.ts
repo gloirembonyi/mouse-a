@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ensureSession, onAuthChanged, verifySession, withTimeout } from "../lib/tauri";
 import type { User } from "../lib/types";
 
-export type AuthStatus = "connecting" | "signed-in" | "error";
+export type AuthStatus = "connecting" | "signed-in" | "signed-out" | "error";
 
 export function useAuth() {
   const [status, setStatus] = useState<AuthStatus>("connecting");
@@ -21,7 +21,9 @@ export function useAuth() {
         verifySession().catch(() => {});
         return;
       }
-      throw new Error("Couldn't start a session.");
+      // No session: the sign-in screen (no anonymous guest accounts any more).
+      setUser(undefined);
+      setStatus("signed-out");
     } catch (err) {
       setError(`Can't reach Kudu Core: ${err instanceof Error ? err.message : String(err)}`);
       setStatus("error");
