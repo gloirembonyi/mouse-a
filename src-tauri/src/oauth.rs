@@ -5,7 +5,7 @@
 // except to be exchanged with Kudu Core for a session.
 //
 // One-time Google Cloud Console setup (same OAuth web client as the extension):
-// add  http://127.0.0.1:8917/callback  to its Authorized redirect URIs.
+// add  http://127.0.0.1:8917/callback/  (with the trailing slash) to its Authorized redirect URIs.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -32,8 +32,11 @@ fn client_id() -> String {
         .unwrap_or_else(|| DEFAULT_WEB_CLIENT_ID.to_string())
 }
 
+/// Must match the OAuth client's Authorized redirect URI character for character -
+/// Google rejects "/callback" when "/callback/" is registered ("This app's request is
+/// invalid"). The listener accepts both paths.
 pub fn redirect_uri() -> String {
-    format!("http://127.0.0.1:{}/callback", OAUTH_PORT)
+    format!("http://127.0.0.1:{}/callback/", OAUTH_PORT)
 }
 
 pub fn build_auth_url() -> String {
