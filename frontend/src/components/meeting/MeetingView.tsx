@@ -84,7 +84,7 @@ export function MeetingView({ meeting, onClose }: MeetingViewProps) {
       {/* Header */}
       <div className="flex h-12 flex-shrink-0 items-center gap-3 border-b border-border-soft px-4">
         <BotAvatar
-          kind="pilot"
+          kind="clover"
           mood={status.live ? (meeting.levels.mic > 0.15 || meeting.levels.system > 0.15 ? "listening" : "idle") : "still"}
           size={26}
         />
@@ -213,7 +213,7 @@ function SetupScreen(props: {
   return (
     <div className="scrollbar-thin flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 py-10">
       <div className="animate-fade-up flex w-full max-w-[620px] flex-col items-center">
-        <BotAvatar kind="pilot" mood="idle" size={88} variant="body" className="mb-5" title="Kudu Pilot" />
+        <BotAvatar kind="clover" mood="idle" size={72} className="mb-5" title="Kudu Pilot" />
         <h1 className="mb-1.5 text-center text-[24px] font-semibold tracking-[-0.02em]">Your second brain for calls</h1>
         <p className="mb-8 max-w-[440px] text-center text-[13px] text-text-muted">
           Live transcript of both sides, and answers that only use your real experience. Visible to you, never to the other side.
@@ -404,7 +404,7 @@ function TranscriptPane({ meeting, mode }: { meeting: ReturnType<typeof useMeeti
           <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
             {status.live && (
               <BotAvatar
-                kind="pilot"
+                kind="clover"
                 mood={levels.mic > 0.15 || levels.system > 0.15 ? "listening" : "idle"}
                 size={56}
                 title="Listening"
@@ -713,7 +713,7 @@ function AnswerCard({
       )}
       {card.pending ? (
         <div className="flex items-center gap-2.5 py-1 text-[13px]">
-          <BotAvatar kind="pilot" mood="thinking" size={26} />
+          <BotAvatar kind="clover" mood="thinking" size={26} />
           <span className="shimmer-text font-medium">
             {card.action === "screen" ? "Reading your screen…" : "Writing your answer…"}
           </span>

@@ -159,7 +159,7 @@ export function ChatView(props: ChatViewProps) {
           <div className="animate-fade-up flex w-full max-w-[760px] flex-col items-center">
             <div className="mb-5 flex items-end gap-1">
               <BotAvatar kind="kudu" mood="idle" size={72} variant="body" title="Kudu" />
-              <BotAvatar kind="connect" mood={props.browserLinked ? "idle" : "sleeping"} size={38} title={props.browserLinked ? "Kudu Connect linked" : "Kudu Connect not connected"} />
+              <BotAvatar kind="flower" mood={props.browserLinked ? "idle" : "sleeping"} size={38} title={props.browserLinked ? "Kudu Connect linked" : "Kudu Connect not connected"} />
             </div>
             <h1 className="mb-1.5 text-center text-[26px] font-semibold tracking-[-0.02em]">
               {activeProject ? (

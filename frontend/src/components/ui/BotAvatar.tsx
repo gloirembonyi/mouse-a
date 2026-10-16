@@ -20,7 +20,8 @@ export type BotKind = "kudu" | "agent" | "connect" | "lens" | "pilot" | "scout" 
 export type BotMood = "idle" | "still" | "thinking" | "working" | "listening" | "happy" | "sleeping" | "error";
 export type BotVariant = "mascot" | "body" | "mark" | "glyph";
 
-const LEGACY: Record<string, string> = { clover: "pilot", flower: "connect", square: "agent", ghost: "kudu" };
+const LEGACY: Record<string, string> = { ghost: "kudu" };
+const DRAWN = new Set(["clover", "flower", "square"]);
 export function characterOf(kind: BotKind): string {
   const c = LEGACY[kind] || kind;
   return c in CHARACTERS ? c : "kudu";
@@ -109,6 +110,80 @@ function bindGaze() {
   );
 }
 
+const PALETTE: Record<string, { light: string; base: string; dark: string }> = {
+  clover: { light: "#bfe0ff", base: "#5aa4ec", dark: "#2f6fc0" },
+  flower: { light: "#b8f7d4", base: "#25cf7c", dark: "#0f8f52" },
+  square: { light: "#ffc2ee", base: "#e44fc6", dark: "#a2258b" },
+};
+
+function DrawnBody({ kind, fill }: { kind: string; fill: string }) {
+  if (kind === "clover") {
+    return (
+      <g fill={fill}>
+        <circle cx="50" cy="31" r="21" /><circle cx="31" cy="51" r="21" /><circle cx="69" cy="51" r="21" />
+        <circle cx="50" cy="69" r="21" /><circle cx="50" cy="50" r="24" />
+      </g>
+    );
+  }
+  if (kind === "flower") {
+    return (
+      <g fill={fill}>
+        {[0, 72, 144, 216, 288].map((a) => {
+          const r = (a - 90) * (Math.PI / 180);
+          return <circle key={a} cx={50 + Math.cos(r) * 20} cy={52 + Math.sin(r) * 20} r="18" />;
+        })}
+        <circle cx="50" cy="52" r="24" />
+      </g>
+    );
+  }
+  return <rect x="20" y="20" width="60" height="62" rx="20" fill={fill} />;
+}
+
+function DrawnEyes({ mood }: { mood: BotMood }) {
+  const y = 50;
+  const ink = "#14213d";
+  if (mood === "happy") return (<g fill="none" stroke={ink} strokeWidth="3.4" strokeLinecap="round"><path d={`M35 ${y + 2} q5 -7 10 0`} /><path d={`M55 ${y + 2} q5 -7 10 0`} /></g>);
+  if (mood === "sleeping") return (<g fill="none" stroke={ink} strokeWidth="3" strokeLinecap="round"><path d={`M35 ${y} q5 4 10 0`} /><path d={`M55 ${y} q5 4 10 0`} /></g>);
+  if (mood === "error") return (<g fill="none" stroke={ink} strokeWidth="3" strokeLinecap="round"><path d={`M36 ${y - 3} l8 6 M44 ${y - 3} l-8 6`} /><path d={`M56 ${y - 3} l8 6 M64 ${y - 3} l-8 6`} /></g>);
+  const r = mood === "listening" ? 6.6 : mood === "working" ? 4.9 : 5.6;
+  const rx = r * (mood === "working" ? 1 : 0.82);
+  const ey = mood === "thinking" ? y - 1.5 : y;
+  return (
+    <g className="bot-eyes" fill={ink}>
+      <ellipse cx="40" cy={ey} rx={rx} ry={r} /><ellipse cx="60" cy={ey} rx={rx} ry={r} />
+      <circle cx={41.6} cy={ey - 2} r="1.4" fill="#fff" opacity="0.85" /><circle cx={61.6} cy={ey - 2} r="1.4" fill="#fff" opacity="0.85" />
+    </g>
+  );
+}
+
+/** The original felt bots: clover (meetings), flower (browser agent), square (helpers). */
+function DrawnBot({ kind, mood, size, uid }: { kind: string; mood: BotMood; size: number; uid: string }) {
+  const c = PALETTE[kind];
+  const fuzzy = size >= 28;
+  return (
+    <svg viewBox="0 0 100 100" width={size} height={size} overflow="visible">
+      <defs>
+        <radialGradient id={`shade-${uid}`} cx="36%" cy="30%" r="75%">
+          <stop offset="0%" stopColor={c.light} /><stop offset="45%" stopColor={c.base} /><stop offset="100%" stopColor={c.dark} />
+        </radialGradient>
+        <filter id={`felt-${uid}`} x="-15%" y="-15%" width="130%" height="130%">
+          <feTurbulence type="fractalNoise" baseFrequency="1.6" numOctaves="2" seed="3" result="noise" />
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.2" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+        <filter id={`shadow-${uid}`} x="-30%" y="-30%" width="160%" height="170%">
+          <feDropShadow dx="0" dy="2" stdDeviation="2.5" floodColor={c.dark} floodOpacity="0.2" />
+        </filter>
+      </defs>
+      <ellipse className="bot-ground" cx="50" cy="92" rx="22" ry="4.5" fill={c.dark} opacity="0.22" />
+      <g className="bot-body" filter={`url(#shadow-${uid})`}>
+        <g filter={fuzzy ? `url(#felt-${uid})` : undefined}><DrawnBody kind={kind} fill={`url(#shade-${uid})`} /></g>
+        <ellipse cx="38" cy="30" rx="10" ry="6" fill="#fff" opacity="0.28" transform="rotate(-25 38 30)" />
+        <DrawnEyes mood={mood} />
+      </g>
+    </svg>
+  );
+}
+
 export function BotAvatar({
   kind = "kudu",
   mood = "idle",
@@ -126,14 +201,15 @@ export function BotAvatar({
   variant?: BotVariant;
 }) {
   const uid = useId().replace(/:/g, "");
-  const character = characterOf(kind);
+  const isDrawn = DRAWN.has(kind);
+  const character = isDrawn ? kind : characterOf(kind);
   const ref = useRef<HTMLSpanElement>(null);
   // The markup is built once; only the eyes slot changes with the mood (as in the
   // extension's engine), so the ears/horns/props keep their running animations.
-  const [html] = useState(() => buildSvg(uid, size, mood, { prefix: "bot", variant, character }));
+  const [html] = useState(() => (isDrawn ? "" : buildSvg(uid, size, mood, { prefix: "bot", variant, character })));
   const first = useRef(true);
   useEffect(() => {
-    if (first.current) { first.current = false; return; }
+    if (first.current || isDrawn) { first.current = false; return; }
     const slot = ref.current?.querySelector(".bot-eyes-slot");
     if (!slot) return;
     const headPx = variant === "body" ? size * 0.62 : size;
@@ -172,7 +248,9 @@ export function BotAvatar({
       aria-label={title}
       aria-hidden={title ? undefined : true}
       title={title}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+      {...(isDrawn ? {} : { dangerouslySetInnerHTML: { __html: html } })}
+    >
+      {isDrawn ? <DrawnBot kind={kind} mood={mood} size={size} uid={uid} /> : null}
+    </span>
   );
 }

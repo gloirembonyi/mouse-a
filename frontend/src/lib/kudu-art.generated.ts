@@ -125,7 +125,7 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
       `<ellipse cx="${rx - 1.7}" cy="${ey - 2.1}" rx="2" ry="1.4" transform="rotate(-25 ${rx - 1.7} ${ey - 2.1})"${sty(`fill:${PALETTE.eyeHighlight};opacity:.92`)}/>` +
       `<circle cx="${lx + 2.1}" cy="${ey + 2.3}" r=".9"${sty(`fill:${PALETTE.eyeHighlight};opacity:.45`)}/>` +
       `<circle cx="${rx + 2.1}" cy="${ey + 2.3}" r=".9"${sty(`fill:${PALETTE.eyeHighlight};opacity:.45`)}/>`;
-    const ringW = 1.9;
+    const ringW = 2.3;
     const white = sclera
       ? `<ellipse cx="${lx}" cy="${ey}" rx="${(+erx + ringW).toFixed(2)}" ry="${(r + ringW).toFixed(2)}"${sty("fill:#fff")}/>` +
         `<ellipse cx="${rx}" cy="${ey}" rx="${(+erx + ringW).toFixed(2)}" ry="${(r + ringW).toFixed(2)}"${sty("fill:#fff")}/>` +
@@ -171,15 +171,17 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
 
     const faceFill = glyph ? "currentColor" : `url(#${uid}-shade)`;
     const darkFur = !!ch.dark && !glyph;
-    const rim = glyph ? "" : icon ? `stroke:${ink};stroke-opacity:.3;stroke-width:2.2;stroke-linejoin:round;` : `stroke:${(ch.fur || PALETTE.face).dark};stroke-opacity:.35;stroke-width:1.2;stroke-linejoin:round;`;
+    // Felt edge like the dots and the desktop bots; off at icon size and on the logo tile.
+    const feltOn = !icon && !glyph && !mark;
+    const rim = glyph ? "" : icon ? `stroke:${ink};stroke-opacity:.3;stroke-width:2.2;stroke-linejoin:round;` : "";
     const hornStroke = glyph ? "currentColor" : `url(#${uid}-horn)`;
     const hornW = icon ? 7.5 : mark ? 8 : 6.4;
 
     const defs = glyph ? "" :
       `<defs>` +
-        `<radialGradient id="${uid}-shade" cx="34%" cy="26%" r="78%">` +
+        `<radialGradient id="${uid}-shade" cx="36%" cy="30%" r="75%">` +
           `<stop offset="0%" stop-color="${fur.light}"/>` +
-          `<stop offset="38%" stop-color="${fur.base}"/>` +
+          `<stop offset="45%" stop-color="${fur.base}"/>` +
           `<stop offset="100%" stop-color="${fur.dark}"/>` +
         `</radialGradient>` +
         // The 3D: a blurred alpha relief lit by one soft light (diffuse) with a small
@@ -208,9 +210,9 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
             `<filter id="${uid}-soft" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="2.2"/></filter>`
           : "") +
         (figure
-          ? `<radialGradient id="${uid}-body" cx="38%" cy="22%" r="82%">` +
+          ? `<radialGradient id="${uid}-body" cx="36%" cy="28%" r="78%">` +
               `<stop offset="0%" stop-color="${fur.light}"/>` +
-              `<stop offset="42%" stop-color="${fur.base}"/>` +
+              `<stop offset="45%" stop-color="${fur.base}"/>` +
               `<stop offset="100%" stop-color="${fur.dark}"/>` +
             `</radialGradient>`
           : "") +
@@ -224,10 +226,10 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
               `<stop offset="0%" stop-color="${PALETTE.tile[0]}"/><stop offset="100%" stop-color="${PALETTE.tile[1]}"/>` +
             `</linearGradient>`
           : "") +
-        (full && !mark
+        (feltOn
           ? `<filter id="${uid}-felt" x="-15%" y="-15%" width="130%" height="130%">` +
               `<feTurbulence type="fractalNoise" baseFrequency="1.6" numOctaves="2" seed="3" result="noise"/>` +
-              `<feDisplacementMap in="SourceGraphic" in2="noise" scale="${figure ? 3.4 : 2.6}" xChannelSelector="R" yChannelSelector="G"/>` +
+              `<feDisplacementMap in="SourceGraphic" in2="noise" scale="${figure ? 3.6 : full ? 3.2 : 2}" xChannelSelector="R" yChannelSelector="G"/>` +
             `</filter>`
           : "") +
         (figure
@@ -258,7 +260,7 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
       `</g>`;
     const ear = (side, d, innerD) =>
       `<g class="${p}-ear ${p}-ear-${side}">` +
-        `<path d="${d}"${!icon && !glyph ? ` filter="url(#${uid}-plush)"` : ""}${sty(`fill:${faceFill};${rim}`)}/>` +
+        `<path d="${d}"${feltOn ? ` filter="url(#${uid}-felt)"` : ""}${sty(`fill:${faceFill};${rim}`)}/>` +
         (icon || glyph ? "" : `<path d="${innerD}"${sty(`fill:${PALETTE.earInner};opacity:.9`)}/>`) +
       `</g>`;
 
@@ -332,11 +334,14 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
         ear("l", PATHS.earL, PATHS.earLInner) +
         ear("r", PATHS.earR, PATHS.earRInner) +
         (prop === "scarf" && !figure ? propBack : "") +
-        `<g class="${p}-face"${!icon && !glyph ? ` filter="url(#${uid}-plush)"` : ""}>` +
+        `<g class="${p}-face"${feltOn ? ` filter="url(#${uid}-felt)"` : ""}>` +
           `<path d="${PATHS.face}"${sty(`fill:${faceFill};${rim}`)}/>` +
           (icon || glyph ? "" : `<ellipse cx="${PATHS.muzzle.cx}" cy="${PATHS.muzzle.cy}" rx="${PATHS.muzzle.rx}" ry="${PATHS.muzzle.ry}"${sty(ch.fur && o.character !== "kudu" ? `fill:${fur.light};opacity:${darkFur ? ".35" : ".55"}` : `fill:${PALETTE.muzzle};opacity:.5`)}/>`) +
         `</g>` +
-        (icon || glyph ? "" : `<ellipse cx="${PATHS.shine.cx}" cy="${PATHS.shine.cy}" rx="${PATHS.shine.rx}" ry="${PATHS.shine.ry}" transform="rotate(${PATHS.shine.rotate} ${PATHS.shine.cx} ${PATHS.shine.cy})"${sty("fill:#fff;opacity:.16")}/>`) +
+        (icon || glyph ? "" : `<ellipse cx="${PATHS.shine.cx}" cy="${PATHS.shine.cy}" rx="${PATHS.shine.rx}" ry="${PATHS.shine.ry}" transform="rotate(${PATHS.shine.rotate} ${PATHS.shine.cx} ${PATHS.shine.cy})"${sty("fill:#fff;opacity:.3")}/>`) +
+        (icon || glyph ? "" :
+          `<ellipse cx="33.5" cy="58.5" rx="4.6" ry="2.6"${sty("fill:#ff7aa0;opacity:.32")}/>` +
+          `<ellipse cx="66.5" cy="58.5" rx="4.6" ry="2.6"${sty("fill:#ff7aa0;opacity:.32")}/>`) +
         (prop === "mask" ? propFront : "") +
         (icon ? "" : `<path class="${p}-chevron" d="${PATHS.chevron}"${sty(`fill:none;stroke:${glyph ? ink : PALETTE.chevron};stroke-width:${t === "small" ? 4 : 3.6};stroke-linecap:round;stroke-linejoin:round;opacity:${glyph ? ".55" : ".95"}`)}/>`) +
         `<g class="${p}-eyes-slot">${eyesMarkup(mark ? "still" : m, glyph ? 16 : size, p, eyeOpts)}</g>` +
@@ -361,8 +366,8 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
     // itself with a finer nap; the belly patch is a lighter, softer felt.
     const torso = figure
       ? `<g class="${p}-torso">` +
-          `<path d="${PATHS.body}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.75`)}/>` +
-          `<g filter="url(#${uid}-plush)">` +
+
+          `<g filter="url(#${uid}-felt)">` +
             `<path d="${PATHS.body}"${sty(`fill:url(#${uid}-body);${rim}`)}/>` +
             `<ellipse cx="${PATHS.belly.cx}" cy="${PATHS.belly.cy}" rx="${PATHS.belly.rx}" ry="${PATHS.belly.ry}" transform="rotate(-12 ${PATHS.belly.cx} ${PATHS.belly.cy})"${sty(`fill:${fur.light};opacity:${darkFur ? ".3" : ".55"}`)}/>` +
           `</g>` +
@@ -377,9 +382,7 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
           ? `<ellipse cx="50" cy="59" rx="15" ry="4.5" filter="url(#${uid}-soft)"${sty(`fill:${ink};opacity:.28`)}/>` +
             neckScarf +
             `<g transform="translate(${(50 - 50 * HEAD_SCALE).toFixed(1)} 5) scale(${HEAD_SCALE})">` +
-              `<path d="${PATHS.face}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.7`)}/>` +
-              `<path d="${PATHS.earL}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.6`)}/>` +
-              `<path d="${PATHS.earR}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.6`)}/>` +
+
               headInner +
             `</g>`
           : headInner) +

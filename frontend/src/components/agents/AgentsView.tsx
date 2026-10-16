@@ -103,7 +103,7 @@ export function AgentsView({ agents, onClose }: AgentsViewProps) {
             </div>
             {ordered.length === 0 ? (
               <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border-default px-6 py-8 text-center">
-                <BotAvatar kind="agent" mood="sleeping" size={44} variant="body" />
+                <BotAvatar kind="square" mood="sleeping" size={40} />
                 <p className="text-[12.5px] text-text-secondary">No handoffs yet</p>
                 <p className="max-w-[380px] text-[12px] text-text-muted">
                   Try “Find the cheapest flight to Kigali next Friday and save the options to a file on my Desktop” -
@@ -135,7 +135,7 @@ function TeamMember({
 }) {
   return (
     <div className="flex w-[120px] flex-col items-center gap-2">
-      <BotAvatar kind={kind} mood={mood} size={72} variant="body" />
+      <BotAvatar kind={kind} mood={mood} size={kind === "kudu" ? 72 : 64} variant={kind === "kudu" ? "body" : "mascot"} />
       <div className="text-center">
         <div className="text-[13px] font-semibold">{name}</div>
         <div className="flex items-center justify-center gap-1 text-[11px] text-text-muted">

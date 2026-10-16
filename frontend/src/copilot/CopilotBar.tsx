@@ -315,7 +315,7 @@ export function CopilotBar() {
           title={live ? "Listening - click to show or hide" : "Kudu Pilot"}
         >
           {live ? (
-            <BotAvatar kind="pilot" mood={busy ? "thinking" : speaking ? "listening" : "idle"} size={28} />
+            <BotAvatar kind="clover" mood={busy ? "thinking" : speaking ? "listening" : "idle"} size={28} />
           ) : (
             <BrandMark size={28} mood="idle" />
           )}
