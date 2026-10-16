@@ -33,10 +33,10 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
   // eyes wide on the brow with the white chevron between them, big rounded ears, tall
   // spiral horns. The head sits low so the horns have room; ground shadow at y=96.
   const PATHS = {
-    face: "M30 44c0-8 9-13 20-13s20 5 20 13c0 12-6 26-10 36-3 8-6 13-10 13s-7-5-10-13C36 70 30 56 30 44z",
-    muzzle: { cx: 50, cy: 82, rx: 9, ry: 10 },
+    face: "M29 44c0-8.5 9.5-13.5 21-13.5s21 5 21 13.5c0 10-5 22-9 29.5-3 5.5-7 9.5-12 9.5s-9-4-12-9.5C34 66 29 54 29 44z",
+    muzzle: { cx: 50, cy: 72, rx: 10, ry: 8 },
     shine: { cx: 41, cy: 40, rx: 7, ry: 4, rotate: -25 },
-    chevron: "M40 56L50 63 60 56",
+    chevron: "M40 55L50 62 60 55",
     earL: "M34 46C22 42 8 30 11 16 22 15 36 27 38 44Z",
     earLInner: "M32 43C25 40 16 31 17 21 25 24 32 33 34 42Z",
     earR: "M66 46C78 42 92 30 89 16 78 15 64 27 62 44Z",
@@ -47,24 +47,24 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
     hornR: "M57 36C59 29 68 27 68 19 68 12 59 12 61 5",
     hornRHi: "M60 30C64 28 66 24 66 19",
     hornRRidge: "M62.5 27.8l4.6 1.8M66.4 20.5l4.4.2M63.6 13.2l4.2-1.4",
-    eyes: { lx: 38.5, rx: 61.5, y: 50 },
-    nose: { cx: 50, cy: 86, rx: 4.2, ry: 2.8 },
-    noseShine: { cx: 48.7, cy: 85.1, r: 0.8 },
-    ground: { cx: 50, cy: 96, rx: 14, ry: 3 },
+    eyes: { lx: 38.5, rx: 61.5, y: 49 },
+    nose: { cx: 50, cy: 76.5, rx: 4, ry: 2.6 },
+    noseShine: { cx: 48.8, cy: 75.7, r: 0.8 },
+    ground: { cx: 50, cy: 88, rx: 15, ry: 3 },
     mouth: {
-      listening: "M46.5 90q3.5 2.5 7 0",
-      working: "M46.5 90h7",
-      thinking: { cx: 50, cy: 90.3, r: 1.5 },
-      happy: "M45.5 89q4.5 4.5 9 0",
-      error: "M45.5 90.3q2.3-2 4.5 0t4.5 0",
+      listening: "M46.5 80.5q3.5 2.5 7 0",
+      working: "M46.5 80.5h7",
+      thinking: { cx: 50, cy: 80.8, r: 1.5 },
+      happy: "M45.5 79.5q4.5 4.5 9 0",
+      error: "M45.5 80.8q2.3-2 4.5 0t4.5 0",
     },
-    eyesHappy: ["M33.5 52q5-7 10 0", "M56.5 52q5-7 10 0"],
-    eyesSleeping: ["M33.5 50q5 4 10 0", "M56.5 50q5 4 10 0"],
-    eyesError: ["M34.5 47l8 6M42.5 47l-8 6", "M57.5 47l8 6M65.5 47l-8 6"],
+    eyesHappy: ["M33.5 51q5-7 10 0", "M56.5 51q5-7 10 0"],
+    eyesSleeping: ["M33.5 49q5 4 10 0", "M56.5 49q5 4 10 0"],
+    eyesError: ["M34.5 46l8 6M42.5 46l-8 6", "M57.5 46l8 6M65.5 46l-8 6"],
     // The plush body ("body" variant): a chubby felt pebble, wider than tall, flat on the
     // ground, like a dot. The head sits on it with no neck. A lighter patch, no feet.
-    body: "M20 86c-3-18 10-33 30-33s33 15 30 33c-1.5 7-7 11.5-14 12.5-10 1.4-22 1.4-32 0C27 97.5 21.5 93 20 86z",
-    belly: { cx: 47, cy: 78, rx: 13, ry: 10 },
+    body: "M20 85c-3-18 10-33 30-33s33 15 30 33c-1.5 7-7 11.5-14 12.5-10 1.4-22 1.4-32 0C27 96.5 21.5 92 20 85z",
+    belly: { cx: 47, cy: 77, rx: 13, ry: 10 },
     // Pivots (viewBox units) for the parts that rotate.
     pivots: { earL: "33px 44px", earR: "67px 44px", hornL: "43px 36px", hornR: "57px 36px" },
   };
@@ -83,7 +83,9 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
   function eyesMarkup(mood, size, prefix, opts) {
     const p = prefix || "tm";
     const t = tierOf(size || 32);
-    const sclera = !!(opts && opts.sclera);
+    const sclera = opts && opts.sclera !== undefined ? !!opts.sclera : t !== "icon";
+    const onDark = !!(opts && opts.onDark);
+    const uid = (opts && opts.uid) || "";
     const ink = PALETTE.ink;
     const y = PATHS.eyes.y;
     const lx = PATHS.eyes.lx;
@@ -91,7 +93,7 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
     const line = (w, extra) => sty(`fill:none;stroke:${ink};stroke-width:${w};stroke-linecap:round;stroke-linejoin:round;${extra || ""}`);
     const mouthStyle = line(2.6, "opacity:.78");
     // On the cloak's dark mask the eyes get a white sclera and white strokes.
-    const lineC = sclera ? (w, extra) => sty(`fill:none;stroke:#fff;stroke-width:${w};stroke-linecap:round;stroke-linejoin:round;${extra || ""}`) : line;
+    const lineC = onDark ? (w, extra) => sty(`fill:none;stroke:#fff;stroke-width:${w};stroke-linecap:round;stroke-linejoin:round;${extra || ""}`) : line;
     const mouth = (m) => {
       if (t === "icon") return "";
       const d = PATHS.mouth[m];
@@ -113,18 +115,28 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
     const r = mood === "listening" ? 6.6 : mood === "working" ? 4.9 : t === "icon" ? 6.2 : 5.6;
     const erx = (r * (mood === "working" ? 1 : 0.82)).toFixed(2);
     const ey = mood === "thinking" ? y - 1.5 : y;
+    // Glossy eyes: a white ring (the dot's look), a pupil shaded like a sphere, one big
+    // highlight top-left and a small bounce light bottom-right.
+    const pupil = uid && t !== "icon" ? `url(#${uid}-eye)` : ink;
     const hi = t === "icon" ? "" :
-      `<circle cx="${lx + 1.6}" cy="${ey - 2}" r="1.4"${sty(`fill:${PALETTE.eyeHighlight};opacity:.85`)}/>` +
-      `<circle cx="${rx + 1.6}" cy="${ey - 2}" r="1.4"${sty(`fill:${PALETTE.eyeHighlight};opacity:.85`)}/>`;
+      `<ellipse cx="${lx - 1.7}" cy="${ey - 2.1}" rx="2" ry="1.4" transform="rotate(-25 ${lx - 1.7} ${ey - 2.1})"${sty(`fill:${PALETTE.eyeHighlight};opacity:.92`)}/>` +
+      `<ellipse cx="${rx - 1.7}" cy="${ey - 2.1}" rx="2" ry="1.4" transform="rotate(-25 ${rx - 1.7} ${ey - 2.1})"${sty(`fill:${PALETTE.eyeHighlight};opacity:.92`)}/>` +
+      `<circle cx="${lx + 2.1}" cy="${ey + 2.3}" r=".9"${sty(`fill:${PALETTE.eyeHighlight};opacity:.45`)}/>` +
+      `<circle cx="${rx + 2.1}" cy="${ey + 2.3}" r=".9"${sty(`fill:${PALETTE.eyeHighlight};opacity:.45`)}/>`;
+    const ringW = 1.9;
     const white = sclera
-      ? `<ellipse cx="${lx}" cy="${ey}" rx="${(+erx + 2.2).toFixed(2)}" ry="${r + 2.2}"${sty("fill:#fff")}/>` +
-        `<ellipse cx="${rx}" cy="${ey}" rx="${(+erx + 2.2).toFixed(2)}" ry="${r + 2.2}"${sty("fill:#fff")}/>`
+      ? `<ellipse cx="${lx}" cy="${ey}" rx="${(+erx + ringW).toFixed(2)}" ry="${(r + ringW).toFixed(2)}"${sty("fill:#fff")}/>` +
+        `<ellipse cx="${rx}" cy="${ey}" rx="${(+erx + ringW).toFixed(2)}" ry="${(r + ringW).toFixed(2)}"${sty("fill:#fff")}/>` +
+        `<ellipse cx="${lx}" cy="${ey + 0.6}" rx="${(+erx + ringW).toFixed(2)}" ry="${(r + ringW).toFixed(2)}"${sty(`fill:${ink};opacity:.14`)}/>` +
+        `<ellipse cx="${rx}" cy="${ey + 0.6}" rx="${(+erx + ringW).toFixed(2)}" ry="${(r + ringW).toFixed(2)}"${sty(`fill:${ink};opacity:.14`)}/>` +
+        `<ellipse cx="${lx}" cy="${ey}" rx="${(+erx + ringW).toFixed(2)}" ry="${(r + ringW).toFixed(2)}"${sty("fill:#fff")}/>` +
+        `<ellipse cx="${rx}" cy="${ey}" rx="${(+erx + ringW).toFixed(2)}" ry="${(r + ringW).toFixed(2)}"${sty("fill:#fff")}/>`
       : "";
     return (
       `<g class="${p}-eyes"${sty(`fill:${ink};stroke:none`)}>` +
         white +
-        `<ellipse cx="${lx}" cy="${ey}" rx="${erx}" ry="${r}"/>` +
-        `<ellipse cx="${rx}" cy="${ey}" rx="${erx}" ry="${r}"/>` +
+        `<ellipse cx="${lx}" cy="${ey}" rx="${erx}" ry="${r}"${sty(`fill:${pupil}`)}/>` +
+        `<ellipse cx="${rx}" cy="${ey}" rx="${erx}" ry="${r}"${sty(`fill:${pupil}`)}/>` +
         hi +
       `</g>` + mouth(mood)
     );
@@ -145,7 +157,7 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
     const prop = variant === "glyph" ? null : ch.prop;
     const m = normalizeMood(mood);
     const figure = variant === "body";
-    const HEAD_SCALE = 0.6;
+    const HEAD_SCALE = 0.64;
     const headPx = figure ? size * HEAD_SCALE : size;
     const t = variant === "glyph" ? "icon" : tierOf(headPx);
     const fur = ch.fur || PALETTE.face;
@@ -168,6 +180,31 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
           `<stop offset="45%" stop-color="${fur.base}"/>` +
           `<stop offset="100%" stop-color="${fur.dark}"/>` +
         `</radialGradient>` +
+        // The 3D: a blurred alpha relief lit by one soft light (diffuse) with a small
+        // specular, multiplied into the fur colour, then roughened into felt. The same
+        // light for every part so the figure reads as one object.
+        (!icon
+          ? `<filter id="${uid}-plush" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">` +
+              `<feGaussianBlur in="SourceAlpha" stdDeviation="${figure ? 2.2 : 2.6}" result="relief"/>` +
+              `<feDiffuseLighting in="relief" surfaceScale="${figure ? 7 : 6}" diffuseConstant="1.3" lighting-color="#ffffff" result="diff">` +
+                `<feDistantLight azimuth="235" elevation="62"/>` +
+              `</feDiffuseLighting>` +
+              `<feComposite in="diff" in2="SourceGraphic" operator="arithmetic" k1="1" k2="0" k3="0.06" k4="0" result="lit"/>` +
+              `<feSpecularLighting in="relief" surfaceScale="${figure ? 7 : 6}" specularConstant="0.32" specularExponent="14" lighting-color="#ffffff" result="spec">` +
+                `<fePointLight x="26" y="4" z="120"/>` +
+              `</feSpecularLighting>` +
+              `<feComposite in="spec" in2="SourceAlpha" operator="in" result="specIn"/>` +
+              `<feComposite in="specIn" in2="lit" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="shaded"/>` +
+              (full
+                ? `<feTurbulence type="fractalNoise" baseFrequency="1.5" numOctaves="2" seed="3" result="noise"/>` +
+                  `<feDisplacementMap in="shaded" in2="noise" scale="${figure ? 3.2 : 2.4}" xChannelSelector="R" yChannelSelector="G"/>`
+                : `<feOffset in="shaded" dx="0" dy="0"/>`) +
+            `</filter>` +
+            `<radialGradient id="${uid}-eye" cx="38%" cy="32%" r="72%">` +
+              `<stop offset="0%" stop-color="#55628a"/><stop offset="45%" stop-color="#1d2440"/><stop offset="100%" stop-color="#080c1a"/>` +
+            `</radialGradient>` +
+            `<filter id="${uid}-soft" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="2.2"/></filter>`
+          : "") +
         (figure
           ? `<radialGradient id="${uid}-body" cx="40%" cy="25%" r="80%">` +
               `<stop offset="0%" stop-color="${fur.light}"/>` +
@@ -219,7 +256,7 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
       `</g>`;
     const ear = (side, d, innerD) =>
       `<g class="${p}-ear ${p}-ear-${side}">` +
-        `<path d="${d}"${sty(`fill:${faceFill};${rim}`)}/>` +
+        `<path d="${d}"${!icon && !glyph ? ` filter="url(#${uid}-plush)"` : ""}${sty(`fill:${faceFill};${rim}`)}/>` +
         (icon || glyph ? "" : `<path d="${innerD}"${sty(`fill:${PALETTE.earInner};opacity:.9`)}/>`) +
       `</g>`;
 
@@ -278,7 +315,7 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
       }
       return "";
     })();
-    const eyeOpts = (prop === "mask" || darkFur) && !icon ? { sclera: true } : undefined;
+    const eyeOpts = { uid: glyph ? "" : uid, sclera: !icon, onDark: (prop === "mask" || darkFur) && !icon };
 
     const groundShadow = mark || glyph ? "" :
       `<ellipse class="${p}-ground" cx="${PATHS.ground.cx}" cy="${figure ? 99 : PATHS.ground.cy}" rx="${figure ? 22 : PATHS.ground.rx}" ry="${figure ? 2.6 : PATHS.ground.ry}"${sty(`fill:${ink};opacity:.16`)}/>`;
@@ -293,11 +330,11 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
         ear("l", PATHS.earL, PATHS.earLInner) +
         ear("r", PATHS.earR, PATHS.earRInner) +
         (prop === "scarf" ? propBack : "") +
-        `<g class="${p}-face"${full && !mark && !glyph ? ` filter="url(#${uid}-felt)"` : ""}>` +
+        `<g class="${p}-face"${!icon && !glyph ? ` filter="url(#${uid}-plush)"` : ""}>` +
           `<path d="${PATHS.face}"${sty(`fill:${faceFill};${rim}`)}/>` +
           (icon || glyph ? "" : `<ellipse cx="${PATHS.muzzle.cx}" cy="${PATHS.muzzle.cy}" rx="${PATHS.muzzle.rx}" ry="${PATHS.muzzle.ry}"${sty(ch.fur && o.character !== "kudu" ? `fill:#fff;opacity:${darkFur ? ".22" : ".38"}` : `fill:${PALETTE.muzzle};opacity:.5`)}/>`) +
         `</g>` +
-        (icon || glyph ? "" : `<ellipse cx="${PATHS.shine.cx}" cy="${PATHS.shine.cy}" rx="${PATHS.shine.rx}" ry="${PATHS.shine.ry}" transform="rotate(${PATHS.shine.rotate} ${PATHS.shine.cx} ${PATHS.shine.cy})"${sty("fill:#fff;opacity:.5")}/>`) +
+        (icon || glyph ? "" : `<ellipse cx="${PATHS.shine.cx}" cy="${PATHS.shine.cy}" rx="${PATHS.shine.rx}" ry="${PATHS.shine.ry}" transform="rotate(${PATHS.shine.rotate} ${PATHS.shine.cx} ${PATHS.shine.cy})"${sty("fill:#fff;opacity:.28")}/>`) +
         (prop === "mask" ? propFront : "") +
         (icon ? "" : `<path class="${p}-chevron" d="${PATHS.chevron}"${sty(`fill:none;stroke:${glyph ? ink : PALETTE.chevron};stroke-width:${t === "small" ? 4 : 3.6};stroke-linecap:round;stroke-linejoin:round;opacity:${glyph ? ".55" : ".95"}`)}/>`) +
         `<g class="${p}-eyes-slot">${eyesMarkup(mark ? "still" : m, glyph ? 16 : size, p, eyeOpts)}</g>` +
@@ -313,7 +350,7 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
     const torso = figure
       ? `<g class="${p}-torso">` +
           `<path d="${PATHS.body}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.75`)}/>` +
-          `<g filter="url(#${uid}-nap)">` +
+          `<g filter="url(#${uid}-plush)">` +
             `<path d="${PATHS.body}"${sty(`fill:url(#${uid}-body);${rim}`)}/>` +
             `<ellipse cx="${PATHS.belly.cx}" cy="${PATHS.belly.cy}" rx="${PATHS.belly.rx}" ry="${PATHS.belly.ry}" transform="rotate(-12 ${PATHS.belly.cx} ${PATHS.belly.cy})"${sty(`fill:#fff;opacity:${darkFur ? ".16" : ".4"}`)}/>` +
           `</g>` +
@@ -325,7 +362,8 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
       `<g class="${p}-body"${icon || glyph ? "" : ` filter="url(#${uid}-shadow)"`}>` +
         torso +
         (figure
-          ? `<g transform="translate(${(50 - 50 * HEAD_SCALE).toFixed(1)} 6) scale(${HEAD_SCALE})">` +
+          ? `<ellipse cx="50" cy="59" rx="15" ry="4.5" filter="url(#${uid}-soft)"${sty(`fill:${ink};opacity:.28`)}/>` +
+            `<g transform="translate(${(50 - 50 * HEAD_SCALE).toFixed(1)} 5) scale(${HEAD_SCALE})">` +
               `<path d="${PATHS.face}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.7`)}/>` +
               `<path d="${PATHS.earL}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.6`)}/>` +
               `<path d="${PATHS.earR}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.6`)}/>` +
