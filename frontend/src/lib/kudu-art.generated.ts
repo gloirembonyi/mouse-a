@@ -61,10 +61,10 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
     eyesHappy: ["M33.5 52q5-7 10 0", "M56.5 52q5-7 10 0"],
     eyesSleeping: ["M33.5 50q5 4 10 0", "M56.5 50q5 4 10 0"],
     eyesError: ["M34.5 47l8 6M42.5 47l-8 6", "M57.5 47l8 6M65.5 47l-8 6"],
-    // The plush body ("body" variant): a soft bean under the head, a lighter belly, two feet.
-    body: "M27 97c-2-22 6-39 23-39s25 17 23 39c0 1.8-1.4 3-3.2 3H30.2C28.4 100 27 98.8 27 97z",
-    belly: { cx: 50, cy: 83, rx: 11, ry: 12 },
-    feet: [{ cx: 41, cy: 97.5, rx: 6, ry: 2.4 }, { cx: 59, cy: 97.5, rx: 6, ry: 2.4 }],
+    // The plush body ("body" variant): a chubby felt pebble, wider than tall, flat on the
+    // ground, like a dot. The head sits on it with no neck. A lighter patch, no feet.
+    body: "M20 86c-3-18 10-33 30-33s33 15 30 33c-1.5 7-7 11.5-14 12.5-10 1.4-22 1.4-32 0C27 97.5 21.5 93 20 86z",
+    belly: { cx: 47, cy: 78, rx: 13, ry: 10 },
     // Pivots (viewBox units) for the parts that rotate.
     pivots: { earL: "33px 44px", earR: "67px 44px", hornL: "43px 36px", hornR: "57px 36px" },
   };
@@ -145,7 +145,7 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
     const prop = variant === "glyph" ? null : ch.prop;
     const m = normalizeMood(mood);
     const figure = variant === "body";
-    const HEAD_SCALE = 0.62;
+    const HEAD_SCALE = 0.6;
     const headPx = figure ? size * HEAD_SCALE : size;
     const t = variant === "glyph" ? "icon" : tierOf(headPx);
     const fur = ch.fur || PALETTE.face;
@@ -188,7 +188,18 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
         (full && !mark
           ? `<filter id="${uid}-felt" x="-15%" y="-15%" width="130%" height="130%">` +
               `<feTurbulence type="fractalNoise" baseFrequency="1.6" numOctaves="2" seed="3" result="noise"/>` +
-              `<feDisplacementMap in="SourceGraphic" in2="noise" scale="2.6" xChannelSelector="R" yChannelSelector="G"/>` +
+              `<feDisplacementMap in="SourceGraphic" in2="noise" scale="${figure ? 3.4 : 2.6}" xChannelSelector="R" yChannelSelector="G"/>` +
+            `</filter>`
+          : "") +
+        (figure
+          ? `<filter id="${uid}-fuzz" x="-25%" y="-25%" width="150%" height="150%">` +
+              `<feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" seed="11" result="hair"/>` +
+              `<feDisplacementMap in="SourceGraphic" in2="hair" scale="9" xChannelSelector="R" yChannelSelector="G" result="shag"/>` +
+              `<feGaussianBlur in="shag" stdDeviation="0.35"/>` +
+            `</filter>` +
+            `<filter id="${uid}-nap" x="-20%" y="-20%" width="140%" height="140%">` +
+              `<feTurbulence type="fractalNoise" baseFrequency="1.3" numOctaves="2" seed="5" result="n"/>` +
+              `<feDisplacementMap in="SourceGraphic" in2="n" scale="4.5" xChannelSelector="R" yChannelSelector="G"/>` +
             `</filter>`
           : "") +
         (icon ? "" :
@@ -297,11 +308,15 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
         `</g>` +
       `</g>`;
 
+    // The felt body: a hairy halo behind (the fuzz you see on a plush edge) and the body
+    // itself with a finer nap; the belly patch is a lighter, softer felt.
     const torso = figure
       ? `<g class="${p}-torso">` +
-          `<path d="${PATHS.body}"${sty(`fill:url(#${uid}-body);${rim}`)}/>` +
-          `<ellipse cx="${PATHS.belly.cx}" cy="${PATHS.belly.cy}" rx="${PATHS.belly.rx}" ry="${PATHS.belly.ry}"${sty(`fill:#fff;opacity:${darkFur ? ".18" : ".42"}`)}/>` +
-          PATHS.feet.map((f) => `<ellipse cx="${f.cx}" cy="${f.cy}" rx="${f.rx}" ry="${f.ry}"${sty(`fill:${ink};opacity:.55`)}/>`).join("") +
+          `<path d="${PATHS.body}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.75`)}/>` +
+          `<g filter="url(#${uid}-nap)">` +
+            `<path d="${PATHS.body}"${sty(`fill:url(#${uid}-body);${rim}`)}/>` +
+            `<ellipse cx="${PATHS.belly.cx}" cy="${PATHS.belly.cy}" rx="${PATHS.belly.rx}" ry="${PATHS.belly.ry}" transform="rotate(-12 ${PATHS.belly.cx} ${PATHS.belly.cy})"${sty(`fill:#fff;opacity:${darkFur ? ".16" : ".4"}`)}/>` +
+          `</g>` +
         `</g>`
       : "";
     // In the figure the head is scaled onto the shoulders by a static wrapper, so the
@@ -309,7 +324,14 @@ const MOODS = ["idle", "still", "thinking", "working", "listening", "happy", "sl
     const head =
       `<g class="${p}-body"${icon || glyph ? "" : ` filter="url(#${uid}-shadow)"`}>` +
         torso +
-        (figure ? `<g transform="translate(${(50 - 50 * HEAD_SCALE).toFixed(1)} 2) scale(${HEAD_SCALE})">${headInner}</g>` : headInner) +
+        (figure
+          ? `<g transform="translate(${(50 - 50 * HEAD_SCALE).toFixed(1)} 6) scale(${HEAD_SCALE})">` +
+              `<path d="${PATHS.face}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.7`)}/>` +
+              `<path d="${PATHS.earL}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.6`)}/>` +
+              `<path d="${PATHS.earR}" filter="url(#${uid}-fuzz)"${sty(`fill:${fur.base};opacity:.6`)}/>` +
+              headInner +
+            `</g>`
+          : headInner) +
       `</g>`;
 
     const body = mark
