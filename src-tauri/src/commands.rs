@@ -190,6 +190,26 @@ pub fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// How this copy was installed, for the in-app updater (frontend lib/updater.ts).
+/// The updater can replace the Windows (NSIS) install, the macOS .app and a Linux
+/// AppImage; a .deb/.rpm install is owned by the package manager, so the UI only
+/// says a new version exists there. The AppImage runtime sets `APPIMAGE` to the
+/// image's path - the same check the updater plugin itself makes.
+#[tauri::command]
+pub fn install_kind() -> &'static str {
+    if cfg!(target_os = "linux") {
+        if std::env::var_os("APPIMAGE").is_some() {
+            "appimage"
+        } else {
+            "package"
+        }
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "windows"
+    }
+}
+
 // ── Settings Commands ────────────────────────────────────────────
 
 #[tauri::command]

@@ -13,6 +13,7 @@ import {
   withTimeout,
 } from "../../lib/tauri";
 import { DesktopSection } from "./DesktopSection";
+import { UpdateSection } from "./UpdateSection";
 import { useTheme, type ThemePref } from "../../lib/theme";
 import type { User } from "../../lib/types";
 import { IconButton, Kbd } from "../ui/primitives";
@@ -218,6 +219,7 @@ export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPa
               Kudu Desktop v{appVersion} - the assistant for your whole desktop. The ✕ button hides the window to the system tray; Kudu keeps
               listening for its shortcuts in the background.
             </p>
+            <UpdateSection appVersion={appVersion} />
             <div>
               <Button onClick={() => quitApp().catch(() => {})} danger>
                 <Power size={13} />

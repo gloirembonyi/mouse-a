@@ -81,6 +81,10 @@ export const testBackend = () => invoke<string>("test_backend");
 export const getMcpServers = () => invoke<string>("get_mcp_servers");
 export const setMcpServers = (json: string) => invoke<string>("set_mcp_servers", { json });
 export const quitApp = () => invoke<void>("quit_app");
+/** How this copy was installed (commands.rs install_kind): the in-app updater
+ *  can replace everything except a Linux .deb/.rpm ("package"). */
+export type InstallKind = "windows" | "macos" | "appimage" | "package";
+export const installKind = () => invoke<InstallKind>("install_kind");
 
 // ── Window state events ──────────────────────────────────
 export const onAiState = (cb: (active: boolean) => void) =>

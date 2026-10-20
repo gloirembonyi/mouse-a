@@ -4,6 +4,7 @@ import { AppShell } from "./components/layout/AppShell";
 import { Sidebar } from "./components/layout/Sidebar";
 import { AuthGate } from "./components/auth/AuthGate";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
+import { UpdateBanner } from "./components/layout/UpdateBanner";
 import { ChatView } from "./components/chat/ChatView";
 import { useAuth } from "./hooks/useAuth";
 import { useConversations } from "./hooks/useConversations";
@@ -24,6 +25,7 @@ import {
   toggleAiActive,
 } from "./lib/tauri";
 import { threadTitle } from "./lib/format";
+import { startAutoUpdateChecks } from "./lib/updater";
 import { OPEN_DOCK_EVENT } from "./lib/openFile";
 import type { Attachment, UiMessage } from "./lib/chatTypes";
 
@@ -77,6 +79,9 @@ export default function App() {
   }, [rightDockOpen]);
   const [aiActive, setAiActive] = useState(false);
   const [injected, setInjected] = useState<Attachment[]>([]);
+
+  // In-app updates: first check ~10 s after launch, then every 6 h (lib/updater.ts).
+  useEffect(() => startAutoUpdateChecks(), []);
 
   useEffect(() => {
     if (auth.status !== "signed-in") return;
@@ -351,6 +356,7 @@ export default function App() {
             />
           )}
         </AppShell>
+        <UpdateBanner />
       </div>
     </div>
   );

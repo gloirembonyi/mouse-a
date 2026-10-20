@@ -61,13 +61,14 @@ There are no automated tests in this repo currently.
 ## Cross-platform rules
 
 The app ships for Windows, macOS and Linux (`.github/workflows/build.yml` builds all three on every push).
-A `v*` tag is a release: the same workflow's `release` job publishes one GitHub release with every
-installer attached once ALL three builds succeed (never a half-filled one). Cut one with
-`npm run release -- 0.2.0` (bumps `tauri.conf.json`/`Cargo.toml`/`Cargo.lock`/`package.json` via
-`scripts/bump-version.mjs`, commits, tags, pushes) or from GitHub: Actions -> Release -> Run workflow.
-The build fails on a tag whose version does not match `tauri.conf.json`, so never tag by hand. The
-repo is private, so release assets need a login; set the `RELEASES_REPO` variable + `RELEASES_TOKEN`
-secret to mirror each release into a public repo for the landing page's download link. Keep it that way:
+**Releases are automatic**: every push to `main` whose three builds all succeed is published as a
+GitHub release (the `version` job picks `tauri.conf.json`'s version, or the next patch after the
+newest tag when that one is already released, and the builds stamp it in via
+`scripts/bump-version.mjs` without committing). A hand-pushed `v*` tag / `npm run release -- 0.3.0`
+still releases exactly that version (and must match `tauri.conf.json`). The repo is public, so
+https://kuduagent.vercel.app/download serves the latest release directly. Signing switches on when
+the `APPLE_*` / `WINDOWS_CERTIFICATE*` secrets exist - see `docs/DISTRIBUTION.md` (why the
+installers warn today, and the Microsoft Store / Apple Developer routes that remove it). Keep it that way:
 
 - Anything Win32 lives behind `#[cfg(windows)]` with a `#[cfg(not(windows))]` counterpart in the same
   file that does the closest honest thing - never a silent no-op that makes a tool "succeed". Today:
@@ -271,6 +272,34 @@ Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/confi
     file in its first turn (`prompt.rs project_notes_block`) for any task in that project.
   - `renderMarkdown` keeps numbered lists together across blank lines and preserves item numbers
     (`<li value>`); the test in the session scratchpad exercises the shapes models emit.
+
+### In-app updates (tauri-plugin-updater + tauri-plugin-process)
+
+- **Endpoint**: `https://github.com/gloirembonyi/mouse-a/releases/latest/download/latest.json`
+  (`plugins.updater.endpoints` in `tauri.conf.json`). CI signs every release and uploads that
+  static `latest.json` plus the `.sig` files (`bundle.createUpdaterArtifacts: true`); platform keys
+  `windows-x86_64` (NSIS setup .exe), `darwin-aarch64`/`darwin-x86_64` (universal .app.tar.gz),
+  `linux-x86_64` (.AppImage).
+- **Keys**: `plugins.updater.pubkey` is the public key (safe to commit). The private key lives
+  only in the GitHub secrets `TAURI_SIGNING_PRIVATE_KEY`/`_PASSWORD` and the owner's offline
+  backup - never in this repo, a `.env`, or a log. Losing it means installed copies can never
+  verify another update, so a new key would need a manual reinstall for every user.
+- **Frontend**: `lib/updater.ts` is one module-level store (shared by `components/layout/UpdateBanner.tsx`
+  and Settings → About's `components/settings/UpdateSection.tsx`): first `check()` ~10 s after launch,
+  then every 6 h while "Automatically check for updates" is on (`mouse-ai-update-auto`). A closed
+  banner remembers the version (`mouse-ai-update-dismissed`); Settings still offers it. "Update &
+  restart" = `downloadAndInstall` with progress, then `relaunch()`; errors link to
+  https://kuduagent.vercel.app/download. Dev builds never check unless localStorage
+  `mouse-ai-update-debug` = `on`.
+- **Per OS**: Windows runs the signed NSIS installer in `installMode: "passive"` (small progress
+  window, no wizard); it closes the app itself and starts the new version. macOS replaces the
+  .app bundle and we relaunch. Linux can only replace an AppImage: `install_kind` (commands.rs)
+  reports `appimage` when `APPIMAGE` is set, else `package`, and for .deb/.rpm installs the UI only
+  says a new version exists (package manager / website), never an install button.
+- Capabilities: `updater:default` + `process:allow-restart` in `capabilities/default.json`.
+- Because updater artifacts are on, a local `npm run build` (tauri build) ends with a signing
+  error unless `TAURI_SIGNING_PRIVATE_KEY` is set; the installers are already built by then.
+  `npm run dev` is unaffected.
 
 ### Config
 

@@ -79,6 +79,10 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        // In-app updates: the frontend's lib/updater.ts checks the signed
+        // latest.json on the GitHub releases and installs; process relaunches.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState {
             backend: backend::BackendClient::new(None),
             ai_active: Arc::new(RwLock::new(false)),
@@ -131,6 +135,7 @@ pub fn run() {
             commands::get_mcp_servers,
             commands::set_mcp_servers,
             commands::quit_app,
+            commands::install_kind,
             fs_browser::fs_home_dir,
             fs_browser::fs_list_dir,
             fs_browser::fs_read_text_file,

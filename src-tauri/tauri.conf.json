@@ -90,8 +90,20 @@
       }
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc5OUNDOTQ0OUNERjlGNjkKUldScG45K2NSTW1jZVlWVENHR3g0WEFWRFhDUUFEZ29Eb0RSMVNTY2YzK0ZvQkphYjZ6bEZEYU8K",
+      "endpoints": [
+        "https://github.com/gloirembonyi/mouse-a/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",

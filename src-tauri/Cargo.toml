@@ -33,6 +33,8 @@ portable-pty = "0.9"
 tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 tauri-plugin-single-instance = "2"
+# In-app updates: relaunch() after the updater installs a new version.
+tauri-plugin-process = "2"
 # Meeting copilot audio: microphone + WASAPI loopback (system audio) capture.
 cpal = "0.15"
 # Editor document viewers: spreadsheets (xlsx/xls/ods) and the Office Open XML
@@ -54,6 +56,11 @@ windows = { version = "0.61", features = [
     "Win32_Foundation", "Win32_UI_Accessibility", "Win32_System_Com", "Win32_System_Variant",
     "Win32_System_Ole", "Win32_UI_Shell"
 ] }
+
+# In-app updates (signed latest.json on the GitHub releases, see tauri.conf.json
+# plugins.updater). Desktop-only, as the plugin docs declare it.
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2"
 
 [target.'cfg(not(windows))'.dependencies]
 # Mouse/keyboard synthesis on macOS (CGEvent) and Linux (X11). Windows keeps its own

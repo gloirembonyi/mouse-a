@@ -3,18 +3,31 @@ name: Build Desktop App
 # Every push and pull request builds the installers for Linux, macOS (universal) and
 # Windows, so a change that only compiles on one OS is caught here, not by a user.
 #
-# A v* tag is a release: the three builds run, and only when ALL of them succeed the
-# `release` job publishes one GitHub release with every installer attached and the
-# notes generated from the commits since the previous tag. Nothing is published while
-# a platform is still building, so a visitor never sees a half-filled release.
+# RELEASES ARE AUTOMATIC. Every push to main whose three builds all succeed is
+# published as a GitHub release:
+#   - version: the one in src-tauri/tauri.conf.json if it has not been released yet,
+#     otherwise the next patch after the newest v* tag (0.2.3 -> 0.2.4). The builds stamp
+#     that version into the app (About screen, file names) - nothing is committed back.
+#   - a v* tag pushed by hand (or by `npm run release -- 0.3.0` / the Release workflow)
+#     releases exactly that version, as before.
+# Nothing is published while a platform is still building or after any of them fails,
+# so a visitor never sees a half-filled or broken release. Docs-only pushes don't build.
 #
-# How to cut a release: `npm run release -- 0.2.0` (bumps the version files, commits,
-# tags v0.2.0 and pushes) or Actions -> "Release" -> Run workflow -> version.
+# SIGNING switches on by itself when the secrets exist (unsigned builds otherwise):
+#   macOS  (Developer ID + notarization, removes the Gatekeeper warning):
+#          APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
+#          APPLE_SIGNING_IDENTITY ("Developer ID Application: Name (TEAMID)"),
+#          APPLE_ID, APPLE_PASSWORD (app-specific password), APPLE_TEAM_ID
+#   Windows (Authenticode with an OV certificate):
+#          WINDOWS_CERTIFICATE (base64 .pfx), WINDOWS_CERTIFICATE_PASSWORD
+#          (SmartScreen still warns until the certificate builds reputation; the
+#          Microsoft Store route in docs/DISTRIBUTION.md avoids the warning entirely.)
 
 on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore: ["**.md", "docs/**", ".vscode/**"]
   pull_request:
   workflow_dispatch:
 
@@ -26,7 +39,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+      release: ${{ steps.pick.outputs.release }}
+    steps:
+      - name: Checkout (with tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pick the version
+        id: pick
+        shell: bash
+        run: |
+          set -euo pipefail
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"; release=true
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
+            if git rev-parse -q --verify "refs/tags/v$conf" >/dev/null; then
+              # Already released: the next patch after the newest stable tag.
+              latest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -Ev -- '-' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+              IFS=. read -r ma mi pa <<< "${latest:-$conf}"
+              version="$ma.$mi.$((pa + 1))"
+            else
+              version="$conf"
+            fi
+            release=true
+          else
+            version="$conf"; release=false
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "Building $version (release: $release)"
+
   build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -90,8 +140,8 @@ jobs:
         run: cargo test --lib
         working-directory: src-tauri
 
-      # On a tag the version files must agree with the tag, or users download a
-      # v0.2.0 whose About screen says 0.1.0 and the updater can never reason about it.
+      # On a hand-pushed tag the version files must agree with the tag, or users
+      # download a v0.2.0 whose About screen says 0.1.0.
       - name: Check the version matches the tag
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -103,32 +153,90 @@ jobs:
             exit 1
           fi
 
+      # An automatic release from main: stamp the picked version into this checkout so
+      # the installers, file names and About screen all say it (not committed).
+      - name: Stamp the release version (${{ needs.version.outputs.version }})
+        if: needs.version.outputs.release == 'true' && !startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: node scripts/bump-version.mjs "${{ needs.version.outputs.version }}"
+
+      # Signing: only exported when the secrets exist. An empty APPLE_CERTIFICATE in the
+      # environment would make the build try (and fail) to import nothing.
+      - name: Enable macOS signing + notarization (when configured)
+        if: matrix.name == 'macos'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then echo "macOS: unsigned build (no APPLE_CERTIFICATE secret)"; exit 0; fi
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "${!v}" ]; then echo "$v=${!v}" >> "$GITHUB_ENV"; fi
+          done
+          echo "macOS: signing as $APPLE_SIGNING_IDENTITY, notarizing"
+
+      - name: Enable Windows signing (when configured)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE) { Write-Host "Windows: unsigned build (no WINDOWS_CERTIFICATE secret)"; exit 0 }
+          $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $pw = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pw
+          Remove-Item $pfx
+          $conf = @{ bundle = @{ windows = @{ certificateThumbprint = $cert.Thumbprint; digestAlgorithm = "sha256"; timestampUrl = "http://timestamp.digicert.com" } } } | ConvertTo-Json -Depth 5
+          Set-Content -Path src-tauri/tauri.signing.json -Value $conf -Encoding utf8
+          "TAURI_SIGN_ARGS=--config src-tauri/tauri.signing.json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Windows: signing with certificate $($cert.Subject)"
+
       - name: Build installers (${{ matrix.name }})
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # In-app updates: signs the update packages (.sig next to the setup .exe,
+          # the macOS .app.tar.gz and the AppImage). Not OS code-signing - this key only
+          # proves to installed copies that an update really comes from us.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} ${{ env.TAURI_SIGN_ARGS }}
 
       - name: Upload ${{ matrix.name }} installer(s)
         uses: actions/upload-artifact@v4
         with:
-          name: mouse-ai-${{ matrix.name }}
+          name: kudu-desktop-${{ matrix.name }}
           path: |
             src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.msi.sig
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe.sig
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm
             src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig
           if-no-files-found: error
           retention-days: 14
 
   release:
-    # Only a v* tag, and only after every platform built.
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    # After EVERY platform built: a v* tag, or any push to main (automatic release).
+    if: needs.version.outputs.release == 'true' && github.event_name == 'push'
+    needs: [version, build]
     runs-on: ubuntu-latest
+    # Never cancel a release half-way, even when a newer push arrives.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     steps:
       - name: Checkout (for the release notes)
         uses: actions/checkout@v4
@@ -143,69 +251,146 @@ jobs:
 
       # The artifacts unpack with their bundle sub-folders (release/bundle/msi/...,
       # universal-apple-darwin/...); only the installer files themselves are attached.
+      # Spaces become dots here, exactly as GitHub would rename them on upload, so the
+      # URLs written into latest.json match the asset names.
       - name: Collect the installer files
-        id: files
         run: |
-          find installers -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) > files.txt
+          set -euo pipefail
+          mkdir -p dist
+          # Fixed names (version is in the release tag), so the one-line installers on the
+          # site - and anyone - can always fetch releases/latest/download/<name>.
+          stable_name() {
+            case "$1" in
+              *x64-setup.exe)      echo "Kudu.Desktop_windows_x64-setup.exe" ;;
+              *.msi)               echo "Kudu.Desktop_windows_x64.msi" ;;
+              *universal.dmg)      echo "Kudu.Desktop_macos_universal.dmg" ;;
+              *.dmg)               echo "Kudu.Desktop_macos.dmg" ;;
+              *.app.tar.gz)        echo "Kudu.Desktop_macos_universal.app.tar.gz" ;;
+              *amd64.AppImage)     echo "Kudu.Desktop_linux_amd64.AppImage" ;;
+              *.AppImage)          echo "Kudu.Desktop_linux.AppImage" ;;
+              *amd64.deb)          echo "Kudu.Desktop_linux_amd64.deb" ;;
+              *.deb)               echo "Kudu.Desktop_linux.deb" ;;
+              *.rpm)               echo "Kudu.Desktop_linux_x86_64.rpm" ;;
+              *)                   echo "$1" | tr ' ' '.' ;;
+            esac
+          }
+          find installers -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' \
+            -o -name '*.AppImage' -o -name '*.app.tar.gz' -o -name '*.sig' \) -print0 |
+            while IFS= read -r -d '' f; do
+              b=$(basename "$f")
+              if [[ "$b" == *.sig ]]; then out="$(stable_name "${b%.sig}").sig"; else out="$(stable_name "$b")"; fi
+              cp "$f" "dist/$out"
+            done
+          # Checksums for the install scripts (and anyone verifying a download by hand).
+          (cd dist && sha256sum $(ls | grep -v '\.sig$') > SHA256SUMS.txt)
+          ls dist > files.txt
+          sed -i 's#^#dist/#' files.txt
           echo "Attaching:"; cat files.txt
-          if [ ! -s files.txt ]; then echo "::error::no installer files found in the artifacts"; exit 1; fi
+          if ! grep -qvE '\.sig$' files.txt; then echo "::error::no installer files found in the artifacts"; exit 1; fi
+
+      # The updater manifest installed apps read (plugins.updater.endpoints in
+      # tauri.conf.json → releases/latest/download/latest.json). One entry per platform:
+      # the update package's URL on this release and its signature.
+      - name: Write latest.json (in-app updates)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # "What's new" in the app: the same commit/PR list the release page shows.
+          prev=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" \
+            ${prev:+-f previous_tag_name="$prev"} --jq .body > update-notes.md 2>/dev/null || true
+          node - <<'EOF'
+          const fs = require("fs");
+          const files = fs.readdirSync("dist");
+          const base = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.TAG}/`;
+          const pick = (re) => files.find((f) => re.test(f) && !f.endsWith(".sig"));
+          const entry = (file) => {
+            if (!file || !files.includes(file + ".sig")) return null;
+            return { signature: fs.readFileSync(`dist/${file}.sig`, "utf8").trim(), url: base + encodeURIComponent(file) };
+          };
+          const platforms = {};
+          const win = entry(pick(/x64-setup\.exe$/));
+          if (win) platforms["windows-x86_64"] = win;
+          const mac = entry(pick(/\.app\.tar\.gz$/));
+          if (mac) { platforms["darwin-aarch64"] = mac; platforms["darwin-x86_64"] = mac; }
+          const linux = entry(pick(/\.AppImage$/));
+          if (linux) platforms["linux-x86_64"] = linux;
+          if (!Object.keys(platforms).length) {
+            console.log("::warning::no signed update packages found - latest.json not written (is TAURI_SIGNING_PRIVATE_KEY set?)");
+            process.exit(0);
+          }
+          const link = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${process.env.TAG}`;
+          let changes = "";
+          try { changes = fs.readFileSync("update-notes.md", "utf8").trim(); } catch {}
+          // Keep the in-app notes readable: drop the "Full Changelog" footer, cap the length.
+          changes = changes.replace(/\*\*Full Changelog\*\*.*$/s, "").trim().slice(0, 3000);
+          const manifest = {
+            version: process.env.VERSION,
+            notes: (changes ? changes + "\n\n" : "") + `[Full release notes](${link})`,
+            pub_date: new Date().toISOString(),
+            platforms,
+          };
+          fs.writeFileSync("dist/latest.json", JSON.stringify(manifest, null, 2));
+          fs.appendFileSync("files.txt", "dist/latest.json\n");
+          console.log("latest.json platforms:", Object.keys(platforms).join(", "));
+          EOF
 
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: v${{ needs.version.outputs.version }}
+          SIGNED_MAC: ${{ secrets.APPLE_CERTIFICATE != '' }}
+          SIGNED_WIN: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
         run: |
           set -euo pipefail
           prerelease=""
           case "$TAG" in *-alpha*|*-beta*|*-rc*|*-pre*) prerelease="--prerelease" ;; esac
-          # The notes: GitHub's generated list of commits/PRs since the previous tag,
-          # under a fixed header that tells people which file to download.
           cat > notes.md <<'EOF'
-          ## Downloads
+          ## Download
+
+          Get it from **https://kuduagent.vercel.app/download** - it picks the right file for your computer.
+
+          **Install with no warning, one command:**
+          - Windows (PowerShell): `irm https://kuduagent.vercel.app/install.ps1 | iex`
+          - macOS / Linux (Terminal): `curl -fsSL https://kuduagent.vercel.app/install.sh | sh`
 
           | Platform | File |
           |---|---|
-          | Windows 10/11 | `Kudu Desktop_*_x64-setup.exe` (installer) or `Kudu Desktop_*_x64_en-US.msi` |
-          | macOS 12+ (Apple Silicon and Intel) | `Kudu Desktop_*_universal.dmg` |
-          | Linux (Debian/Ubuntu) | `Kudu Desktop_*_amd64.deb` |
-          | Linux (Fedora/RHEL) | `Kudu Desktop-*.x86_64.rpm` |
-          | Linux (any) | `Kudu Desktop_*_amd64.AppImage` |
+          | Windows 10/11 | `Kudu.Desktop_windows_x64-setup.exe` (installer) or `Kudu.Desktop_windows_x64.msi` |
+          | macOS 12+ (Apple Silicon and Intel) | `Kudu.Desktop_macos_universal.dmg` |
+          | Linux (Debian/Ubuntu) | `Kudu.Desktop_linux_amd64.deb` |
+          | Linux (Fedora/RHEL) | `Kudu.Desktop_linux_x86_64.rpm` |
+          | Linux (any) | `Kudu.Desktop_linux_amd64.AppImage` |
 
-          The installers are not code-signed yet: Windows SmartScreen shows "More info -> Run anyway"
-          and macOS needs a right-click -> Open the first time.
+          `SHA256SUMS.txt` lists the checksum of every file.
 
           EOF
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG" --jq .body >> notes.md || true
+          {
+            if [ "$SIGNED_WIN" = "true" ]; then
+              echo "- Windows: signed. A new certificate can still show SmartScreen for a while until it builds reputation (More info → Run anyway)."
+            else
+              echo "- Windows: not code-signed yet. SmartScreen shows \"Windows protected your PC\" - click **More info → Run anyway**."
+            fi
+            if [ "$SIGNED_MAC" = "true" ]; then
+              echo "- macOS: signed and notarized by Apple."
+            else
+              echo "- macOS: not signed yet. The first time, right-click the app → **Open** → Open. If macOS says it \"is damaged\", run \`xattr -dr com.apple.quarantine \"/Applications/Kudu Desktop.app\"\`."
+            fi
+            echo "- Linux: AppImage → \`chmod +x\` then run; .deb → \`sudo apt install ./file.deb\`; .rpm → \`sudo dnf install ./file.rpm\`."
+            echo
+          } >> notes.md
+          prev=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" ${prev:+-f previous_tag_name="$prev"} --jq .body >> notes.md || true
           mapfile -t files < files.txt
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${files[@]}" --clobber
             gh release edit "$TAG" --title "Kudu Desktop $TAG" --notes-file notes.md --draft=false $prerelease
           else
-            gh release create "$TAG" "${files[@]}" --title "Kudu Desktop $TAG" --notes-file notes.md $prerelease
+            # Creates the tag on exactly the commit that was built.
+            latest="--latest"; [ -n "$prerelease" ] && latest=""
+            gh release create "$TAG" "${files[@]}" --target "$GITHUB_SHA" --title "Kudu Desktop $TAG" --notes-file notes.md $prerelease $latest
           fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"
-
-      # Optional public mirror. This repository is private, so its release assets
-      # need a GitHub login to download. Set the repository variable RELEASES_REPO
-      # (e.g. gloirembonyi/mouse-ai-releases, a public repo) and the secret
-      # RELEASES_TOKEN (a fine-grained PAT with "Contents: write" on that repo) and the
-      # same release is created there for the landing page's download link.
-      - name: Mirror to the public releases repo
-        if: vars.RELEASES_REPO != ''
-        env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-          TAG: ${{ github.ref_name }}
-          TARGET: ${{ vars.RELEASES_REPO }}
-        run: |
-          set -euo pipefail
-          if [ -z "$GH_TOKEN" ]; then echo "::error::RELEASES_REPO is set but the RELEASES_TOKEN secret is missing"; exit 1; fi
-          prerelease=""
-          case "$TAG" in *-alpha*|*-beta*|*-rc*|*-pre*) prerelease="--prerelease" ;; esac
-          mapfile -t files < files.txt
-          if gh release view "$TAG" -R "$TARGET" >/dev/null 2>&1; then
-            gh release upload "$TAG" "${files[@]}" -R "$TARGET" --clobber
-            gh release edit "$TAG" -R "$TARGET" --title "Kudu Desktop $TAG" --notes-file notes.md --draft=false $prerelease
-          else
-            gh release create "$TAG" "${files[@]}" -R "$TARGET" --title "Kudu Desktop $TAG" --notes-file notes.md $prerelease
-          fi
-          echo "Mirrored to https://github.com/$TARGET/releases/tag/$TAG"

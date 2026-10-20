@@ -33,6 +33,8 @@
     "core:window:allow-center",
     "core:window:allow-start-dragging",
     "core:window:allow-start-resize-dragging",
-    "core:event:default"
+    "core:event:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }
