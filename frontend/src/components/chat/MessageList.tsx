@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, Check, Copy, FileText, MessageSquare } from "lucide-react";
 import { BotAvatar } from "../ui/BotAvatar";
+import { ThinkingOrb } from "thinking-orbs";
 import { Markdown } from "./Markdown";
 import { AgentActivity } from "./AgentActivity";
 import type { UiMessage } from "../../lib/chatTypes";
@@ -102,9 +103,14 @@ function MessageItem({ message, latest }: { message: UiMessage; latest: boolean 
 
   if (message.kind === "thinking") {
     return (
+      // The avatar says who (Kudu); the thinking orb in the pill says what - same pairing
+      // as the browser extension's indicator.
       <div className="animate-fade-up flex items-center gap-3">
-        <BotAvatar kind="kudu" mood="thinking" size={28} title="Kudu is thinking" />
-        <span className="shimmer-text text-[13.5px] font-medium">Thinking…</span>
+        <BotAvatar kind="kudu" mood="idle" size={28} title="Kudu" />
+        <span className="inline-flex items-center gap-2.5 rounded-full border border-border-soft bg-bg-card py-1 pl-1.5 pr-4">
+          <ThinkingOrb state="working" size={20} theme="auto" aria-label="Kudu is thinking" className="flex-shrink-0" />
+          <span className="shimmer-text text-[13.5px] font-medium">Thinking…</span>
+        </span>
       </div>
     );
   }
