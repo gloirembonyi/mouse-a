@@ -17,13 +17,13 @@
 //     (true parallelism: the desktop agent continues while the browser works).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::accept_hdr_async;
@@ -31,11 +31,12 @@ use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, 
 use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::Message;
 
-/// A single deterministic, uncommon port both sides agree on. One fixed port
-/// (not a range) means the extension makes at most one connection attempt, so a
-/// desktop that isn't running costs the extension at most one quiet console log
-/// per retry. Well outside the common dev-server ports that caused earlier 404s.
-const PORTS: [u16; 1] = [47821];
+/// Uncommon ports, tried in order. The first is the one a lone desktop always gets;
+/// the rest exist for a PC shared by several Windows/macOS users, where each user's
+/// Kudu Desktop needs its own listener. The extension tries them in the same order
+/// and keeps the one whose desktop is signed in to ITS account (see `link_proof`),
+/// so users on one machine never end up driving each other's apps.
+const PORTS: [u16; 5] = [47821, 47822, 47823, 47824, 47825];
 const DEFAULT_TASK_TIMEOUT_SECS: u64 = 600;
 
 #[derive(Clone)]
@@ -44,12 +45,13 @@ pub struct Bridge {
 }
 
 struct Inner {
-    connected: AtomicBool,
-    /// The live connection presented this app's pairing code (see link.rs) -
-    /// required before the browser may hand the desktop tasks.
-    paired: AtomicBool,
+    /// Every open extension connection (Chrome and Edge can both be linked at once).
+    conns: Mutex<HashMap<u64, Conn>>,
+    /// The connection frames go to by default: the browser that most recently paired
+    /// or asked us for something. 0 = none.
+    active: AtomicU64,
+    conn_seq: AtomicU64,
     port: AtomicU16,
-    client_tx: Mutex<Option<mpsc::UnboundedSender<Message>>>,
     pending: Mutex<HashMap<String, PendingTask>>,
     // Result receivers for delegated tasks, kept so await_task can collect them
     // after start_task returned (enables the desktop to work in parallel).
@@ -57,7 +59,18 @@ struct Inner {
     task_seq: AtomicU16,
 }
 
+struct Conn {
+    tx: mpsc::UnboundedSender<Message>,
+    /// How this browser earned trust: "account" (signed in to the same Kudu account,
+    /// checked by Kudu Core) or "code" (the pairing code). None = connected only.
+    paired_via: Option<&'static str>,
+    /// Random challenge for account pairing; a proof is only valid for this nonce.
+    nonce: String,
+}
+
 struct PendingTask {
+    /// The connection the task went out on - its disconnect fails only its tasks.
+    conn: u64,
     desktop_source: String,
     result_tx: Option<oneshot::Sender<Result<String, String>>>,
 }
@@ -68,10 +81,10 @@ pub fn bridge() -> Bridge {
     BRIDGE
         .get_or_init(|| Bridge {
             inner: Arc::new(Inner {
-                connected: AtomicBool::new(false),
-                paired: AtomicBool::new(false),
+                conns: Mutex::new(HashMap::new()),
+                active: AtomicU64::new(0),
+                conn_seq: AtomicU64::new(1),
                 port: AtomicU16::new(0),
-                client_tx: Mutex::new(None),
                 pending: Mutex::new(HashMap::new()),
                 results: Mutex::new(HashMap::new()),
                 task_seq: AtomicU16::new(1),
@@ -82,7 +95,7 @@ pub fn bridge() -> Bridge {
 
 impl Bridge {
     pub fn is_connected(&self) -> bool {
-        self.inner.connected.load(Ordering::SeqCst)
+        !self.inner.conns.lock().unwrap().is_empty()
     }
 
     pub fn port(&self) -> u16 {
@@ -90,11 +103,58 @@ impl Bridge {
     }
 
     pub fn is_paired(&self) -> bool {
-        self.is_connected() && self.inner.paired.load(Ordering::SeqCst)
+        let active = self.inner.active.load(Ordering::SeqCst);
+        self.conn_paired(active)
     }
 
+    fn conn_paired(&self, conn: u64) -> bool {
+        self.inner.conns.lock().unwrap().get(&conn).map_or(false, |c| c.paired_via.is_some())
+    }
+
+    /// How the active browser is linked ("account" | "code"), for the Settings card.
+    pub fn paired_via(&self) -> Option<&'static str> {
+        let active = self.inner.active.load(Ordering::SeqCst);
+        self.inner.conns.lock().unwrap().get(&active).and_then(|c| c.paired_via)
+    }
+
+    /// Browsers connected right now, and how many of them are paired.
+    pub fn counts(&self) -> (usize, usize) {
+        let conns = self.inner.conns.lock().unwrap();
+        (conns.len(), conns.values().filter(|c| c.paired_via.is_some()).count())
+    }
+
+    /// A new pairing code: browsers that were trusted through the OLD code must
+    /// enter the new one. Account-paired browsers stay paired - the code was never
+    /// what vouched for them.
     pub fn unpair(&self) {
-        self.inner.paired.store(false, Ordering::SeqCst);
+        for c in self.inner.conns.lock().unwrap().values_mut() {
+            if c.paired_via == Some("code") {
+                c.paired_via = None;
+            }
+        }
+    }
+
+    /// Make `conn` the default destination (it just paired or asked for something).
+    fn set_active(&self, conn: u64) {
+        self.inner.active.store(conn, Ordering::SeqCst);
+    }
+
+    /// After the active browser left: prefer another paired one, then any.
+    fn reselect_active(&self) {
+        let conns = self.inner.conns.lock().unwrap();
+        let next = conns
+            .iter()
+            .filter(|(_, c)| c.paired_via.is_some())
+            .map(|(id, _)| *id)
+            .max()
+            .or_else(|| conns.keys().copied().max())
+            .unwrap_or(0);
+        self.inner.active.store(next, Ordering::SeqCst);
+    }
+
+    fn send_to(&self, conn: u64, value: Value) -> bool {
+        let conns = self.inner.conns.lock().unwrap();
+        conns.get(&conn).map_or(false, |c| c.tx.send(Message::Text(value.to_string())).is_ok())
     }
 
     pub fn send_json(&self, value: Value) -> bool {
@@ -113,12 +173,8 @@ impl Bridge {
     }
 
     fn send_frame(&self, value: Value) -> bool {
-        let guard = self.inner.client_tx.lock().unwrap();
-        if let Some(tx) = guard.as_ref() {
-            tx.send(Message::Text(value.to_string())).is_ok()
-        } else {
-            false
-        }
+        let active = self.inner.active.load(Ordering::SeqCst);
+        self.send_to(active, value)
     }
 
     fn next_task_id(&self) -> String {
@@ -137,11 +193,20 @@ with the Kudu Connect extension installed and signed in, then try again."
                     .to_string(),
             );
         }
+        if !self.is_paired() {
+            return Err(
+                "The browser is connected but not linked to this Kudu Desktop. Sign in to the \
+extension with the same account as Kudu Desktop (it links automatically), or enter the pairing code \
+from Agents → Browser link in the extension's settings."
+                    .to_string(),
+            );
+        }
+        let conn = self.inner.active.load(Ordering::SeqCst);
         let id = self.next_task_id();
         let (tx, rx) = oneshot::channel();
         self.inner.pending.lock().unwrap().insert(
             id.clone(),
-            PendingTask { desktop_source: source.to_string(), result_tx: Some(tx) },
+            PendingTask { conn, desktop_source: source.to_string(), result_tx: Some(tx) },
         );
         self.inner.results.lock().unwrap().insert(id.clone(), rx);
 
@@ -194,9 +259,18 @@ with the Kudu Connect extension installed and signed in, then try again."
         self.await_task(&id, DEFAULT_TASK_TIMEOUT_SECS).await
     }
 
-    /// Ask the extension to cancel a running task.
+    /// Ask the extension running it to cancel a task.
     pub fn cancel_task(&self, id: &str) {
-        let _ = self.send_frame(json!({ "v": 1, "type": "cancel", "id": id }));
+        let conn = self.inner.pending.lock().unwrap().get(id).map(|t| t.conn);
+        let frame = json!({ "v": 1, "type": "cancel", "id": id });
+        match conn {
+            Some(c) => {
+                let _ = self.send_to(c, frame);
+            }
+            None => {
+                let _ = self.send_frame(frame);
+            }
+        }
     }
 
     /// Cancel every pending task started by a given desktop agent run (its
@@ -224,16 +298,25 @@ fn emit_progress(app: &AppHandle, source: &str, kind: &str, message: String) {
     );
 }
 
-fn emit_status(app: &AppHandle, connected: bool) {
+fn emit_status(app: &AppHandle) {
+    let b = bridge();
+    let (browsers, paired_browsers) = b.counts();
     let _ = app.emit(
         "bridge-status",
-        json!({ "connected": connected, "paired": connected && bridge().is_paired(), "port": bridge().port() }),
+        json!({
+            "connected": browsers > 0,
+            "paired": b.is_paired(),
+            "via": b.paired_via(),
+            "browsers": browsers,
+            "pairedBrowsers": paired_browsers,
+            "port": b.port(),
+        }),
     );
 }
 
 /// Start the local WebSocket server. Spawned once at app setup; loops forever
-/// accepting extension connections. Only one extension is treated as live at a
-/// time (the most recent to connect).
+/// accepting extension connections. Several browsers may be linked at once; frames
+/// without a specific destination go to the active one (see `Inner::active`).
 pub async fn serve(app: AppHandle) {
     let listener = match bind_first_free().await {
         Some(l) => l,
@@ -330,18 +413,25 @@ async fn handle_connection(stream: tokio::net::TcpStream, app: AppHandle) {
         }
     });
 
-    // Mark this connection live (unpaired until its hello proves otherwise).
-    {
+    // Register the connection (unpaired until its hello or link_proof proves otherwise).
+    let conn = {
         let b = bridge();
-        b.inner.paired.store(false, Ordering::SeqCst);
-        *b.inner.client_tx.lock().unwrap() = Some(tx.clone());
-        b.inner.connected.store(true, Ordering::SeqCst);
-    }
-    emit_status(&app, true);
+        let id = b.inner.conn_seq.fetch_add(1, Ordering::SeqCst);
+        b.inner.conns.lock().unwrap().insert(
+            id,
+            Conn { tx: tx.clone(), paired_via: None, nonce: uuid::Uuid::new_v4().simple().to_string() },
+        );
+        // A newcomer only takes over when nothing paired is active.
+        if !b.is_paired() {
+            b.set_active(id);
+        }
+        id
+    };
+    emit_status(&app);
 
     while let Some(Ok(msg)) = read.next().await {
         match msg {
-            Message::Text(txt) => handle_incoming(&app, &txt, &tx),
+            Message::Text(txt) => handle_incoming(&app, conn, &txt, &tx),
             Message::Ping(payload) => {
                 let _ = tx.send(Message::Pong(payload));
             }
@@ -350,56 +440,129 @@ async fn handle_connection(stream: tokio::net::TcpStream, app: AppHandle) {
         }
     }
 
-    // Disconnected - clear live state and fail any still-pending tasks.
+    // Disconnected - forget this connection and fail only ITS pending tasks.
     {
         let b = bridge();
-        b.inner.connected.store(false, Ordering::SeqCst);
-        b.inner.paired.store(false, Ordering::SeqCst);
-        *b.inner.client_tx.lock().unwrap() = None;
-        let drained: Vec<(String, PendingTask)> = b.inner.pending.lock().unwrap().drain().collect();
+        b.inner.conns.lock().unwrap().remove(&conn);
+        let was_active = b.inner.active.load(Ordering::SeqCst) == conn;
+        if was_active {
+            b.reselect_active();
+        }
+        let drained: Vec<(String, PendingTask)> = {
+            let mut pending = b.inner.pending.lock().unwrap();
+            let ids: Vec<String> = pending.iter().filter(|(_, t)| t.conn == conn).map(|(id, _)| id.clone()).collect();
+            ids.into_iter().filter_map(|id| pending.remove(&id).map(|t| (id, t))).collect()
+        };
         for (id, task) in drained {
             if let Some(txr) = task.result_tx {
                 let _ = txr.send(Err("The browser extension disconnected.".to_string()));
             }
             crate::link::task_finished(&id, Err("The browser extension disconnected."));
         }
-        // Nobody is left to receive the results of tasks the browser asked for.
-        crate::link::cancel_incoming("The browser extension disconnected.");
+        // Tasks a browser asked us for answer on the active connection; when the
+        // active browser leaves and no paired one remains, nobody can receive them.
+        if was_active && !b.is_paired() {
+            crate::link::cancel_incoming("The browser extension disconnected.");
+        }
     }
-    emit_status(&app, false);
+    emit_status(&app);
     writer.abort();
 }
 
-fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Message>) {
+/// Trust a connection and make it the active one.
+fn mark_paired(app: &AppHandle, conn: u64, via: &'static str) {
+    let b = bridge();
+    if let Some(c) = b.inner.conns.lock().unwrap().get_mut(&conn) {
+        c.paired_via = Some(via);
+    }
+    b.set_active(conn);
+    emit_status(app);
+    crate::auth_sync::on_paired(app);
+}
+
+/// Account pairing: the extension sent a proof for our nonce; ask Kudu Core whether
+/// it was minted for the account signed in here.
+fn verify_link_proof(app: &AppHandle, conn: u64, v: &Value) {
+    let proof = v.get("proof").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let exp = v.get("exp").and_then(|x| x.as_i64()).unwrap_or(0);
+    let Some(nonce) = bridge().inner.conns.lock().unwrap().get(&conn).map(|c| c.nonce.clone()) else { return };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<crate::commands::AppState>();
+        let verdict = if proof.is_empty() {
+            Err("no proof".to_string())
+        } else {
+            state.backend.verify_link_proof(&nonce, exp, &proof).await
+        };
+        let (ok, reason) = match verdict {
+            Ok(true) => (true, ""),
+            Ok(false) => (false, "different_account"),
+            Err(_) if !state.backend.has_account().await => (false, "desktop_signed_out"),
+            Err(_) => (false, "unverified"),
+        };
+        if ok {
+            mark_paired(&app, conn, "account");
+        }
+        let _ = bridge().send_to(
+            conn,
+            json!({
+                "v": 1,
+                "type": "link_result",
+                "ok": ok,
+                "reason": reason,
+                "acceptsTasks": crate::link::accepts_tasks(),
+            }),
+        );
+    });
+}
+
+fn handle_incoming(app: &AppHandle, conn: u64, txt: &str, tx: &mpsc::UnboundedSender<Message>) {
     let v: Value = match serde_json::from_str(txt) {
         Ok(v) => v,
         Err(_) => return,
     };
+    let b = bridge();
+    let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    // A paired browser that asks for something becomes the one replies go to.
+    let paired = b.conn_paired(conn);
+    if paired
+        && matches!(
+            kind,
+            "desktop_task" | "open_copilot" | "reveal_path" | "auth_request" | "auth_offer" | "status_request" | "desktop_cancel"
+        )
+    {
+        b.set_active(conn);
+    }
     match v.get("type").and_then(|t| t.as_str()) {
         Some("hello") => {
             let code = v.get("pairCode").and_then(|x| x.as_str()).unwrap_or("");
-            let paired = !code.trim().is_empty() && crate::link::code_matches(code);
-            bridge().inner.paired.store(paired, Ordering::SeqCst);
+            let by_code = !code.trim().is_empty() && crate::link::code_matches(code);
+            let nonce = b.inner.conns.lock().unwrap().get(&conn).map(|c| c.nonce.clone()).unwrap_or_default();
             let _ = tx.send(Message::Text(
                 json!({
                     "v": 1,
                     "type": "hello_ack",
                     "desktop": "mouse-ai",
                     "version": env!("CARGO_PKG_VERSION"),
-                    "protocol": 2,
-                    "paired": paired,
+                    // 3: account pairing (challenge -> link_proof -> link_result),
+                    // several browsers at once, ports 47821-47825.
+                    "protocol": 3,
+                    "paired": by_code,
                     "acceptsTasks": crate::link::accepts_tasks(),
+                    "challenge": nonce,
                 })
                 .to_string(),
             ));
-            emit_status(app, true);
-            if paired {
-                crate::auth_sync::on_paired(app);
+            if by_code {
+                mark_paired(app, conn, "code");
+            } else {
+                emit_status(app);
             }
         }
-        Some("auth_request") => crate::auth_sync::handle_request(app, bridge().is_paired()),
-        Some("auth_offer") => crate::auth_sync::handle_offer(app, &v, bridge().is_paired()),
-        Some("desktop_task") => crate::link::handle_desktop_task(&v, bridge().is_paired()),
+        Some("link_proof") => verify_link_proof(app, conn, &v),
+        Some("auth_request") => crate::auth_sync::handle_request(app, paired),
+        Some("auth_offer") => crate::auth_sync::handle_offer(app, &v, paired),
+        Some("desktop_task") => crate::link::handle_desktop_task(&v, paired),
         Some("desktop_cancel") => crate::link::handle_desktop_cancel(&v),
         Some("status_request") => crate::link::handle_status_request(&v),
         Some("status") => crate::link::handle_status_reply(&v),
@@ -414,7 +577,7 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
             let s = |k: &str, cap: usize| -> String {
                 v.get(k).and_then(|x| x.as_str()).unwrap_or("").chars().take(cap).collect()
             };
-            let ok = bridge().is_paired();
+            let ok = paired;
             if ok {
                 crate::meeting::show_copilot(app);
                 let _ = app.emit_to(
@@ -444,7 +607,7 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
         Some("reveal_path") => {
             let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
-            let result = if bridge().is_paired() {
+            let result = if paired {
                 crate::fs_browser::reveal_path(path)
             } else {
                 Err("This browser isn't paired with Kudu Desktop.".to_string())

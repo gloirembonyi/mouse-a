@@ -344,6 +344,10 @@ export interface LinkInfo {
   port: number;
   pair_code: string;
   accept_tasks: boolean;
+  /** How the active browser is trusted: same Kudu account (automatic) or the code. */
+  via?: "account" | "code" | null;
+  /** Browsers connected right now (Chrome and Edge can both be linked). */
+  browsers?: number;
 }
 
 export interface LinkStep {

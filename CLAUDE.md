@@ -195,7 +195,7 @@ progress (up to 120 steps / 30 min). Key details baked into these files:
 | `terminal.rs` | PTY sessions keyed by id (one per terminal tab): spawn/write/resize/kill; output as `pty-output {id,data}` with UTF-8 split handling |
 | `git_diff.rs` | Git status/diff for the IDE dock's changes pane |
 | `mcp.rs` | MCP client: launches configured servers as stdio subprocesses, speaks JSON-RPC 2.0 (`initialize` → `tools/list` → `tools/call`). Strictly additive/fail-safe - a broken MCP server is skipped, never breaks the core agent loop |
-| `bridge.rs` | Localhost WebSocket (127.0.0.1:47821) to the Kudu Connect browser extension - the transport for agent handoffs |
+| `bridge.rs` | Localhost WebSocket (127.0.0.1, first free of 47821-47825 - one per OS user on a shared PC) to the Kudu Connect extension. Keeps every browser's connection (`conns`, replies go to the one that asked; `active` = last paired/used). Pairing by ACCOUNT: `hello_ack.challenge` → extension's `link_proof` → `BackendClient::verify_link_proof` (`/api/auth/link/verify`) → `link_result`; the pairing code is the fallback. Never delegates to an unpaired browser |
 | `link.rs` | Two-way agent link on top of the bridge: pairing code (`%APPDATA%/mouse-ai/bridge.json`), browser→desktop `desktop_task` runs (source `browser:<id>`), the shared task board (`bridge-task` events → Agents view) and the watcher that probes/fails stalled handoffs |
 | `meeting.rs` | Meeting copilot (profile = `meeting_profile.json`: about/projects/session/style plus `sources` + `research` written by `meeting_research` - every link fetched through the backend's `/api/agent/fetch`, then one tool-less `agent_step` writes the brief - and `skip_context`, the "Use my context" switch shown in the meeting view and the copilot bar; `meeting-profile` event keeps both in sync): two-sided audio capture → Whisper chunks → transcript; assist actions (answers stream from the backend's `/api/agent/stream` as `meeting-answer-delta`, falling back to `/api/agent/step`); the copilot bar window, stealth, move keys |
 | `copilot.rs` | The bar's hands-on tools: "Fix it" runs `agent::run_task` under source `copilot` with transcript + active project as context; `copilot_insert` pastes (clipboard restored) or naturally types text into the last non-Mouse-AI foreground window, tracked by a 250 ms watcher |
@@ -311,3 +311,13 @@ Session, backend URL, and MCP server config persist to `%APPDATA%/mouse-ai/confi
   through the backend's `/api/meeting/transcribe`, then falls back to Gemini), `MOUSE_AI_WHISPER_MODEL`
   (default `whisper-large-v3`).
   Real environment variables always win over the `.env` files.
+
+## Windows that are hidden at launch (overlay, copilot, shield)
+
+Never change screen-capture protection on a HIDDEN window: on Windows 11 (seen on 26200)
+`SetWindowDisplayAffinity` toggled off on a never-shown window makes DWM paint it - a framed,
+white, click-through ghost ("Kudu Lens", "Kudu Desktop Working", the Pilot bar) that only goes
+away when the app exits. So `contentProtected` is NOT in tauri.conf.json, `meeting::apply_stealth`
+only touches visible windows, and every show path calls `meeting::protect_shown(&w)` right after
+`show()` (the main window catches up on `WindowEvent::Focused`). A new show path must do the same.
+

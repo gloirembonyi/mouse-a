@@ -44,8 +44,7 @@
         "minWidth": 200,
         "minHeight": 40,
         "maxWidth": 900,
-        "maxHeight": 900,
-        "contentProtected": true
+        "maxHeight": 900
       },
       {
         "label": "copilot",
@@ -60,8 +59,7 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "visible": false,
-        "focus": false,
-        "contentProtected": true
+        "focus": false
       },
       {
         "label": "shield",
@@ -76,8 +74,7 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "visible": false,
-        "focus": false,
-        "contentProtected": true
+        "focus": false
       }
     ],
     "security": {

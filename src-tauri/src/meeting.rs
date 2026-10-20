@@ -1711,12 +1711,38 @@ pub fn set_stealth(app: &AppHandle, enabled: bool) {
     apply_stealth(app);
 }
 
+/// Applies the screen-share rule to every window that is on screen right now. Hidden
+/// windows are skipped on purpose and pick the rule up from `protect_shown` when they
+/// are next shown: on Windows 11, changing a HIDDEN window's display affinity makes
+/// DWM paint it - a framed, white, click-through "ghost" (Kudu Lens, Kudu Desktop
+/// Working, the Pilot bar) that stays on screen until the app exits.
 pub fn apply_stealth(app: &AppHandle) {
-    let on = STEALTH.load(Ordering::Relaxed);
     for label in COPILOT_WINDOWS {
         if let Some(w) = app.get_webview_window(label) {
-            let _ = w.set_content_protected(on);
+            if w.is_visible().unwrap_or(false) {
+                protect_shown(&w);
+            }
         }
+    }
+}
+
+/// The affinity each window actually has, so a show only calls into the OS when the
+/// rule changed. Windows start unprotected (no `contentProtected` in tauri.conf.json).
+fn protected_state() -> &'static Mutex<std::collections::HashMap<String, bool>> {
+    static S: OnceLock<Mutex<std::collections::HashMap<String, bool>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Call right AFTER showing a window: brings its capture protection in line with
+/// the stealth setting. Never call it on a hidden window (see `apply_stealth`).
+pub fn protect_shown(w: &tauri::WebviewWindow) {
+    let on = STEALTH.load(Ordering::Relaxed);
+    let mut state = protected_state().lock().unwrap();
+    if state.get(w.label()).copied().unwrap_or(false) == on {
+        return;
+    }
+    if w.set_content_protected(on).is_ok() {
+        state.insert(w.label().to_string(), on);
     }
 }
 
@@ -1734,7 +1760,6 @@ fn show_no_activate(window: &tauri::WebviewWindow) {
 
 pub fn show_copilot(app: &AppHandle) {
     let Some(w) = app.get_webview_window("copilot") else { return };
-    let _ = w.set_content_protected(STEALTH.load(Ordering::Relaxed));
     let _ = w.set_always_on_top(true);
     crate::copilot::remember_foreground();
     if !COPILOT_PLACED.swap(true, Ordering::Relaxed) {
@@ -1752,6 +1777,7 @@ pub fn show_copilot(app: &AppHandle) {
         }
     }
     show_no_activate(&w);
+    protect_shown(&w);
     set_move_keys(app);
 }
 

@@ -275,6 +275,7 @@ pub async fn expand_overlay(
         ));
         crate::hover::clamp_overlay_into_monitor(&app);
         let _ = overlay.show();
+        crate::meeting::protect_shown(&overlay);
         let _ = overlay.set_focus();
     }
     Ok(())

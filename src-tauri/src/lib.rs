@@ -426,6 +426,14 @@ pub fn run() {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            // The main window is also shown from the frontend (appWindow.show());
+            // focus is the one signal every show path produces, so the screen-share
+            // rule catches up here if it changed while the window was hidden.
+            if let WindowEvent::Focused(true) = event {
+                if let Some(w) = window.app_handle().get_webview_window(window.label()) {
+                    crate::meeting::protect_shown(&w);
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running Kudu Desktop");

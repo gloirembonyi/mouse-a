@@ -146,6 +146,7 @@ pub fn show(app: &AppHandle, source: &str, task: &str) {
     }
     let _ = w.set_always_on_top(true);
     let _ = w.show();
+    crate::meeting::protect_shown(&w);
     // Never steal focus from the app the agent is driving.
     let _ = crate::mouse::set_own_window_no_activate("kudu desktop working", true);
     if ACTIVE.fetch_add(1, Ordering::SeqCst) == 0 {

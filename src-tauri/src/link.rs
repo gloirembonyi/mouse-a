@@ -431,6 +431,9 @@ pub struct LinkInfo {
     pub port: u16,
     pub pair_code: String,
     pub accept_tasks: bool,
+    /// "account" (same Kudu account, automatic) | "code" | null.
+    pub via: Option<&'static str>,
+    pub browsers: usize,
 }
 
 #[tauri::command]
@@ -443,6 +446,8 @@ pub fn link_info() -> LinkInfo {
         port: b.port(),
         pair_code: cfg.pair_code,
         accept_tasks: cfg.accept_tasks,
+        via: b.paired_via(),
+        browsers: b.counts().0,
     }
 }
 

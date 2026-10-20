@@ -181,6 +181,7 @@ fn position_overlay(app: &AppHandle, x: i32, y: i32, sample_theme: bool) {
 
     let _ = overlay.set_position(tauri::PhysicalPosition::new(px, py));
     let _ = overlay.show();
+    crate::meeting::protect_shown(&overlay);
 
     // Sample the screen right where the overlay now sits and tell it whether
     // to render as light-glass-on-dark-text or dark-glass-on-light-text -

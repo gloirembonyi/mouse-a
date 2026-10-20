@@ -203,14 +203,21 @@ export function LinkCard({ agents }: { agents: ReturnType<typeof useAgents> }) {
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-semibold">
-            {state === "paired" ? "Linked and paired" : state === "unpaired" ? "Connected - not paired yet" : "Browser not connected"}
+            {state === "paired"
+              ? info.via === "account"
+                ? "Linked to your account"
+                : "Linked and paired"
+              : state === "unpaired"
+                ? "Connected - not paired yet"
+                : "Browser not connected"}
+            {(info.browsers ?? 0) > 1 && <span className="ml-1.5 font-normal text-text-muted">· {info.browsers} browsers</span>}
           </div>
           <div className="text-[11.5px] text-text-muted">
             {state === "paired"
               ? "Both agents can hand each other tasks."
               : state === "unpaired"
-                ? "Kudu Desktop can send the browser web tasks. Pair to let the browser send tasks here too."
-                : "Open Chrome/Edge with the Kudu Connect extension, then turn on “Connect to Kudu Desktop” in its Settings."}
+                ? "Sign in to the extension with the same Google account and they link by themselves - or pair with the code below."
+                : "Open Chrome/Edge with the Kudu Connect extension signed in to your account - it links automatically."}
           </div>
         </div>
         <IconButton title="Refresh" size="sm" onClick={agents.refreshInfo}>
@@ -218,6 +225,10 @@ export function LinkCard({ agents }: { agents: ReturnType<typeof useAgents> }) {
         </IconButton>
       </div>
 
+      <details className="group" open={state !== "paired" || info.via !== "account"}>
+      <summary className="cursor-pointer list-none text-[11.5px] text-text-muted hover:text-text-primary group-open:hidden">
+        Use a pairing code instead
+      </summary>
       <div className="flex flex-wrap items-center gap-3 rounded-xl bg-bg-card px-3 py-2.5">
         <span className="text-[12px] text-text-secondary">Pairing code</span>
         <code className="rounded-md border border-border-default bg-bg-primary px-2 py-1 font-mono text-[13px] font-semibold tracking-wider">
@@ -238,9 +249,10 @@ export function LinkCard({ agents }: { agents: ReturnType<typeof useAgents> }) {
           New code
         </button>
       </div>
-      <p className="text-[11.5px] text-text-muted">
-        Paste it into the extension: popup → Settings → Kudu Desktop link → Desktop pairing code.
+      <p className="mt-2 text-[11.5px] text-text-muted">
+        For a browser signed in to another account: paste it into the extension's popup → Settings → Kudu Desktop link → Desktop pairing code.
       </p>
+      </details>
 
       <label className="flex cursor-pointer items-center justify-between gap-3 border-t border-border-soft pt-3">
         <span>

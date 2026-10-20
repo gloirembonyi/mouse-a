@@ -343,6 +343,28 @@ impl BackendClient {
             .ok_or_else(|| "Couldn't share the sign-in.".to_string())
     }
 
+    /// Account pairing: is this proof (minted by an extension for our nonce) from
+    /// the account signed in HERE? Ok(false) = a different account; Err = can't tell
+    /// (signed out, offline, older backend) - the pairing code still works then.
+    pub async fn verify_link_proof(&self, nonce: &str, exp: i64, proof: &str) -> Result<bool, String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let url = format!("{}/api/auth/link/verify", self.base_url.read().await);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({ "nonce": nonce, "exp": exp, "proof": proof }))
+            .timeout(std::time::Duration::from_secs(8))
+            .send()
+            .await
+            .map_err(|e| Self::friendly_network_error(&e))?;
+        if !resp.status().is_success() {
+            return Err(format!("Couldn't check the browser's account ({})", resp.status().as_u16()));
+        }
+        let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        Ok(data.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
+    }
+
     /// Redeem a handoff code from the user's other client into a session here.
     pub async fn redeem_handoff(&self, code: &str) -> Result<AuthResponse, String> {
         let url = format!("{}/api/auth/handoff/redeem", self.base_url.read().await);
