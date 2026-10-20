@@ -154,6 +154,11 @@ export const fsRename = (from: string, to: string) => invoke<void>("fs_rename", 
 export const fsDelete = (path: string) => invoke<void>("fs_delete", { path });
 export const fsReveal = (path: string) => invoke<void>("fs_reveal", { path });
 export const fsOpenDefault = (path: string) => invoke<void>("fs_open_default", { path });
+/** Write base64 bytes to an exact path (a file card's Download, after the save dialog). */
+export const fsWriteBase64 = (path: string, b64: string) => invoke<void>("fs_write_base64", { path, b64 });
+/** Save a file card's bytes into `dir` (default Documents\Kudu) without overwriting; returns the path. */
+export const kuduFileSave = (name: string, b64: string, dir: string | null) =>
+  invoke<string>("kudu_file_save", { name, b64, dir });
 
 // ── Terminal (IDE dock) ───────────────────────────────────
 export const ptySpawn = (id: string, cwd: string | null, cols: number, rows: number) =>

@@ -41,6 +41,9 @@ calamine = { version = "0.36", features = ["dates"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 quick-xml = "0.41"
 arboard = { version = "3", default-features = false }
+# Markdown -> plain text for what the agent types into other apps (text_format.rs).
+# Already in the tree through other crates.
+regex = "1"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = [

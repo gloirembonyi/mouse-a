@@ -2938,6 +2938,7 @@ dependencies = [
  "image 0.25.10",
  "portable-pty",
  "quick-xml 0.41.0",
+ "regex",
  "reqwest 0.12.28",
  "screenshots",
  "serde",

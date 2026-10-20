@@ -251,6 +251,16 @@ pub(crate) async fn type_text_tool(app: &AppHandle, source: &str, trusted: &mut 
     // auto-close it under per-key typing); keystrokes for short text and for
     // terminals, which do not reliably honour Ctrl+V.
     let kind = classify_process(&fg.process_name);
+    // Text goes into the app the way a person writes there: Markdown (### / ** / ---)
+    // becomes plain text, except in code editors, terminals, Markdown-native sites,
+    // for code, or when the model asks for format="raw".
+    let raw = args.get("format").and_then(|f| f.as_str()) == Some("raw");
+    let converted = if raw || looks_like_code(text) {
+        None
+    } else {
+        crate::text_format::for_app(text, kind, &fg.window_title)
+    };
+    let text = converted.as_deref().unwrap_or(text);
     let use_paste = match mode.as_str() {
         "paste" => true,
         "type" | "keys" | "keystrokes" => false,
@@ -282,6 +292,9 @@ pub(crate) async fn type_text_tool(app: &AppHandle, source: &str, trusted: &mut 
         },
         "mode": typed_via,
     });
+    if converted.is_some() {
+        resp["formatted"] = json!("Markdown was converted to plain text for this app (pass format=\"raw\" to type it verbatim).");
+    }
     // Best-effort verification where the app exposes its text (editors, Office,
     // browsers): is the first typed line now in the accessible content? Never an
     // error - the screenshot that follows is the other witness.

@@ -35,7 +35,10 @@ interface AgentActivityProps {
 // step log is still there, just tucked away instead of permanently taking up
 // transcript space.
 export function AgentActivity({ steps, status, elapsedMs }: AgentActivityProps) {
-  const hasPendingConfirm = steps.some((s) => s.kind === "confirm");
+  // A confirm is still waiting only while the run is live and nothing came after it -
+  // any later step means it was answered. (Checking "any confirm ever" kept every
+  // finished run that once asked for permission expanded forever.)
+  const hasPendingConfirm = status === "running" && steps.length > 0 && steps[steps.length - 1].kind === "confirm";
   const [userToggled, setUserToggled] = useState<boolean | null>(null);
   const expanded = userToggled ?? (status === "running" || hasPendingConfirm);
 

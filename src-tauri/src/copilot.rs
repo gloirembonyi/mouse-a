@@ -246,6 +246,11 @@ pub async fn copilot_insert(text: String, mode: String) -> Result<InsertResult, 
                 return Err("Couldn't switch back to your app - click into it and try again.".to_string());
             }
         }
+        // Answers are Markdown; the app being written into usually is not. Plain text
+        // (no ### / ** / ---) unless it is a code editor, a terminal or a Markdown site.
+        let fg = crate::mouse::get_foreground_context();
+        let kind = crate::agent::classify_process(&fg.process_name);
+        let text = crate::text_format::for_app(&text, kind, &fg.window_title).unwrap_or(text);
         if mode == "type" {
             type_naturally(&text, target).map(|completed| InsertResult { completed })
         } else {

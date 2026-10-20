@@ -2,7 +2,10 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FileText } from "lucide-react";
 import { CodeBlock } from "./CodeBlock";
+import { FileCard, FileCardPending } from "./FileCard";
+import { MermaidBlock } from "./MermaidBlock";
 import { looksLikeFilePath, requestOpenFile } from "../../lib/openFile";
+import { parseKuduFile } from "../../lib/kuduFiles";
 
 interface MarkdownProps {
   children: string;
@@ -10,17 +13,39 @@ interface MarkdownProps {
 }
 
 export function Markdown({ children, className }: MarkdownProps) {
+  const source = children;
   return (
     <div className={`prose-mouse ${className ?? ""}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          // Fenced blocks render their own frame (CodeBlock / diagram / file card);
+          // a <pre> around them would only add browser margins and monospace text.
+          pre(props) {
+            return <>{props.children}</>;
+          },
           code(props) {
-            const { children, className, ...rest } = props;
-            const match = /language-(\w+)/.exec(className || "");
+            const { children, className, node, ...rest } = props;
+            const match = /language-([\w-]+)/.exec(className || "");
             const isBlock = Boolean(match) || String(children).includes("\n");
             if (isBlock) {
-              return <CodeBlock code={String(children).replace(/\n$/, "")} language={match?.[1]} />;
+              const code = String(children).replace(/\n$/, "");
+              const language = match?.[1];
+              const lang = language?.toLowerCase();
+              if (lang === "kudu-file" || lang === "mermaid") {
+                // While an answer streams, a fence stays open until its closing ```
+                // arrives: never parse a half-sent file or redraw a diagram per token.
+                const end = node?.position?.end.offset;
+                const closed = end == null || /(^|\n)[ \t]*(`{3,}|~{3,})[ \t]*$/.test(source.slice(0, end));
+                if (lang === "kudu-file") {
+                  if (!closed) return <FileCardPending />;
+                  const file = parseKuduFile(code);
+                  if (file) return <FileCard file={file} />;
+                } else if (closed) {
+                  return <MermaidBlock code={code} />;
+                }
+              }
+              return <CodeBlock code={code} language={language} />;
             }
             // A file path the agent wrote or mentioned → one click opens it.
             const text = String(children);

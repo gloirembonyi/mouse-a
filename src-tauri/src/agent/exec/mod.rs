@@ -65,7 +65,7 @@ pub(crate) async fn execute_tool(
         "wait" => wait_tool(args).await,
         "request_confirmation" => request_confirmation_tool(app, source, args).await,
         "delegate_to_browser" => delegate_to_browser_tool(source, args).await,
-        "check_browser_task" => check_browser_task_tool(args).await,
+        "check_browser_task" => check_browser_task_tool(source, args).await,
         other => ToolOutcome::err(format!("Unknown tool: {}", other)),
     }
 }

@@ -456,7 +456,18 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
         Some("progress") => {
             let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
             let kind = v.get("kind").and_then(|x| x.as_str()).unwrap_or("tool");
-            let message = v.get("message").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let message = v.get("message").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+            // An empty step used to render as a bare "🌐" row; a step that quotes the
+            // browser's answer must never carry a file's base64 into the live log.
+            if message.is_empty() {
+                return;
+            }
+            let message = crate::kudu_files::summarize(&message);
+            let message = if message.chars().count() > 600 {
+                format!("{}…", message.chars().take(600).collect::<String>())
+            } else {
+                message
+            };
             let source = bridge()
                 .inner
                 .pending
@@ -467,8 +478,14 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
             crate::link::task_step(id, kind, &message);
             if let Some(src) = source {
                 // Prefix so the browser's steps are visually distinct from the
-                // desktop's own tool calls in the shared live log.
-                let label = if kind == "thinking" { message } else { format!("🌐 {}", message) };
+                // desktop's own tool calls in the shared live log. Its narration
+                // ("thinking") used to go out bare, so it read as the desktop agent's
+                // own output; it is marked as the browser's too.
+                let label = if kind == "thinking" {
+                    format!("🌐 Browser: {}", message)
+                } else {
+                    format!("🌐 {}", message)
+                };
                 emit_progress(app, &src, "tool-result", label);
             }
         }
@@ -485,7 +502,8 @@ fn handle_incoming(app: &AppHandle, txt: &str, tx: &mpsc::UnboundedSender<Messag
                     .to_string())
             };
             match &payload {
-                Ok(r) => crate::link::task_finished(&id, Ok(r)),
+                // The board shows a short summary: file blocks become "[file: name, size]".
+                Ok(r) => crate::link::task_finished(&id, Ok(&crate::kudu_files::summarize(r))),
                 Err(e) => crate::link::task_finished(&id, Err(e)),
             }
             let task = bridge().inner.pending.lock().unwrap().remove(&id);

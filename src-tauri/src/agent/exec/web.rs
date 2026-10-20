@@ -120,20 +120,29 @@ local work, then call check_browser_task with this id to get the result.",
         }
     } else {
         match b.run_task(source, instruction, options).await {
-            Ok(result) => ToolOutcome::text(format!("Browser task result:\n{}", result)),
+            Ok(result) => browser_result(source, &result),
             Err(e) => ToolOutcome::err(e),
         }
     }
 }
 
+/// The model never sees a file's base64: each kudu-file block in the browser's
+/// answer is saved to disk and replaced with a one-line `[file: … - saved to <path>]`;
+/// the raw blocks go back on the run's final answer so the chat shows file cards
+/// (see kudu_files.rs).
+fn browser_result(source: &str, result: &str) -> ToolOutcome {
+    let text = crate::kudu_files::take_browser_result(source, result);
+    ToolOutcome::text(format!("Browser task result:\n{}", text))
+}
+
 /// Collect the result of a background browser task started earlier.
-pub(crate) async fn check_browser_task_tool(args: &Value) -> ToolOutcome {
+pub(crate) async fn check_browser_task_tool(source: &str, args: &Value) -> ToolOutcome {
     let id = args.get("task_id").and_then(|v| v.as_str()).unwrap_or("").trim();
     if id.is_empty() {
         return ToolOutcome::err("check_browser_task needs the 'task_id' from delegate_to_browser.");
     }
     match crate::bridge::bridge().await_task(id, 600).await {
-        Ok(result) => ToolOutcome::text(format!("Browser task result:\n{}", result)),
+        Ok(result) => browser_result(source, &result),
         Err(e) => ToolOutcome::err(e),
     }
 }

@@ -147,7 +147,15 @@ pub(crate) async fn click_element_tool(app: &AppHandle, source: &str, trusted: &
 }
 
 pub(crate) async fn set_value_tool(app: &AppHandle, source: &str, trusted: &mut HashSet<String>, args: &Value) -> ToolOutcome {
-    let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut text = args.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // Same rule as type_text: a field gets plain text, not Markdown (unless format=raw,
+    // code, or a code editor / terminal / Markdown site has focus).
+    if args.get("format").and_then(|f| f.as_str()) != Some("raw") && !looks_like_code(&text) {
+        let fg = foreground_context_async().await;
+        if let Some(plain) = crate::text_format::for_app(&text, classify_process(&fg.process_name), &fg.window_title) {
+            text = plain;
+        }
+    }
     let (name, role, near) = match resolve_target(args) {
         Ok(t) => t,
         Err(e) => return ToolOutcome::err(e),

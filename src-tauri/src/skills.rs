@@ -104,7 +104,9 @@ or write_file the CSV text. Default location: Documents.\n\
 instruction, the URL, what 'done' means, and any data it needs in `context` (it can't read the PC).\n\
 2. Independent parts run in parallel: delegate_to_browser(background=true), keep working locally, then \
 check_browser_task.\n\
-3. Feed results across: put what the browser returned into files/commands here, or back into the next browser task.\n\
+3. Feed results across: put what the browser returned into files/commands here, or back into the next browser task. \
+Files the browser wrote are already saved here - its result lists each as [file: name - saved to <path>]; \
+read_file that path instead of asking the browser to paste the contents.\n\
 4. Report the combined result, saying which side did what.",
     ),
 ];

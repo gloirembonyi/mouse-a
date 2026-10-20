@@ -14,8 +14,10 @@ mod fs_browser;
 mod git_diff;
 mod hover;
 mod input;
+mod kudu_files;
 mod mcp;
 mod skills;
+mod text_format;
 mod copilot;
 mod meeting;
 mod meeting_stream;
@@ -143,6 +145,8 @@ pub fn run() {
             fs_browser::fs_delete,
             fs_browser::fs_reveal,
             fs_browser::fs_open_default,
+            kudu_files::kudu_file_save,
+            kudu_files::fs_write_base64,
             documents::doc_read_docx,
             documents::doc_read_pptx,
             documents::doc_read_sheet,

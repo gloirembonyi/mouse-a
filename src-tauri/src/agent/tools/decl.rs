@@ -172,7 +172,8 @@ pub(crate) fn tool_declarations() -> Value {
                     "id": { "type": "string" },
                     "name": { "type": "string" },
                     "role": { "type": "string" },
-                    "text": { "type": "string", "description": "The full new value." }
+                    "text": { "type": "string", "description": "The full new value." },
+                    "format": { "type": "string", "enum": ["auto", "raw"], "description": "auto (default): Markdown becomes plain text (no #, **, ---); raw: exactly as given." }
                 },
                 "required": ["text"]
             }
@@ -180,7 +181,7 @@ pub(crate) fn tool_declarations() -> Value {
         {
             "name": "type_text",
             "description": "Type the given text at the current focus (e.g. into a focused form field). mode=auto (default) pastes multi-line, long or code text through the clipboard (restored afterwards) so editors do not auto-indent or auto-close it, and types short text with keystrokes; mode=type forces keystrokes (terminals, apps that intercept Ctrl+V; a newline presses Enter); mode=paste forces the clipboard. The result says which mode ran, includes verified=true/false where the app exposes its text, and a fresh after-screenshot: confirm YOUR text appeared in the RIGHT field before moving on.",
-            "parameters": { "type": "object", "properties": { "text": { "type": "string" }, "mode": { "type": "string", "enum": ["auto", "type", "paste"], "description": "auto | type | paste" } }, "required": ["text"] }
+            "parameters": { "type": "object", "properties": { "text": { "type": "string" }, "mode": { "type": "string", "enum": ["auto", "type", "paste"], "description": "auto | type | paste" }, "format": { "type": "string", "enum": ["auto", "raw"], "description": "auto (default): Markdown is typed as plain text (no #, **, ---) except in code editors, terminals and Markdown sites; raw: type the text exactly as given." } }, "required": ["text"] }
         },
         {
             "name": "press_key",
