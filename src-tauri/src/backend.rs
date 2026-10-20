@@ -194,14 +194,21 @@ impl BackendClient {
             .build()
             .expect("Failed to create HTTP client");
 
-        // Priority: explicit arg > env var > saved config > default.
+        // Release builds always talk to the official Kudu Core: the sign-in token goes
+        // to this server, so nothing on the machine (a saved setting, an env var, a
+        // planted .env file) may redirect it. Development builds keep the override:
+        // explicit arg > MOUSE_AI_BACKEND_URL > saved config > default.
         let stored = load_config();
-        let url = base_url
-            .or_else(|| std::env::var("MOUSE_AI_BACKEND_URL").ok())
-            .or(stored.backend_url.clone())
-            .map(|u| normalize_url(&u))
-            .filter(|u| !u.is_empty())
-            .unwrap_or_else(|| DEFAULT_BACKEND_URL.to_string());
+        let url = if cfg!(debug_assertions) {
+            base_url
+                .or_else(|| std::env::var("MOUSE_AI_BACKEND_URL").ok())
+                .or(stored.backend_url.clone())
+                .map(|u| normalize_url(&u))
+                .filter(|u| !u.is_empty())
+                .unwrap_or_else(|| DEFAULT_BACKEND_URL.to_string())
+        } else {
+            DEFAULT_BACKEND_URL.to_string()
+        };
 
         let device_id = stored
             .device_id
@@ -366,7 +373,7 @@ impl BackendClient {
         if e.is_timeout() && !e.is_connect() {
             "The AI timed out - Kudu's models are very busy right now. Try again in a moment.".to_string()
         } else if e.is_connect() || e.is_timeout() {
-            "Can't reach Kudu Core. Check your internet, or set a working Backend URL in Settings.".to_string()
+            "Can't reach Kudu Core. Check your internet connection and try again.".to_string()
         } else {
             format!("Network error: {}", e)
         }

@@ -3,14 +3,10 @@ import { getVersion } from "@tauri-apps/api/app";
 import clsx from "clsx";
 import { LogOut, Monitor, Moon, Power, Sun, X } from "lucide-react";
 import {
-  getBackendUrl,
   getMcpServers,
   quitApp,
-  setBackendUrl,
   setMcpServers,
   signOut,
-  testBackend,
-  withTimeout,
 } from "../../lib/tauri";
 import { DesktopSection } from "./DesktopSection";
 import { UpdateSection } from "./UpdateSection";
@@ -45,14 +41,11 @@ const SHORTCUTS: { keys: string[]; label: string }[] = [
 
 export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPanelProps) {
   const { themePref, setThemePref } = useTheme();
-  const [backendUrl, setBackendUrlInput] = useState("");
-  const [backendStatus, setBackendStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [mcpJson, setMcpJson] = useState("");
   const [mcpStatus, setMcpStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [appVersion, setAppVersion] = useState("0.0.0");
 
   useEffect(() => {
-    getBackendUrl().then(setBackendUrlInput).catch(() => {});
     getVersion().then(setAppVersion).catch(() => {});
     getMcpServers()
       .then((json) => {
@@ -60,27 +53,6 @@ export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPa
       })
       .catch(() => {});
   }, []);
-
-  const handleSaveBackendUrl = async () => {
-    if (!backendUrl.trim()) return;
-    try {
-      const saved = await setBackendUrl(backendUrl.trim());
-      setBackendStatus({ ok: true, text: `Saved: ${saved}` });
-    } catch (err) {
-      setBackendStatus({ ok: false, text: `Failed to save: ${err}` });
-    }
-  };
-
-  const handleTestBackend = async () => {
-    setBackendStatus({ ok: true, text: "Testing connection…" });
-    try {
-      if (backendUrl.trim()) await setBackendUrl(backendUrl.trim());
-      const base = await withTimeout(testBackend(), 15000);
-      setBackendStatus({ ok: true, text: `Connected to ${base}` });
-    } catch (err) {
-      setBackendStatus({ ok: false, text: err instanceof Error ? err.message : String(err) });
-    }
-  };
 
   const handleSaveMcp = async () => {
     try {
@@ -180,20 +152,6 @@ export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPa
                 </div>
               ))}
             </div>
-          </Section>
-
-          <Section title="Backend" description="The Kudu Core server that runs the models. Leave as-is unless you self-host.">
-            <input
-              value={backendUrl}
-              onChange={(e) => setBackendUrlInput(e.target.value)}
-              placeholder="https://backend-thothai.vercel.app"
-              className="w-full rounded-lg border border-border-default bg-bg-primary px-3 py-2 text-[13px] outline-none focus:border-border-focus"
-            />
-            <div className="flex gap-2">
-              <Button onClick={handleSaveBackendUrl}>Save</Button>
-              <Button onClick={handleTestBackend}>Test connection</Button>
-            </div>
-            {backendStatus && <Status {...backendStatus} />}
           </Section>
 
           <Section

@@ -43,6 +43,13 @@ use tokio::sync::RwLock;
 /// is src-tauri/, with the env file at the project root). Real environment
 /// variables always win - dotenvy never overrides an already-set var.
 fn load_env_files() {
+    // Development only. An installed app must never read a .env file from whatever
+    // folder it happens to be started in: a planted .env.local could point
+    // MOUSE_AI_BACKEND_URL at someone else's server and capture the sign-in.
+    // Release builds use the built-in defaults (DEFAULT_BACKEND_URL, DEFAULT_WEB_CLIENT_ID).
+    if !cfg!(debug_assertions) {
+        return;
+    }
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
         if let Some(parent) = cwd.parent() {

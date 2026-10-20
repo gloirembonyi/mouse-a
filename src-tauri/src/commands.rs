@@ -219,6 +219,10 @@ pub async fn get_backend_url(state: State<'_, AppState>) -> Result<String, Strin
 
 #[tauri::command]
 pub async fn set_backend_url(state: State<'_, AppState>, url: String) -> Result<String, String> {
+    // Only development builds can point at another server (see BackendClient::new).
+    if !cfg!(debug_assertions) {
+        return Err("The Kudu Core server can't be changed in this version.".to_string());
+    }
     state.backend.set_backend_url(url).await;
     Ok(state.backend.get_backend_url().await)
 }

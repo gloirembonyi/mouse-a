@@ -28,7 +28,7 @@ export function friendlyError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
   if (/not signed in/i.test(msg)) return "You're not signed in. Open Settings to sign in first.";
   if (/can't reach|network|timed out|connect/i.test(msg))
-    return "Can't reach Kudu Core. Check your internet or the Backend URL in Settings.";
+    return "Can't reach Kudu Core. Check your internet connection and try again.";
   if (/empty response/i.test(msg))
     return "The model didn't respond after several tries - it may be under heavy load. Try again in a moment.";
   if (/step limit/i.test(msg))
