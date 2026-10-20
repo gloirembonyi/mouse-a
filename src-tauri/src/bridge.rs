@@ -478,6 +478,7 @@ fn mark_paired(app: &AppHandle, conn: u64, via: &'static str) {
     b.set_active(conn);
     emit_status(app);
     crate::auth_sync::on_paired(app);
+    crate::analytics::track(app, "desktop_link", json!({ "via": via, "browsers": b.counts().0 }));
 }
 
 /// Account pairing: the extension sent a proof for our nonce; ask Kudu Core whether

@@ -105,6 +105,22 @@ pub struct HistoryConversation {
     /// Only present on the list endpoint, not the single-conversation lookup.
     #[serde(default)]
     pub message_count: Option<i64>,
+    /// Which Kudu app started it ("desktop" | "extension" | "web"); older rows: null.
+    #[serde(default)]
+    pub app: Option<String>,
+    /// "chat" | "act" | "handoff" (a task one agent gave the other).
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+/// GET /api/history/changes - what changed in the account's history since a cursor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryChanges {
+    pub now: String,
+    #[serde(default)]
+    pub conversations: Vec<HistoryConversation>,
+    #[serde(default)]
+    pub deleted: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -343,6 +359,17 @@ impl BackendClient {
             .ok_or_else(|| "Couldn't share the sign-in.".to_string())
     }
 
+    /// Usage analytics batch (analytics.rs). Fire-and-forget: failures are ignored and a
+    /// signed-out app still counts (the session is attached only when there is one).
+    pub async fn post_analytics(&self, body: serde_json::Value) {
+        let url = format!("{}/api/analytics/collect", self.base_url.read().await);
+        let mut req = self.client.post(&url).json(&body).timeout(std::time::Duration::from_secs(5));
+        if let Some(token) = self.get_session_token().await {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+        let _ = req.send().await;
+    }
+
     /// Account pairing: is this proof (minted by an extension for our nonce) from
     /// the account signed in HERE? Ok(false) = a different account; Err = can't tell
     /// (signed out, offline, older backend) - the pairing code still works then.
@@ -534,7 +561,11 @@ impl BackendClient {
             .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .json(&request)
+            .json(&{
+                let mut body = serde_json::to_value(&request).unwrap_or_default();
+                body["app"] = serde_json::json!("desktop");
+                body
+            })
             .send()
             .await
             .map_err(|e| Self::friendly_network_error(&e))?;
@@ -885,13 +916,30 @@ impl BackendClient {
         task: &str,
         result: &str,
     ) -> Result<String, String> {
+        self.log_agent_run_as(conversation_id, task, result, "act", "done").await
+    }
+
+    /// Save a run in the shared history. `kind`: "act" (the user's own task) | "handoff"
+    /// (a task the browser agent gave us); `status`: done | failed | cancelled | incomplete -
+    /// unfinished runs are saved too, so they show in every app's history.
+    pub async fn log_agent_run_as(
+        &self,
+        conversation_id: Option<&str>,
+        task: &str,
+        result: &str,
+        kind: &str,
+        status: &str,
+    ) -> Result<String, String> {
         let token = self.get_session_token().await.ok_or("Not signed in")?;
         let url = format!("{}/api/agent/log", self.base_url.read().await);
         let resp = self
             .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .json(&serde_json::json!({ "conversationId": conversation_id, "task": task, "result": result }))
+            .json(&serde_json::json!({
+                "conversationId": conversation_id, "task": task, "result": result,
+                "app": "desktop", "kind": kind, "status": status,
+            }))
             .send()
             .await
             .map_err(|e| Self::friendly_network_error(&e))?;
@@ -935,6 +983,26 @@ impl BackendClient {
 
     /// Past conversations, most-recently-updated first (server-side order,
     /// not client-controllable). `limit` is clamped server-side to 1-100.
+    /// Incremental history sync (see HistoryChanges). `since` = the previous `now`.
+    pub async fn get_history_changes(&self, since: Option<&str>) -> Result<HistoryChanges, String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let base = self.base_url.read().await.clone();
+        let mut req = self
+            .client
+            .get(format!("{}/api/history/changes", base))
+            .header("Authorization", format!("Bearer {}", token))
+            .timeout(std::time::Duration::from_secs(10));
+        if let Some(s) = since {
+            req = req.query(&[("since", s)]);
+        }
+        let resp = req.send().await.map_err(|e| Self::friendly_network_error(&e))?;
+        if !resp.status().is_success() {
+            return Err(format!("Failed to sync history ({})", resp.status().as_u16()));
+        }
+        let data: HistoryChanges = resp.json().await.map_err(|e| format!("Failed to parse history changes: {}", e))?;
+        Ok(data)
+    }
+
     pub async fn get_conversations(&self, limit: Option<u32>) -> Result<Vec<HistoryConversation>, String> {
         let token = self.get_session_token().await.ok_or("Not signed in")?;
         let base = self.base_url.read().await.clone();

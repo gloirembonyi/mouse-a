@@ -530,15 +530,38 @@ you still have steps left. If it truly can't be done, say exactly what blocks it
             // The person kept working for a while: skip the GUI step and tell the
             // model, so the run continues with file/command/web work in the background
             // instead of grabbing the mouse out of their hand.
-            let user_busy = if matches!(
+            let is_gui = matches!(
                 name.as_str(),
                 "click" | "double_click" | "scroll" | "type_text" | "press_key" | "click_element" | "set_value" | "focus_window" | "open_url" | "open_app"
-            ) {
+            );
+            // Another run of ours may be on the mouse/keyboard (the user's chat task, the
+            // Pilot, a hand-off from the browser): take the input lease first, so two
+            // agents never interleave clicks and keystrokes (agent/scheduler.rs).
+            let lease_error = if is_gui {
+                crate::agent::scheduler::acquire_input(source, |holder| {
+                    emit(
+                        app,
+                        source,
+                        "thinking",
+                        &format!(
+                            "Waiting for {} to finish with the mouse and keyboard…",
+                            crate::agent::scheduler::describe_source(holder)
+                        ),
+                    );
+                })
+                .await
+                .err()
+            } else {
+                None
+            };
+            let user_busy = if is_gui && lease_error.is_none() {
                 crate::shield::wait_for_user_idle(app, source, 900, Duration::from_secs(25)).await
             } else {
                 false
             };
-            let mut outcome = if user_busy {
+            let mut outcome = if let Some(err) = lease_error {
+                ToolOutcome::err(err)
+            } else if user_busy {
                 ToolOutcome::err(
                     "The user is actively using the mouse and keyboard right now, so this GUI action was NOT performed. \
 Do the parts of the task that need no mouse or keyboard (files, commands, reading, web), then try this step again \
@@ -562,6 +585,11 @@ what remains, and stop.",
                 attach_verification_shot(&name, &mut outcome, screen).await;
                 outcome
             };
+            if is_gui {
+                // Keep the input a moment longer: the next step of this run (type after
+                // click) must not lose the focus to another run in between.
+                crate::agent::scheduler::touch_input(source);
+            }
             if !outcome.response.is_object() {
                 outcome.response = json!({ "result": outcome.response });
             }

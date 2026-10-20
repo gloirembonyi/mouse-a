@@ -13,7 +13,7 @@ import {
 /** How Kudu Desktop sits on the desktop: taskbar button, launch behavior and
  *  screen-share visibility. The tray menu flips the same switches. */
 export function DesktopSection() {
-  const [prefs, setPrefs] = useState<WindowPrefs>({ hide_from_taskbar: false, start_in_background: false, hide_from_screen_share: true });
+  const [prefs, setPrefs] = useState<WindowPrefs>({ hide_from_taskbar: false, start_in_background: false, hide_from_screen_share: true, share_usage_stats: true });
   const [stealth, setStealth] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,6 +63,12 @@ export function DesktopSection() {
         hint="No Kudu Desktop window (this one, the Kudu Lens overlay, the Pilot bar, the working banner) appears in shared screens or recordings. Remembered across launches."
         on={stealth}
         onChange={(v) => void stealthSet(v).then(setStealth)}
+      />
+      <Row
+        title="Share anonymous usage statistics"
+        hint="Which features get used (e.g. an agent task finished), so we know what to improve. Never your screen, what you type or say, answers or file names."
+        on={prefs.share_usage_stats !== false}
+        onChange={(v) => update({ share_usage_stats: v })}
       />
       {error && <p className="text-[12px] text-danger">{error}</p>}
     </section>

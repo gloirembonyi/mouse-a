@@ -30,6 +30,25 @@ pub(crate) fn begin_run(source: &str) {
 pub(crate) fn end_run(source: &str) {
     active_runs().lock().unwrap().remove(source);
     steer().lock().unwrap().remove(source);
+    // Hand the mouse/keyboard back at once (agent/scheduler.rs).
+    crate::agent::scheduler::release_input(source);
+}
+
+/// Whether a run with this source is in flight.
+pub fn is_run_active(source: &str) -> bool {
+    active_runs().lock().unwrap().contains(source)
+}
+
+/// Every run in flight (the Agents view's "all runs" board).
+pub fn active_sources() -> Vec<String> {
+    let mut v: Vec<String> = active_runs().lock().unwrap().iter().cloned().collect();
+    v.sort();
+    v
+}
+
+/// Stop requested but not yet consumed by the loop - for waits that must not eat the flag.
+pub(crate) fn is_cancel_pending(source: &str) -> bool {
+    cancels().lock().unwrap().contains(source)
 }
 
 // ── Steering: talk to a run while it works ──────────────────────

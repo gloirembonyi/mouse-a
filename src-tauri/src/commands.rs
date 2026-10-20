@@ -712,9 +712,27 @@ pub async fn agent_run(
                     request_id: None,
                 },
             );
+            // A failed or stopped task is saved too (shared history: the extension and
+            // the web dashboard show it), so it never just vanishes. Off the reply path.
+            let backend = state.backend.clone();
+            let (task_c, conv_c) = (task.clone(), conversation_id.clone());
+            let note = format!("⚠️ {}", e.chars().take(600).collect::<String>());
+            let status = if e.to_lowercase().contains("cancel") || e.to_lowercase().contains("stopped") { "cancelled" } else { "failed" };
+            tauri::async_runtime::spawn(async move {
+                let _ = backend.log_agent_run_as(conv_c.as_deref(), &task_c, &note, "act", status).await;
+            });
             Err(e)
         }
     }
+}
+
+/// Incremental history sync for the sidebar (and the badge of where each chat came from).
+#[tauri::command]
+pub async fn get_history_changes(
+    state: State<'_, AppState>,
+    since: Option<String>,
+) -> Result<crate::backend::HistoryChanges, String> {
+    state.backend.get_history_changes(since.as_deref()).await
 }
 
 /// Called when the user clicks Allow/Deny on an agent's `request_confirmation`

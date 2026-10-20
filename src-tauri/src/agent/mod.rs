@@ -57,6 +57,7 @@ mod ledger;
 mod paths;
 mod prompt;
 mod retry;
+pub(crate) mod scheduler;
 mod screen;
 mod text;
 mod tools;
@@ -263,6 +264,19 @@ continue from where it left off - do not redo steps that are already complete.\n
     let result = drive_loop(app, backend, &ctx, contents, source, task, &mut mcp, &mut screen_mapping, initial_ledger).await;
     crate::shield::hide(app);
     end_run(source);
+    crate::analytics::track(
+        app,
+        "agent_task_end",
+        serde_json::json!({
+            "surface": source.split(':').next().unwrap_or("main"),
+            "status": match &result {
+                Ok(_) if cancel_requested(source) => "cancelled",
+                Ok(text) if text.contains("Say \"continue\"") => "incomplete",
+                Ok(_) => "done",
+                Err(_) => "error",
+            },
+        }),
+    );
     let handed_files = crate::kudu_files::end_run(source);
     let result = result.map(|text| crate::kudu_files::attach_to_answer(text, handed_files));
     mcp.shutdown().await;

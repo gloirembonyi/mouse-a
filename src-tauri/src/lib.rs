@@ -2,6 +2,7 @@
 // Sets up Tauri with system tray, global shortcuts, and all plugins.
 
 mod agent;
+mod analytics;
 mod auth_sync;
 mod backend;
 mod bridge;
@@ -98,6 +99,8 @@ pub fn run() {
         })
         .manage(terminal::PtyState::default())
         .invoke_handler(tauri::generate_handler![
+            analytics::analytics_track,
+            commands::get_history_changes,
             commands::capture_screen,
             commands::capture_region,
             commands::capture_at_cursor,
@@ -417,6 +420,12 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 bridge::serve(bridge_app).await;
             });
+
+            analytics::track(
+                app.handle(),
+                "app_open",
+                serde_json::json!({ "start_in_background": prefs::get().start_in_background }),
+            );
 
             Ok(())
         })

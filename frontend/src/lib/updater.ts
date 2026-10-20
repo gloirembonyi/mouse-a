@@ -8,7 +8,7 @@
 import { useSyncExternalStore } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { installKind, type InstallKind } from "./tauri";
+import { analyticsTrack, installKind, type InstallKind } from "./tauri";
 
 export const DOWNLOAD_PAGE = "https://kuduagent.vercel.app/download";
 
@@ -127,6 +127,7 @@ export async function installUpdate(): Promise<void> {
   if (!pending || !canInstallInApp(state)) return;
   if (state.phase === "downloading" || state.phase === "installing") return;
   set({ phase: "downloading", downloaded: 0, total: null, error: null, errorFrom: null });
+  void analyticsTrack("update_install", { to_version: pending.version });
   try {
     let downloaded = 0;
     await pending.downloadAndInstall((event) => {

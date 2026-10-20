@@ -22,6 +22,17 @@ export interface Conversation {
   title?: string;
   updated_at: string;
   message_count?: number;
+  /** Which Kudu app started it - "desktop" | "extension" | "web" (null on old rows). */
+  app?: string | null;
+  /** "chat" | "act" | "handoff" (a task one agent gave the other). */
+  kind?: string | null;
+}
+
+/** GET /api/history/changes: what changed since a cursor (`now` of the previous call). */
+export interface HistoryChanges {
+  now: string;
+  conversations: Conversation[];
+  deleted: string[];
 }
 
 export interface ConversationMessage {

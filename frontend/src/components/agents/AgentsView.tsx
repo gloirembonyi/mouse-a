@@ -305,7 +305,7 @@ function TaskCard({ task, agents }: { task: LinkTask; agents: ReturnType<typeof 
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
             <span className="text-[11px] text-text-muted">{fromBrowser ? "Browser asked Kudu" : "Kudu asked the browser"}</span>
-            <span className={clsx("rounded-full px-2 py-px text-[10.5px] font-medium", style.className)}>{style.label}</span>
+            <span className={clsx("rounded-full px-2 py-px text-[10.5px] font-medium", style.className)}>{task.status === "queued" && task.queue_position ? `Queued #${task.queue_position}` : style.label}</span>
             <span className="ml-auto text-[11px] tabular-nums text-text-muted">{formatDuration(elapsed)}</span>
           </span>
           <span className="mt-0.5 line-clamp-2 block text-[13px] text-text-primary">{task.title}</span>

@@ -415,6 +415,11 @@ function ThreadRow({
       )}
     >
       <button onClick={onOpen} title={thread.title} className="min-w-0 flex-1 truncate px-2.5 text-left text-[13px]">
+        {originLabel(thread) && (
+          <span className="mr-1.5 rounded-full bg-accent/15 px-1.5 py-px align-[1px] text-[10px] font-semibold text-accent">
+            {originLabel(thread)}
+          </span>
+        )}
         {threadTitle(thread.title)}
       </button>
       {running && <span className="mr-2 h-1.5 w-1.5 flex-shrink-0 animate-pulse rounded-full bg-accent" title="Working" />}
@@ -439,4 +444,12 @@ function ThreadRow({
       )}
     </div>
   );
+}
+
+/** Where a chat came from, when not from this app - one history across Kudu apps. */
+function originLabel(thread: { app?: string | null; kind?: string | null }): string {
+  if (thread.kind === "handoff") return thread.app === "extension" ? "From browser" : "Hand-off";
+  if (thread.app === "extension") return "Browser";
+  if (thread.app === "web") return "Web";
+  return "";
 }

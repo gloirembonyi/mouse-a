@@ -321,3 +321,23 @@ away when the app exits. So `contentProtected` is NOT in tauri.conf.json, `meeti
 only touches visible windows, and every show path calls `meeting::protect_shown(&w)` right after
 `show()` (the main window catches up on `WindowEvent::Focused`). A new show path must do the same.
 
+## Several runs at once: the input lease and the hand-off queue
+
+Runs overlap: the user's chats (`main:<chat>`), the Pilot (`copilot`) and tasks from the browser (`browser:<id>`).
+
+- **Input lease.** Non-GUI tools run side by side. GUI tools take the input lease in
+  `agent/scheduler.rs`, acquired in `drive.rs` before any click / type / key / scroll / focus /
+  open, then `touch_input` after.
+  - The lease is sticky (4 s), so one run's click-then-type is never split by another run.
+  - User runs go first.
+  - `end_run` releases it.
+  - Esc cancels the lease holder only (`shield.rs`).
+- **Hand-off queue.** Browser hand-offs: `INBOUND_PARALLEL` (2) run at once and the rest
+  queue (`link.rs`), with `desktop_queued {position}` frames and `queue_position` on the
+  board.
+  - A task cancelled while queued is dropped (`dequeue_cancelled`).
+  - Status probes answer `queued`.
+- **History.** Finished hand-offs are logged with `log_agent_run_as(.., "handoff", status)`,
+  and failed `agent_run`s are logged too. The sidebar syncs `get_history_changes` every 20 s
+  and badges chats from the browser (`originLabel` in `Sidebar.tsx`).
+

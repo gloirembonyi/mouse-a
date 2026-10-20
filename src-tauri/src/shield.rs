@@ -45,7 +45,16 @@ fn apply_esc_hotkey(app: &AppHandle, on: bool) {
             if tick_now().saturating_sub(ours) < OWN_KEY_WINDOW_MS {
                 return; // the agent pressed Esc, not the person
             }
-            let n = crate::agent::request_cancel_all();
+            // Esc means "stop what is using my screen": the run holding the mouse and
+            // keyboard. Other runs (a command, a file job, the browser's hand-off waiting
+            // its turn) keep going. With nobody on the input, stop everything as before.
+            let n = match crate::agent::scheduler::input_owner() {
+                Some(owner) => {
+                    crate::agent::request_cancel(&owner);
+                    1
+                }
+                None => crate::agent::request_cancel_all(),
+            };
             if n > 0 {
                 let _ = app.emit_to("shield", "shield-stopping", n);
             }

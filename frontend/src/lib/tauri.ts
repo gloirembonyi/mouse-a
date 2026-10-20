@@ -66,6 +66,9 @@ export const onAgentProgress = (cb: (e: AgentProgressEvent) => void): Promise<Un
 
 // ── History / conversations ──────────────────────────────
 export const getHistoryStats = () => invoke<HistoryStats>("get_history_stats");
+/** Incremental history sync - chats made in the browser extension appear here too. */
+export const getHistoryChanges = (since: string | null) =>
+  invoke<import("./types").HistoryChanges>("get_history_changes", { since });
 export const getConversations = (limit = 50) =>
   invoke<Conversation[]>("get_conversations", { limit });
 export const getConversationMessages = (id: string, limit = 200) =>
@@ -321,7 +324,12 @@ export interface WindowPrefs {
   start_in_background: boolean;
   /** Every Kudu Desktop window is excluded from screen capture. Persisted; on by default. */
   hide_from_screen_share: boolean;
+  /** Anonymous feature-usage counts (src-tauri/src/analytics.rs). On by default. */
+  share_usage_stats?: boolean;
 }
+/** Count a feature use (name must be on Kudu Core's allow-list; params: short enums/numbers). */
+export const analyticsTrack = (name: string, params?: Record<string, string | number | boolean>) =>
+  invoke<void>("analytics_track", { name, params }).catch(() => {});
 /** A page the browser extension handed to the copilot bar (bridge.rs `open_copilot`). */
 export interface CopilotContext {
   url: string;
@@ -366,6 +374,8 @@ export interface LinkTask {
   updated_ms: number;
   result: string | null;
   error: string | null;
+  /** Place in the hand-off queue while "queued" (1 = next). */
+  queue_position?: number | null;
 }
 
 export const linkInfo = () => invoke<LinkInfo>("link_info");

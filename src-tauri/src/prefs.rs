@@ -26,6 +26,9 @@ pub struct WindowPrefs {
     /// default; the setting is remembered across launches.
     #[serde(default = "default_true")]
     pub hide_from_screen_share: bool,
+    /// Anonymous feature-usage counts (analytics.rs) - never screen, text or audio.
+    #[serde(default = "default_true")]
+    pub share_usage_stats: bool,
 }
 
 fn default_true() -> bool {
@@ -34,7 +37,7 @@ fn default_true() -> bool {
 
 impl Default for WindowPrefs {
     fn default() -> Self {
-        Self { hide_from_taskbar: false, start_in_background: false, hide_from_screen_share: true }
+        Self { hide_from_taskbar: false, start_in_background: false, hide_from_screen_share: true, share_usage_stats: true }
     }
 }
 

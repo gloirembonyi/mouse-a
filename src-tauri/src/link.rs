@@ -122,6 +122,9 @@ pub struct TaskRecord {
     pub updated_ms: i64,
     pub result: Option<String>,
     pub error: Option<String>,
+    /// Place in the hand-off queue while status is "queued" (1 = next).
+    #[serde(default)]
+    pub queue_position: Option<u32>,
     #[serde(skip)]
     last_probe_ms: i64,
 }
@@ -167,6 +170,7 @@ pub fn task_started(id: &str, direction: &str, title: &str, status: &str) {
         updated_ms: now,
         result: None,
         error: None,
+        queue_position: None,
         last_probe_ms: 0,
     };
     let mut b = board().lock().unwrap();
@@ -245,14 +249,57 @@ fn last_step(id: &str) -> Option<(String, String)> {
 
 // ── Incoming tasks (browser → desktop) ───────────────────────────
 
-fn inbound_lock() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+// The hand-off queue. Up to INBOUND_PARALLEL browser tasks run at once (their GUI steps
+// still take turns on the mouse via agent/scheduler.rs, behind the user's own task); the
+// rest wait in arrival order and the browser is told its place ("desktop_queued"), so it
+// can show "Queued #2" and pause its timeout instead of guessing. A task cancelled while
+// it waits is dropped for real - it used to start anyway, after the browser gave up on it.
+const INBOUND_PARALLEL: usize = 2;
+
+fn inbound_slots() -> &'static tokio::sync::Semaphore {
+    static SLOTS: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+    SLOTS.get_or_init(|| tokio::sync::Semaphore::new(INBOUND_PARALLEL))
+}
+
+/// Waiting hand-offs, in arrival order.
+fn inbound_queue() -> &'static Mutex<Vec<String>> {
+    static Q: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    Q.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Tell every waiting hand-off its (1-based) place in line.
+fn announce_queue() {
+    let ids: Vec<String> = inbound_queue().lock().unwrap().clone();
+    for (i, id) in ids.iter().enumerate() {
+        let position = i + 1;
+        bridge().send_json(json!({ "v": 1, "type": "desktop_queued", "id": id, "position": position }));
+        update(id, |t| {
+            t.status = "queued".into();
+            t.queue_position = Some(position as u32);
+        })
+        .map(|r| emit_task(&r));
+    }
+}
+
+/// Drop a waiting hand-off. Returns true if it was still in the queue.
+fn dequeue_cancelled(id: &str, reason: &str) -> bool {
+    let removed = {
+        let mut q = inbound_queue().lock().unwrap();
+        let before = q.len();
+        q.retain(|x| x != id);
+        q.len() != before
+    };
+    if removed {
+        task_finished(id, Err(reason));
+        bridge().send_json(json!({ "v": 1, "type": "desktop_result", "id": id, "ok": false, "error": reason }));
+        announce_queue();
+    }
+    removed
 }
 
 /// Runs a task the browser agent handed us, through the normal desktop agent
 /// loop (same tools, same confirmation gate - its Allow/Deny prompts appear in
-/// the Agents panel). One at a time: incoming tasks queue behind each other.
+/// the Agents panel). Queued behind other hand-offs when INBOUND_PARALLEL are running.
 pub fn handle_desktop_task(v: &Value, paired: bool) {
     let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
     if id.is_empty() {
@@ -295,9 +342,28 @@ pub fn handle_desktop_task(v: &Value, paired: bool) {
 
     task_started(&id, "from_browser", &task, "queued");
     bridge().send_json(json!({ "v": 1, "type": "desktop_accepted", "id": id }));
+    inbound_queue().lock().unwrap().push(id.clone());
+    if inbound_slots().available_permits() == 0 {
+        announce_queue();
+    }
 
     tauri::async_runtime::spawn(async move {
-        let _turn = inbound_lock().lock().await;
+        let _slot = match inbound_slots().acquire().await {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        // Cancelled (or the browser left) while it waited: it is already answered.
+        let still_queued = {
+            let mut q = inbound_queue().lock().unwrap();
+            let before = q.len();
+            q.retain(|x| x != &id);
+            q.len() != before
+        };
+        announce_queue();
+        if !still_queued {
+            return;
+        }
+        update(&id, |t| t.queue_position = None).map(|r| emit_task(&r));
         task_step(&id, "plan", "Starting on the desktop");
         let source = format!("browser:{}", id);
         let mut prompt = String::from(
@@ -316,6 +382,18 @@ Do the PC-side part (terminal, files, folders, apps), then answer with a concise
         let backend = app.state::<crate::commands::AppState>().backend.clone();
         let (cx, cy) = crate::mouse::get_cursor_position();
         let result = crate::agent::run_task(&app, &backend, &prompt, cx, cy, &source, true, None, None, 0).await;
+        // In the shared history as a hand-off, so it shows in Kudu Desktop's sidebar and
+        // the extension's chat list (the browser logs its own side of the job).
+        let (note, status) = match &result {
+            Ok(text) => (text.clone(), "done"),
+            Err(e) if e.to_lowercase().contains("cancel") || e.to_lowercase().contains("stopped") => (format!("⚠️ {}", e), "cancelled"),
+            Err(e) => (format!("⚠️ {}", e), "failed"),
+        };
+        let log_backend = backend.clone();
+        let log_task = format!("From the browser agent: {}", task);
+        tauri::async_runtime::spawn(async move {
+            let _ = log_backend.log_agent_run_as(None, &log_task, &note, "handoff", status).await;
+        });
         match result {
             Ok(text) => {
                 task_finished(&id, Ok(&text));
@@ -331,6 +409,9 @@ Do the PC-side part (terminal, files, folders, apps), then answer with a concise
 
 pub fn handle_desktop_cancel(v: &Value) {
     if let Some(id) = v.get("id").and_then(|x| x.as_str()) {
+        if dequeue_cancelled(id, "Cancelled before it started.") {
+            return;
+        }
         crate::agent::request_cancel(&format!("browser:{}", id));
         task_step(id, "tool-result", "Cancel requested by the browser");
     }
@@ -340,6 +421,8 @@ pub fn handle_desktop_cancel(v: &Value) {
 pub fn handle_status_request(v: &Value) {
     let Some(id) = v.get("id").and_then(|x| x.as_str()) else { return };
     let (state, step) = match last_step(id) {
+        // Waiting its turn is not "working" - the browser shows the queue position.
+        Some((status, step)) if status == "queued" => ("queued", step),
         Some((status, step)) if is_open(&status) => ("running", step),
         _ => ("unknown", String::new()),
     };
@@ -483,7 +566,11 @@ pub fn link_tasks() -> Vec<TaskRecord> {
 pub fn link_cancel_task(id: String) {
     let direction = board().lock().unwrap().iter().find(|t| t.id == id).map(|t| t.direction.clone());
     match direction.as_deref() {
-        Some("from_browser") => crate::agent::request_cancel(&format!("browser:{}", id)),
+        Some("from_browser") => {
+            if !dequeue_cancelled(&id, "Cancelled before it started.") {
+                crate::agent::request_cancel(&format!("browser:{}", id));
+            }
+        }
         Some(_) => {
             bridge().cancel_task(&id);
             bridge().fail_task(&id, "cancelled");
@@ -510,6 +597,9 @@ pub fn cancel_incoming(reason: &str) {
         .map(|t| t.id.clone())
         .collect();
     for id in ids {
+        if dequeue_cancelled(&id, reason) {
+            continue;
+        }
         crate::agent::request_cancel(&format!("browser:{}", id));
         task_step(&id, "error", reason);
     }
