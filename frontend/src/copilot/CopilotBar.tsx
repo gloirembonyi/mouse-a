@@ -9,6 +9,9 @@ import {
   Copy,
   Ellipsis,
   Globe,
+  ExternalLink,
+  EyeOff,
+  Lightbulb,
   MessageSquareText,
   NotebookPen,
   Pause,
@@ -17,6 +20,7 @@ import {
   ScanText,
   Sparkles,
   Square,
+  UserRound,
   WandSparkles,
   Wrench,
   X,
@@ -278,7 +282,7 @@ export function CopilotBar() {
     <div
       ref={rootRef}
       className="copilot-root"
-      style={{ opacity, minHeight: menuOpen ? 460 : undefined }}
+      style={{ opacity, minHeight: menuOpen ? 350 : undefined }}
       onKeyDown={(e) => e.key === "Escape" && setExpanded(false)}
     >
       {/* ── The pill ── */}
@@ -656,7 +660,18 @@ function Insight({
       {on && insight ? (
         <Markdown className="cp-insight-body">{insight.text}</Markdown>
       ) : (
-        lastHeard && <p className="cp-caption">{lastHeard}</p>
+        lastHeard ? (
+          <p className="cp-caption">{lastHeard}</p>
+        ) : live ? (
+          <p className="cp-waiting">
+            <span className="cp-waiting-dots" aria-hidden>
+              <i />
+              <i />
+              <i />
+            </span>
+            Listening. Waiting for someone to speak…
+          </p>
+        ) : null
       )}
     </section>
   );
@@ -745,15 +760,14 @@ function MoreMenu(props: {
   }, [props]);
   return (
     <div ref={ref} className="cp-menu glass" role="menu">
-      <MenuSwitch label="Hide from screen share" hint="Invisible in shares & recordings" on={props.stealth} set={props.onStealth} />
-      <MenuSwitch label="Use my context" hint="About me, projects, this session, research brief" on={props.useContext} set={props.onUseContext} />
-      <MenuSwitch label="Auto-answer questions" hint="Drafts a reply when you're asked" on={props.autoAnswer} set={props.onAutoAnswer} />
-      <MenuSwitch label="Live insights" hint="Topic, key points, what to say next" on={props.insights} set={props.onInsights} />
-      <label className="cp-menu-item cp-menu-range">
-        <span className="flex flex-col items-start">
-          <span>Opacity</span>
-          <span className="cp-menu-hint">See the call through the bar</span>
-        </span>
+      <div className="cp-menu-grid">
+        <MenuTile icon={<EyeOff size={15} />} label="Hidden from share" hint="Invisible in screen shares and recordings" on={props.stealth} set={props.onStealth} />
+        <MenuTile icon={<UserRound size={15} />} label="Use my context" hint="About me, projects, this session, research brief" on={props.useContext} set={props.onUseContext} />
+        <MenuTile icon={<Zap size={15} />} label="Auto-answer" hint="Drafts a reply when you are asked a question" on={props.autoAnswer} set={props.onAutoAnswer} />
+        <MenuTile icon={<Lightbulb size={15} />} label="Live insights" hint="Topic, key points and what to say next" on={props.insights} set={props.onInsights} />
+      </div>
+      <label className="cp-menu-range" title="See the call through the bar">
+        <span>Opacity</span>
         <input
           type="range"
           min={0.45}
@@ -766,27 +780,26 @@ function MoreMenu(props: {
       </label>
       <button
         type="button"
-        className="cp-menu-item"
+        className="cp-menu-link"
         onClick={() => {
           props.onOpenFull();
           props.onClose();
         }}
       >
-        Open Kudu Pilot (transcript & notes)
+        Open Kudu Pilot (transcript and notes)
+        <ExternalLink size={13} />
       </button>
     </div>
   );
 }
 
-function MenuSwitch({ label, hint, on, set }: { label: string; hint: string; on: boolean; set: (v: boolean) => void }) {
+function MenuTile({ icon, label, hint, on, set }: { icon: React.ReactNode; label: string; hint: string; on: boolean; set: (v: boolean) => void }) {
   return (
-    <button type="button" role="menuitemcheckbox" aria-checked={on} className="cp-menu-item" onClick={() => set(!on)}>
-      <span className="flex flex-col items-start">
-        <span>{label}</span>
-        <span className="cp-menu-hint">{hint}</span>
-      </span>
-      <span className={clsx("cp-switch", on && "is-on")} aria-hidden>
-        <span />
+    <button type="button" role="menuitemcheckbox" aria-checked={on} title={hint} className={clsx("cp-menu-tile", on && "is-on")} onClick={() => set(!on)}>
+      <span className="cp-menu-tile-icon">{icon}</span>
+      <span className="cp-menu-tile-label">{label}</span>
+      <span className="cp-menu-tile-state" aria-hidden>
+        {on ? "On" : "Off"}
       </span>
     </button>
   );
