@@ -274,6 +274,43 @@ export const meetingTranscript = () => invoke<TranscriptEntry[]>("meeting_transc
 export const meetingAddEntry = (speaker: "them" | "me" | "note", text: string) =>
   invoke<TranscriptEntry>("meeting_add_entry", { speaker, text });
 export const meetingClear = () => invoke<void>("meeting_clear");
+/** A saved Kudu Pilot call (transcript + the answers given), kept on this PC. */
+export interface SavedCard {
+  id: string;
+  action: MeetingAction;
+  /** The question the answer was for (typed text, or the question that was locked). */
+  question?: string | null;
+  text: string;
+  at_ms: number;
+}
+export interface SavedSession {
+  id: string;
+  title: string;
+  mode: MeetingMode;
+  started_ms: number | null;
+  updated_ms: number;
+  /** False while a call is live - a session still "not ended" at launch means the app died mid-call. */
+  ended: boolean;
+  transcript: TranscriptEntry[];
+  cards: SavedCard[];
+}
+export interface SessionSummary {
+  id: string;
+  title: string;
+  mode: MeetingMode;
+  started_ms: number | null;
+  updated_ms: number;
+  lines: number;
+  answers: number;
+  preview: string;
+  ended: boolean;
+}
+/** Open a saved call as the paused session; Resume continues it. */
+export const meetingRestore = (id: string) =>
+  invoke<{ status: MeetingStatus; session: SavedSession }>("meeting_restore", { id });
+export const sessionList = () => invoke<SessionSummary[]>("session_list");
+export const sessionGet = (id: string) => invoke<SavedSession>("session_get", { id });
+export const sessionDelete = (id: string) => invoke<void>("session_delete", { id });
 /** Pass `requestId` to have the answer streamed as `meeting-answer-delta` events while it is written. */
 export const meetingAssist = (
   action: MeetingAction,

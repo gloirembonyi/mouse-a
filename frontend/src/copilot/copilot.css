@@ -50,7 +50,7 @@ body.copilot-body {
   isolation: isolate;
   background:
     radial-gradient(120% 140% at 12% -20%, rgba(151, 185, 222, 0.16), transparent 52%),
-    linear-gradient(180deg, rgba(var(--glass-ink-2), 0.86), rgba(var(--glass-ink), 0.9));
+    linear-gradient(180deg, rgba(var(--glass-ink-2), 0.95), rgba(var(--glass-ink), 0.97));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.2),
     inset 0 -1px 0 rgba(255, 255, 255, 0.04),
@@ -1078,10 +1078,23 @@ body.copilot-body {
 
 /* ── Menu opens downward from the input row and the window grows to fit it ── */
 .cp-menu {
-  top: calc(100% + 8px);
-  bottom: auto;
+  /* Opens UPWARD, over the answer area: the window does not have to grow, so the menu can
+     never fall off the bottom of the screen. Scrolls if the bar is short. */
+  top: auto;
+  bottom: calc(100% + 10px);
   left: auto;
   right: -6px;
+  max-height: min(380px, 70vh);
+  overflow-y: auto;
+  background: rgb(20, 27, 42) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(185, 215, 234, 0.16),
+    0 24px 48px -14px rgba(2, 6, 14, 0.85),
+    0 4px 12px rgba(2, 6, 14, 0.5) !important;
+}
+.cp-menu::before,
+.cp-menu::after {
+  display: none;
 }
 
 /* ── A page handed over from the browser extension ── */

@@ -168,13 +168,21 @@ async fn stream_once(
     let both = mic.is_some() && system.is_some();
     let single_speaker: &'static str = if mic.is_some() { "me" } else { "them" };
     let channels = if both { 2 } else { 1 };
+    // Names and technical terms from the user's own context, so "Kubernetes" and "MySQL"
+    // are not heard as "cuber nettys" and "my sequel". Only nova-3 understands keyterm.
+    let keyterms: String = if token.model.starts_with("nova-3") {
+        crate::meeting::stt_keyterms().iter().map(|t| format!("&keyterm={}", crate::meeting::url_encode(t))).collect()
+    } else {
+        String::new()
+    };
     let url = format!(
         "wss://api.deepgram.com/v1/listen?model={}&encoding=linear16&sample_rate={}&channels={}{}\
-&interim_results=true&smart_format=true&punctuate=true&endpointing=300&utterance_end_ms=1200&vad_events=true",
+&interim_results=true&smart_format=true&punctuate=true&endpointing=500&utterance_end_ms=1200&vad_events=true{}",
         token.model,
         TARGET_RATE,
         channels,
-        if both { "&multichannel=true" } else { "" }
+        if both { "&multichannel=true" } else { "" },
+        keyterms
     );
     let mut request = url.into_client_request().map_err(|e| e.to_string())?;
     request.headers_mut().insert(

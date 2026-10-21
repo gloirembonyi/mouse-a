@@ -117,7 +117,7 @@ pub struct SourceNote {
     pub fetched_at_ms: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptEntry {
     pub id: u64,
     /// "them" | "me" | "coach" | "note"
@@ -175,6 +175,12 @@ static LAST_MODE: Mutex<String> = Mutex::new(String::new());
 /// so the clock and "started at" stay those of the meeting, not of the last resume.
 static LAST_STARTED_AT: Mutex<Option<i64>> = Mutex::new(None);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+/// The saved-session file the current transcript belongs to, and the answers given in it.
+/// Kept here (not in a window) so answers shown in the in-call bar are saved too.
+static SESSION_ID: Mutex<Option<String>> = Mutex::new(None);
+static CARDS: Mutex<Vec<Value>> = Mutex::new(Vec::new());
+static LAST_PERSIST_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
 /// Name of the input device actually opened - quoted in the "mic is silent"
 /// warning, since the usual cause is Windows defaulting to the wrong input.
 static MIC_NAME: Mutex<String> = Mutex::new(String::new());
@@ -773,6 +779,7 @@ pub(crate) fn push_entry(app: &AppHandle, speaker: &str, text: String) -> Transc
     };
     TRANSCRIPT.lock().unwrap().push(entry.clone());
     let _ = app.emit("meeting-transcript", &entry);
+    persist(false);
     entry
 }
 
@@ -946,6 +953,138 @@ async fn chunker(app: AppHandle, backend: BackendClient, stop: Arc<AtomicBool>, 
     finished.store(true, Ordering::Relaxed);
 }
 
+// ── Saved sessions ───────────────────────────────────────────────
+// Every call is written to disk as it happens (transcript lines throttled to one write per
+// few seconds, answers and Pause immediately), so a crash, a closed window or a restart
+// loses at most the last few seconds - and the session list can offer the call back.
+
+fn session_title(entries: &[TranscriptEntry], started_ms: i64) -> String {
+    let first = entries.iter().find(|e| e.speaker == "them" && e.text.chars().count() >= 25).map(|e| e.text.trim());
+    match first {
+        Some(t) => {
+            let short: String = t.chars().take(56).collect();
+            if t.chars().count() > 56 {
+                format!("{}…", short.trim_end())
+            } else {
+                short
+            }
+        }
+        None => chrono::DateTime::from_timestamp_millis(started_ms)
+            .map(|d| format!("Call · {}", d.with_timezone(&chrono::Local).format("%b %-d, %H:%M")))
+            .unwrap_or_else(|| "Call".to_string()),
+    }
+}
+
+/// Write the current session. `force` skips the throttle (answers, Pause, New session).
+fn persist(force: bool) {
+    let now = now_ms();
+    if !force && now - LAST_PERSIST_MS.load(Ordering::Relaxed) < 4_000 {
+        return;
+    }
+    let transcript = TRANSCRIPT.lock().unwrap().clone();
+    let cards = CARDS.lock().unwrap().clone();
+    if transcript.is_empty() && cards.is_empty() {
+        return;
+    }
+    LAST_PERSIST_MS.store(now, Ordering::Relaxed);
+    let started = LAST_STARTED_AT.lock().unwrap().unwrap_or(now);
+    let id = SESSION_ID.lock().unwrap().get_or_insert_with(|| format!("s{}", started)).clone();
+    let session = json!({
+        "id": id,
+        "title": session_title(&transcript, started),
+        "mode": LAST_MODE.lock().unwrap().clone(),
+        "started_ms": started,
+        "updated_ms": now,
+        "ended": LIVE.lock().unwrap().is_none(),
+        "transcript": transcript,
+        "cards": cards,
+    });
+    std::thread::spawn(move || {
+        let _guard = WRITE_LOCK.lock().unwrap();
+        if let Err(e) = crate::sessions::save_value(&id, &session) {
+            eprintln!("[pilot] could not save the session: {}", e);
+        }
+    });
+}
+
+fn record_card(id: Option<&str>, action: &str, question: Option<&str>, text: &str) {
+    if action == "insights" {
+        return;
+    }
+    let mut cards = CARDS.lock().unwrap();
+    cards.push(json!({
+        "id": id.map(str::to_string).unwrap_or_else(|| format!("c{}", now_ms())),
+        "action": action,
+        "question": question.map(str::trim).filter(|q| !q.is_empty()),
+        "text": text,
+        "at_ms": now_ms(),
+    }));
+    let len = cards.len();
+    if len > 200 {
+        cards.drain(0..len - 200);
+    }
+    drop(cards);
+    persist(true);
+}
+
+// ── Speech-recognition vocabulary ────────────────────────────────
+
+/// Percent-encode a query-string value.
+pub(crate) fn url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
+/// Distinctive words from the profile (product and tool names, acronyms, CamelCase, words
+/// with digits) - what speech recognition gets wrong most. Empty when context is switched off.
+pub(crate) fn stt_keyterms() -> Vec<String> {
+    const MAX_TERMS: usize = 40;
+    let profile = load_profile();
+    if profile.skip_context {
+        return Vec::new();
+    }
+    let text = [&profile.session_context, &profile.projects, &profile.about, &profile.research]
+        .iter()
+        .map(|s| truncate_chars(s.trim(), 6000))
+        .collect::<Vec<_>>()
+        .join("
+");
+    let mut seen = std::collections::HashSet::new();
+    let mut terms: Vec<String> = Vec::new();
+    // First word of a line or sentence is capitalised anyway, so it only counts when it is
+    // also unusual (acronym, digits, inner capitals).
+    let mut sentence_start = true;
+    for raw in text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | '"' | '[' | ']' | '|' | '*' | '#')) {
+        let word = raw.trim_matches(|c: char| !c.is_alphanumeric() && c != '+' && c != '#' && c != '.');
+        let starts_sentence = sentence_start;
+        sentence_start = raw.ends_with('.') || raw.ends_with(':') || raw.ends_with('!') || raw.ends_with('?');
+        let word = word.trim_end_matches('.');
+        let len = word.chars().count();
+        if !(3..=30).contains(&len) || !word.chars().any(|c| c.is_alphabetic()) || word.contains("://") || word.contains('@') {
+            continue;
+        }
+        let upper = word.chars().filter(|c| c.is_uppercase()).count();
+        let digit = word.chars().any(|c| c.is_ascii_digit());
+        let inner_caps = word.chars().skip(1).any(|c| c.is_uppercase());
+        let capitalised = word.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+        let distinctive = digit || inner_caps || (upper >= 2 && len <= 8) || (capitalised && !starts_sentence);
+        if distinctive && seen.insert(word.to_lowercase()) {
+            terms.push(word.to_string());
+            if terms.len() >= MAX_TERMS {
+                break;
+            }
+        }
+    }
+    terms
+}
+
 // ── Assistance ───────────────────────────────────────────────────
 
 fn mode_label(mode: &str) -> &'static str {
@@ -962,12 +1101,17 @@ fn system_prompt(mode: &str, profile: &MeetingProfile) -> String {
 (THEM = other participants, ME = the user, COACH = practice questions you asked, NOTE = text the user typed) \
 plus the user's own background notes.\n\n\
 Rules:\n\
-- Be fast to read: the user is mid-conversation. Lead with the most useful line, keep the rest to a few short bullets. Markdown is fine.\n\
+- Be fast to read: the user is mid-conversation. The FIRST sentence is the direct answer (no preamble, no 'great question', no restating the question). \
+Default to under 60 words; add at most 2-3 short bullets only if they genuinely help. Markdown is fine.\n\
+- Answer the right question: the one the OTHER side (THEM) most recently asked that ME has not already answered in a later line. \
+Never answer something ME said, a rhetorical remark, small talk or a half-finished sentence. If the newest THEM line is cut off, \
+answer the last complete question, or say in one short line that they are still mid-question.\n\
 - Ground everything in the user's real background below. NEVER invent experience, employers, projects, metrics, credentials or results \
 they haven't given you. If their notes don't cover something, say so in one line and suggest an honest way to answer \
 (related experience, how they would approach it, or a clarifying question).\n\
 - Write suggested replies in the user's first-person voice, natural and spoken - not an essay.\n\
-- Transcripts come from speech recognition and may contain errors or mis-attributed lines; infer intent sensibly.\n\
+- Transcripts come from speech recognition and may contain errors, missing punctuation or mis-attributed lines; infer intent sensibly, \
+using the session context and recent topic to fix misheard technical terms. If you had to assume a word, say so in a few words, never a paragraph of hedging.\n\
 - Correctness beats speed. For factual, technical, math, coding or multiple-choice questions, work the problem out \
 carefully before answering and give the answer that is actually right - never a plausible guess. If you are not sure, say \
 what you are sure of and flag the uncertain part in a few words.\n\
@@ -979,8 +1123,7 @@ it is often the real context of what was just asked.\n",
     );
     if mode == "interview" || mode == "practice" {
         s.push_str("- For behavioral questions use a compact STAR shape (Situation, Task, Action, Result) built only from the user's real experience.\n\
-- Interview rule: the first sentence of every **Say:** block already answers the question. Name the key term, decision or number up front, \
-then the reasoning. Keep it to what can be said in 30-60 seconds.\n");
+- Interview rule: name the key term, decision or number up front, then the reasoning. Keep it to what can be said in 30-60 seconds.\n");
     }
     let style = profile.style.trim();
     if !style.is_empty() {
@@ -1285,15 +1428,16 @@ pub fn meeting_context_append(app: AppHandle, field: String, text: String) -> Re
 
 fn instruction_for(action: &str, question: Option<&str>) -> Result<String, String> {
     Ok(match action {
-        "suggest" => "Look at the most recent thing said TO me: the last THEM lines, including a line marked (still speaking). \
-If it is a question, a request to explain or describe something, or an invitation for me to speak: ANSWER IT DIRECTLY. Start with a bold \
-**Say:** block of 2-6 sentences I can say verbatim, in my voice, that already contains the answer in its first sentence (no 'great question', \
-no restating the question). Technical or factual asks: the correct, specific answer first. Behavioral or experience asks: a compact STAR built \
-only from my context, with a concrete detail or number. Then up to 3 short bullets: a detail to add if they dig in, a likely follow-up and \
-how to take it, or a caution. If their words are garbled by speech recognition, infer the most likely question from the context and answer \
-that, noting the assumption in a few words. Only if nothing at all is being asked of me: one line saying so, then ONE useful thing to say now. \
-Never open with analysis of the conversation - the **Say:** block comes first."
-            .to_string(),
+        "suggest" => {
+            let target = match question.map(str::trim).filter(|q| !q.is_empty()) {
+                Some(q) => format!("Answer exactly this question that THEM asked (speech-recognised, may have small errors): \"{}\". ", q),
+                None => "Find the newest question or request THEM made that I have not answered yet (the last THEM lines, including a line marked (still speaking) only if it is already a complete question). ".to_string(),
+            };
+            format!(
+                "{}ANSWER IT DIRECTLY. Start with a bold **Say:** block of 1-4 sentences I can say verbatim, in my voice, whose FIRST sentence is the answer itself (no 'great question', no restating the question, no preamble). Technical or factual asks: the correct, specific answer first. Behavioral or experience asks: a compact STAR built only from my context, with a concrete detail or number. Then at most 2 short bullets, only if useful: a detail to add if they dig in, or a likely follow-up and how to take it. If their words are garbled by speech recognition, infer the most likely question from the context and answer that, naming the assumption in a few words. Only if nothing is being asked of me: one line saying so, then ONE useful thing to say now. Never open with analysis of the conversation - the **Say:** block comes first.",
+                target
+            )
+        }
         "assist" => "Decide what would help me most RIGHT NOW and give only that: if I was just asked something, give me the answer \
 to say (bold **Say:** line first); if a term, number or claim came up I may not know, explain it in one or two lines; if a screen is attached \
 and shows a question, problem or slide, solve or explain what's on it. Lead with the single most useful line, then at most 3 short bullets."
@@ -1338,7 +1482,12 @@ If I haven't answered yet, say so."
             .to_string(),
         "ask" => {
             let q = question.map(str::trim).filter(|q| !q.is_empty()).ok_or("Type a question first.")?;
-            format!("My question: {}", q)
+            format!(
+                "My question: {}
+
+Answer it directly, first sentence = the answer. Use the transcript and my context only where they help.",
+                q
+            )
         }
         other => return Err(format!("Unknown assist action: {}", other)),
     })
@@ -1401,7 +1550,11 @@ pub async fn meeting_start(
     };
 
     if !resume {
+        // The previous call is already on disk; make sure its last lines are, then start clean.
+        persist(true);
         TRANSCRIPT.lock().unwrap().clear();
+        CARDS.lock().unwrap().clear();
+        *SESSION_ID.lock().unwrap() = None;
         *LAST_STARTED_AT.lock().unwrap() = None;
     }
     *LAST_MODE.lock().unwrap() = mode.clone();
@@ -1485,6 +1638,7 @@ pub async fn meeting_stop(app: AppHandle) -> Result<MeetingStatus, String> {
         }
         *LIVE.lock().unwrap() = None;
     }
+    persist(true);
     let status = current_status(None);
     let _ = app.emit("meeting-status", &status);
     Ok(status)
@@ -1515,8 +1669,40 @@ pub fn meeting_add_entry(app: AppHandle, speaker: String, text: String) -> Resul
     Ok(push_entry(&app, &speaker, text))
 }
 
+/// Open a saved call as the paused session (Resume continues it): after an app restart, or
+/// when the user picks a past call from the list. Whatever was paused here is saved first.
+#[tauri::command]
+pub fn meeting_restore(app: AppHandle, id: String) -> Result<Value, String> {
+    if LIVE.lock().unwrap().is_some() {
+        return Err("Pause the current call before opening another session.".to_string());
+    }
+    let saved = crate::sessions::session_get(id.clone())?;
+    persist(true);
+    let entries: Vec<TranscriptEntry> = saved
+        .get("transcript")
+        .cloned()
+        .and_then(|t| serde_json::from_value(t).ok())
+        .unwrap_or_default();
+    let mode = match saved.get("mode").and_then(|m| m.as_str()) {
+        Some(m @ ("meeting" | "interview" | "practice")) => m.to_string(),
+        _ => "meeting".to_string(),
+    };
+    NEXT_ID.fetch_max(entries.iter().map(|e| e.id).max().unwrap_or(0) + 1, Ordering::Relaxed);
+    *TRANSCRIPT.lock().unwrap() = entries;
+    *CARDS.lock().unwrap() = saved.get("cards").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+    *LAST_MODE.lock().unwrap() = mode;
+    *LAST_STARTED_AT.lock().unwrap() = saved.get("started_ms").and_then(|v| v.as_i64());
+    *SESSION_ID.lock().unwrap() = Some(id);
+    emit_status(&app, None);
+    Ok(json!({ "status": current_status(None), "session": saved }))
+}
+
 #[tauri::command]
 pub fn meeting_clear(app: AppHandle) {
+    if let Some(id) = SESSION_ID.lock().unwrap().take() {
+        let _ = crate::sessions::session_delete(id);
+    }
+    CARDS.lock().unwrap().clear();
     TRANSCRIPT.lock().unwrap().clear();
     *LAST_STARTED_AT.lock().unwrap() = None;
     emit_status(&app, None);
@@ -1590,12 +1776,19 @@ pub async fn meeting_assist(
     // Streamed when the caller can show it (request_id) and the backend
     // supports it: the first words land in ~1 s instead of after the whole
     // answer is written. Older backends fall back to one buffered step.
+    // A little thinking where a wrong answer costs most (technical / factual asks, the screen);
+    // none for the glance-only actions, which stay as fast as before.
+    let thinking: Option<u32> = match action.as_str() {
+        "suggest" | "ask" | "assist" => Some(384),
+        "screen" => Some(1024),
+        _ => None,
+    };
     let streamed = match &request_id {
         Some(id) => {
             let emit_app = app.clone();
             let id = id.clone();
             backend
-                .agent_stream(&system, contents.clone(), move |delta| {
+                .agent_stream(&system, contents.clone(), thinking, move |delta| {
                     let _ = emit_app.emit("meeting-answer-delta", json!({ "id": id, "delta": delta }));
                 })
                 .await
@@ -1607,7 +1800,7 @@ pub async fn meeting_assist(
         Some(text) => text.trim().to_string(),
         None => {
             let resp = backend
-                .agent_step(&system, contents, json!([]), None)
+                .agent_step(&system, contents, json!([]), thinking)
                 .await
                 .map_err(|e| friendly_assist_error(&e))?;
             response_text(&resp)
@@ -1619,6 +1812,7 @@ pub async fn meeting_assist(
     if action == "practice_question" {
         push_entry(&app, "coach", text.clone());
     }
+    record_card(request_id.as_deref(), &action, question.as_deref(), &text);
     Ok(MeetingAnswer { text, screen: screen_thumb })
 }
 
@@ -1896,7 +2090,35 @@ pub fn copilot_hide(app: AppHandle) {
 #[tauri::command]
 pub fn copilot_resize(app: AppHandle, width: f64, height: f64) {
     if let Some(w) = app.get_webview_window("copilot") {
-        let _ = w.set_size(tauri::LogicalSize::new(width.clamp(320.0, 960.0), height.clamp(48.0, 900.0)));
+        let (width, height) = (width.clamp(320.0, 960.0), height.clamp(48.0, 900.0));
+        let _ = w.set_size(tauri::LogicalSize::new(width, height));
+        clamp_copilot_into_monitor(&app, width, height);
+    }
+}
+
+/// The bar grows downward (a longer answer, the More menu). Near the bottom of the screen that
+/// used to push its last rows - the input and the menu - below the edge, where they could not
+/// be seen or clicked. After every resize the window is pulled back up so all of it is on
+/// the monitor it is on (leaving room for a bottom taskbar).
+fn clamp_copilot_into_monitor(app: &AppHandle, width: f64, height: f64) {
+    let Some(win) = app.get_webview_window("copilot") else { return };
+    let Ok(pos) = win.outer_position() else { return };
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let (w, h) = ((width * scale) as i32, (height * scale) as i32);
+    let monitor = app
+        .monitor_from_point((pos.x + w / 2) as f64, (pos.y + 24) as f64)
+        .ok()
+        .flatten()
+        .or_else(|| win.current_monitor().ok().flatten());
+    let Some(mon) = monitor else { return };
+    let (mpos, msize) = (mon.position(), mon.size());
+    let taskbar = (48.0 * mon.scale_factor()) as i32;
+    let max_x = mpos.x + msize.width as i32 - w - 4;
+    let max_y = mpos.y + msize.height as i32 - h - taskbar;
+    let nx = pos.x.min(max_x).max(mpos.x + 4);
+    let ny = pos.y.min(max_y).max(mpos.y + 4);
+    if nx != pos.x || ny != pos.y {
+        let _ = win.set_position(tauri::PhysicalPosition::new(nx, ny));
     }
 }
 

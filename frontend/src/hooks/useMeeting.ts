@@ -4,6 +4,11 @@ import {
   meetingAssist,
   meetingClear,
   meetingResearch,
+  meetingRestore,
+  sessionDelete,
+  sessionGet,
+  sessionList,
+  type SessionSummary,
   onMeetingProfile,
   onMeetingResearchProgress,
   meetingGetProfile,
@@ -26,6 +31,7 @@ import {
   type MeetingStatus,
   type TranscriptEntry,
 } from "../lib/tauri";
+import { TURN_QUIET_MS, lastTheirTurn, looksLikeQuestion, needsAnswer, openQuestion, type AnsweredMark } from "../lib/turns";
 
 export interface AssistCard {
   id: string;
@@ -67,47 +73,7 @@ export const copilotBarEnabled = () => localStorage.getItem(BAR_KEY) !== "off";
 export const setCopilotBarEnabled = (on: boolean) => localStorage.setItem(BAR_KEY, on ? "on" : "off");
 export const AUTO_ANSWER_KEY = "mouse-ai-auto-answer";
 
-const FILLER = "(?:(?:so|and|okay|ok|alright|right|well|now|then|great|cool|um|uh|yeah|yes|no|but|also|next|first|finally|lastly)[,\\s]+)*";
-const QUESTION_START = new RegExp(
-  "^" +
-    FILLER +
-    "(?:what|what's|whats|how|how's|why|when|where|who|who's|which|whose|can you|could you|would you|will you|do you|did you|does|have you|has|are you|were you|is there|is it|is that|isn't|aren't|don't you|shall we|should we|" +
-    "tell me|tell us|walk me|walk us|take me|take us|talk me|run me|describe|explain|give me|give us|give an example|share|let's say|imagine|suppose|say|introduce|" +
-    "any (?:experience|thoughts|questions|idea)|rate your|so your|your (?:biggest|greatest|main|last|current|most))\\b",
-);
-// Asks that sit mid-sentence or lack a question word: "I'd like to know how…",
-// "we're curious about…", "you've worked with Kafka, right".
-const QUESTION_ANYWHERE =
-  /\b(?:i(?:'d| would) like to (?:know|hear|understand)|i want to (?:know|hear|understand)|i'?m curious|we'?re curious|curious (?:to|about|how|what|if)|can you (?:tell|walk|talk|explain|describe|share|give)|could you (?:tell|walk|talk|explain|describe|share|give)|tell (?:me|us) (?:about|a bit|a little|more|how|why|what)|walk (?:me|us) through|a time when|an example of|what would you|how would you|how do you|how did you|how have you|why did you|why do you|why would you|what do you think|what are your|what is your|what's your|do you have (?:any|experience)|have you (?:ever|worked|used|done|built)|are you familiar|how familiar|how comfortable|how long|how many|how much|where do you see|why should we|why do you want|what interests you|biggest (?:challenge|weakness|strength|achievement)|questions for (?:me|us)|right\??$|correct\??$|isn'?t it\??$|don'?t you think\??$|would you say)\b/;
-
-/** Heuristic for "the other side just asked something" - drives auto-answer.
- *  Speech recognition rarely emits a "?", so the shape of the sentence has to do:
- *  question openers (with filler before them), interview prompts ("tell me about a
- *  time", "walk us through"), and asks buried mid-sentence ("I'd like to know how…").
- *  The last sentence is checked on its own, since a question often follows a
- *  preamble ("We use Kafka a lot. How would you handle backpressure"). */
-export function looksLikeQuestion(text: string) {
-  const t = text.trim().toLowerCase().replace(/\s+/g, " ");
-  if (t.length < 8) return false;
-  if (t.includes("?")) return true;
-  const sentences = t.split(/(?<=[.!])\s+/).filter(Boolean);
-  const last = sentences[sentences.length - 1] ?? t;
-  const tail = sentences.slice(-2).join(" ");
-  return QUESTION_START.test(t) || QUESTION_START.test(last) || QUESTION_ANYWHERE.test(tail);
-}
-
-/** The other side's latest turn - consecutive "them" lines joined, since
- *  Whisper often splits one question across two chunks - or null if the
- *  newest line isn't theirs. */
-export function lastTheirTurn(transcript: TranscriptEntry[]): { id: number; text: string } | null {
-  const last = transcript[transcript.length - 1];
-  if (!last || last.speaker !== "them") return null;
-  const parts: string[] = [];
-  for (let i = transcript.length - 1; i >= 0 && transcript[i].speaker === "them" && parts.length < 3; i--) {
-    parts.unshift(transcript[i].text);
-  }
-  return { id: last.id, text: parts.join(" ") };
-}
+export { looksLikeQuestion, lastTheirTurn, openQuestion };
 
 function errText(err: unknown) {
   return err instanceof Error ? err.message : String(err);
@@ -137,9 +103,18 @@ export function useMeeting() {
     setAutoAnswerState(v);
   }, []);
 
+  // Saved calls (kept on this PC). A call still "not ended" when the app opens means the
+  // app closed mid-call - offered back as a one-tap recovery.
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const refreshSessions = useCallback(
+    () => sessionList().then(setSessions).catch(() => {}),
+    [],
+  );
+
   useEffect(() => {
     meetingStatus().then(setStatus).catch(() => {});
     meetingTranscript().then(setTranscript).catch(() => {});
+    void refreshSessions();
     meetingGetProfile().then(setProfile).catch(() => {});
     const unTranscript = onMeetingTranscript((entry) =>
       setTranscript((prev) => (prev.some((e) => e.id === entry.id) ? prev : [...prev, entry])),
@@ -167,7 +142,7 @@ export function useMeeting() {
       unLevel.then((fn) => fn());
       unBusy.then((fn) => fn());
     };
-  }, []);
+  }, [refreshSessions]);
 
   // What the last start used, so Resume needs no questions.
   const lastStartRef = useRef<{ mode: MeetingMode; mic: boolean; system: boolean }>({ mode: "meeting", mic: true, system: true });
@@ -199,16 +174,75 @@ export function useMeeting() {
   const stop = useCallback(async () => {
     try {
       setStatus(await meetingStop());
+      void refreshSessions();
     } catch (err) {
       setError(errText(err));
     }
+  }, [refreshSessions]);
+
+  /** Open a saved call as the paused session: transcript and answers come back, Resume continues it. */
+  const openSession = useCallback(
+    async (id: string) => {
+      try {
+        const { status: next, session } = await meetingRestore(id);
+        setStatus(next);
+        setTranscript(session.transcript);
+        setCards(
+          [...session.cards].reverse().map((c) => ({
+            id: c.id,
+            action: c.action,
+            label: c.action === "ask" && c.question ? c.question : ACTION_LABELS[c.action] ?? "Answer",
+            text: c.text,
+            pending: false,
+            startedAt: c.at_ms,
+            context: c.question && c.action !== "ask" ? c.question : undefined,
+          })),
+        );
+        lastStartRef.current = { mode: session.mode, mic: true, system: session.mode !== "practice" };
+        setError(null);
+        void refreshSessions();
+      } catch (err) {
+        setError(errText(err));
+      }
+    },
+    [refreshSessions],
+  );
+
+  const deleteSession = useCallback(
+    async (id: string) => {
+      await sessionDelete(id).catch(() => {});
+      void refreshSessions();
+    },
+    [refreshSessions],
+  );
+
+  /** A saved call as Markdown, for Copy / export. */
+  const exportSession = useCallback(async (id: string) => {
+    const s = await sessionGet(id);
+    const when = s.started_ms ? new Date(s.started_ms).toLocaleString() : "";
+    const lines = [`# ${s.title}`, `${s.mode} · ${when}`, "", "## Transcript"];
+    for (const e of s.transcript) {
+      const who = e.speaker === "them" ? "Them" : e.speaker === "me" ? "Me" : e.speaker === "coach" ? "Coach" : "Note";
+      lines.push(`**${who}:** ${e.text}`);
+    }
+    if (s.cards.length) {
+      lines.push("", "## Answers");
+      for (const c of s.cards) {
+        lines.push(`### ${c.question || ACTION_LABELS[c.action] || "Answer"}`, c.text, "");
+      }
+    }
+    return lines.join("\n");
   }, []);
 
   const assist = useCallback(async (action: MeetingAction, question: string | null = null) => {
     const id = newId();
     const label = action === "ask" && question ? question : ACTION_LABELS[action];
-    const heard = action === "suggest" || action === "assist" ? lastTheirTurn(transcriptRef.current)?.text : undefined;
+    // Question lock: "What should I say?" answers the newest question they asked that
+    // I have not already replied to - and the card shows exactly which one it was.
+    const locked = action === "suggest" || action === "assist" ? (openQuestion(transcriptRef.current) ?? lastTheirTurn(transcriptRef.current)) : null;
+    const heard = action === "suggest" && question ? question : locked?.text;
     const context = heard && heard.length > 140 ? `${heard.slice(0, 140)}…` : heard;
+    if (action === "suggest" && !question && locked && looksLikeQuestion(locked.text)) question = locked.text;
     setCards((prev) => [{ id, action, label, text: "", pending: true, startedAt: Date.now(), context }, ...prev].slice(0, 30));
     try {
       const { text, screen } = await meetingAssist(action, question, includeScreenRef.current, id);
@@ -223,19 +257,24 @@ export function useMeeting() {
   // beat (questions often span two chunks) and never stacks requests.
   const cardsRef = useRef(cards);
   cardsRef.current = cards;
-  const answeredRef = useRef(0);
+  const answeredRef = useRef<AnsweredMark | null>(null);
+  const partialsRef = useRef(partials);
+  partialsRef.current = partials;
   useEffect(() => {
     // While the in-call bar is up it does the auto-answering, right over the call.
     if (!autoAnswer || !status.live || status.mode === "practice" || copilotBarEnabled()) return;
     const turn = lastTheirTurn(transcript);
-    if (!turn || turn.id <= answeredRef.current || !looksLikeQuestion(turn.text)) return;
+    if (!turn || !looksLikeQuestion(turn.text) || !needsAnswer(turn, answeredRef.current)) return;
+    // Answer the finished question, not the first half: wait for a quiet beat and for
+    // the live partial to clear.
     const t = setTimeout(() => {
-      if (cardsRef.current.some((c) => c.pending)) return;
-      answeredRef.current = turn.id;
+      if (cardsRef.current.some((c) => c.pending) || partialsRef.current.them) return;
+      const prev = answeredRef.current;
+      answeredRef.current = { id: turn.id, len: turn.text.length, count: prev && prev.id === turn.id ? prev.count + 1 : 1 };
       void assist("suggest");
-    }, 250);
+    }, TURN_QUIET_MS);
     return () => clearTimeout(t);
-  }, [transcript, autoAnswer, status.live, status.mode, assist]);
+  }, [transcript, partials.them, autoAnswer, status.live, status.mode, assist]);
 
   const addEntry = useCallback(async (speaker: "them" | "me" | "note", text: string) => {
     try {
@@ -308,6 +347,11 @@ export function useMeeting() {
     setAutoAnswer,
     start,
     stop,
+    sessions,
+    refreshSessions,
+    openSession,
+    deleteSession,
+    exportSession,
     assist,
     addEntry,
     clear,

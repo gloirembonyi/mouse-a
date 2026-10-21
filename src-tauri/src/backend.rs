@@ -700,6 +700,7 @@ impl BackendClient {
         &self,
         system: &str,
         contents: serde_json::Value,
+        thinking_budget: Option<u32>,
         mut on_delta: impl FnMut(&str),
     ) -> Result<Option<String>, String> {
         let token = self
@@ -707,7 +708,10 @@ impl BackendClient {
             .await
             .ok_or("Not signed in - open the Kudu Desktop window and try again.")?;
         let url = format!("{}/api/agent/stream", self.base_url.read().await);
-        let body = serde_json::json!({ "system": system, "contents": contents, "model": default_gemini_model() });
+        let mut body = serde_json::json!({ "system": system, "contents": contents, "model": default_gemini_model() });
+        if let Some(b) = thinking_budget {
+            body["thinkingBudget"] = serde_json::json!(b);
+        }
         let mut resp = self
             .client
             .post(&url)

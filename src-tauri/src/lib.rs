@@ -22,6 +22,7 @@ mod text_format;
 mod copilot;
 mod meeting;
 mod meeting_stream;
+mod sessions;
 mod mouse;
 mod oauth;
 mod prefs;
@@ -185,6 +186,11 @@ pub fn run() {
             meeting::meeting_transcript,
             meeting::meeting_add_entry,
             meeting::meeting_clear,
+            meeting::meeting_restore,
+            sessions::session_save,
+            sessions::session_list,
+            sessions::session_get,
+            sessions::session_delete,
             meeting::meeting_assist,
             meeting::meeting_get_profile,
             meeting::meeting_set_profile,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   AlertTriangle,
@@ -8,6 +8,8 @@ import {
   Check,
   Copy,
   FileText,
+  History,
+  RotateCcw,
   GraduationCap,
   HelpCircle,
   Lightbulb,
@@ -31,8 +33,9 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import { Markdown } from "../chat/Markdown";
 import { IconButton, Kbd, Switch } from "../ui/primitives";
 import { BotAvatar } from "../ui/BotAvatar";
-import { copilotBarEnabled, looksLikeQuestion, setCopilotBarEnabled, type AssistCard, type useMeeting } from "../../hooks/useMeeting";
-import { copilotShow, type MeetingAction, type MeetingMode, type MeetingProfile, type TranscriptEntry } from "../../lib/tauri";
+import { copilotBarEnabled, setCopilotBarEnabled, type AssistCard, type useMeeting } from "../../hooks/useMeeting";
+import { looksLikeQuestion, mergeTurns } from "../../lib/turns";
+import { copilotShow, type MeetingAction, type MeetingMode, type MeetingProfile, type SessionSummary, type TranscriptEntry } from "../../lib/tauri";
 
 interface MeetingViewProps {
   meeting: ReturnType<typeof useMeeting>;
@@ -45,11 +48,14 @@ const MODES: { id: MeetingMode; label: string; hint: string; icon: React.ReactNo
   { id: "practice", label: "Practice", hint: "Mock interview with honest feedback", icon: <GraduationCap size={16} /> },
 ];
 
+// Mid-call there are three things worth a tap; the rest sit behind "More" so the row is not a wall of buttons.
 const LIVE_ACTIONS: { action: MeetingAction; label: string; icon: React.ReactNode }[] = [
   { action: "suggest", label: "What should I say?", icon: <Sparkles size={13} /> },
-  { action: "summary", label: "Summary", icon: <FileText size={13} /> },
   { action: "screen", label: "Solve my screen", icon: <ScanText size={13} /> },
-  { action: "followups", label: "Follow-ups", icon: <HelpCircle size={13} /> },
+  { action: "summary", label: "Recap", icon: <FileText size={13} /> },
+];
+const MORE_ACTIONS: { action: MeetingAction; label: string; icon: React.ReactNode }[] = [
+  { action: "followups", label: "Questions to ask", icon: <HelpCircle size={13} /> },
   { action: "explain", label: "Explain terms", icon: <BookOpen size={13} /> },
 ];
 
@@ -179,6 +185,10 @@ export function MeetingView({ meeting, onClose }: MeetingViewProps) {
           onEditContext={() => setContextOpen(true)}
           starting={meeting.starting}
           onStart={start}
+          sessions={meeting.sessions}
+          onOpenSession={(id) => void meeting.openSession(id)}
+          onDeleteSession={(id) => void meeting.deleteSession(id)}
+          onExportSession={(id) => meeting.exportSession(id)}
         />
       )}
 
@@ -208,8 +218,14 @@ function SetupScreen(props: {
   onEditContext: () => void;
   starting: boolean;
   onStart: () => void;
+  sessions: SessionSummary[];
+  onOpenSession: (id: string) => void;
+  onDeleteSession: (id: string) => void;
+  onExportSession: (id: string) => Promise<string>;
 }) {
   const { mode } = props;
+  // A call still "not ended" when the app opens: the app closed in the middle of it.
+  const interrupted = props.sessions.find((x) => !x.ended && x.lines > 0);
   return (
     <div className="scrollbar-thin flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 py-10">
       <div className="animate-fade-up flex w-full max-w-[620px] flex-col items-center">
@@ -218,6 +234,21 @@ function SetupScreen(props: {
         <p className="mb-8 max-w-[440px] text-center text-[13px] text-text-muted">
           Live transcript of both sides, and answers that only use your real experience. Visible to you, never to the other side.
         </p>
+
+        {interrupted && (
+          <div className="mb-6 flex w-full items-center gap-3 rounded-2xl border border-warning/40 bg-warning-soft px-4 py-3">
+            <RotateCcw size={16} className="flex-shrink-0 text-warning" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-medium">Your last call was interrupted</p>
+              <p className="truncate text-[11.5px] text-text-secondary">
+                {interrupted.title} · {formatWhen(interrupted.updated_ms)} · saved up to the last moment
+              </p>
+            </div>
+            <button onClick={() => props.onOpenSession(interrupted.id)} className="btn-brand h-8 rounded-full px-3.5 text-[12.5px] font-medium">
+              Restore
+            </button>
+          </div>
+        )}
 
         <div className="mb-6 grid w-full grid-cols-3 gap-2">
           {MODES.map((m) => (
@@ -284,13 +315,108 @@ function SetupScreen(props: {
         </button>
         <p className="mt-4 flex items-center gap-1.5 text-[11.5px] text-text-muted">
           <Lock size={11} />
-          Audio stays in memory and is only sent for transcription. Nothing is recorded to disk.
+          Audio is never recorded. Your transcript and answers are saved on this PC so you can come back to them.
         </p>
         <p className="mt-2 flex items-center gap-1 text-[11.5px] text-text-muted">
           Mid-call, press <Kbd>Ctrl</Kbd>
           <Kbd>Shift</Kbd>
           <Kbd>Enter</Kbd> from any app for a suggested reply.
         </p>
+        <RecentSessions
+          sessions={props.sessions}
+          onOpen={props.onOpenSession}
+          onDelete={props.onDeleteSession}
+          onExport={props.onExportSession}
+        />
+      </div>
+    </div>
+  );
+}
+
+function formatWhen(ms: number) {
+  const d = new Date(ms);
+  const now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return `Today ${time}`;
+  const y = new Date(now.getTime() - 86_400_000);
+  if (d.toDateString() === y.toDateString()) return `Yesterday ${time}`;
+  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + ` ${time}`;
+}
+
+const MODE_LABEL: Record<MeetingMode, string> = { meeting: "Meeting", interview: "Interview", practice: "Practice" };
+
+/** Past calls: open one to read it or resume it, copy it as Markdown, or delete it. */
+function RecentSessions(props: {
+  sessions: SessionSummary[];
+  onOpen: (id: string) => void;
+  onDelete: (id: string) => void;
+  onExport: (id: string) => Promise<string>;
+}) {
+  const [query, setQuery] = useState("");
+  const [copied, setCopied] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<string | null>(null);
+  const list = props.sessions.filter((x) => x.lines > 0 || x.answers > 0);
+  if (list.length === 0) return null;
+  const q = query.trim().toLowerCase();
+  const shown = (q ? list.filter((x) => `${x.title} ${x.preview} ${x.mode}`.toLowerCase().includes(q)) : list).slice(0, 12);
+
+  const copy = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(await props.onExport(id));
+      setCopied(id);
+      setTimeout(() => setCopied((c) => (c === id ? null : c)), 1600);
+    } catch {
+      // Clipboard can be blocked; the session is still saved.
+    }
+  };
+
+  return (
+    <div className="mt-10 w-full">
+      <div className="mb-2 flex items-center gap-2">
+        <History size={13} className="text-text-muted" />
+        <h3 className="text-[12.5px] font-medium text-text-secondary">Recent calls</h3>
+        {list.length > 5 && (
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search"
+            className="ml-auto h-7 w-36 rounded-lg border border-border-default bg-transparent px-2.5 text-[12px] outline-none focus:border-border-focus"
+          />
+        )}
+      </div>
+      <div className="divide-y divide-border-soft rounded-2xl border border-border-default">
+        {shown.map((x) => (
+          <div key={x.id} className="group flex items-center gap-2 px-3.5 py-2.5 transition hover:bg-bg-card">
+            <button onClick={() => props.onOpen(x.id)} className="min-w-0 flex-1 text-left">
+              <span className="block truncate text-[13px] font-medium">{x.title || "Call"}</span>
+              <span className="block truncate text-[11.5px] text-text-muted">
+                {MODE_LABEL[x.mode] ?? "Meeting"} · {formatWhen(x.updated_ms)} · {x.lines} lines
+                {x.answers > 0 ? ` · ${x.answers} answers` : ""}
+              </span>
+            </button>
+            <IconButton title={copied === x.id ? "Copied" : "Copy as Markdown"} size="sm" onClick={() => void copy(x.id)}>
+              {copied === x.id ? <Check size={13} /> : <Copy size={13} />}
+            </IconButton>
+            {confirm === x.id ? (
+              <button
+                onClick={() => {
+                  setConfirm(null);
+                  props.onDelete(x.id);
+                }}
+                onBlur={() => setConfirm(null)}
+                autoFocus
+                className="h-6 rounded-md bg-danger-soft px-2 text-[11.5px] font-medium text-danger"
+              >
+                Delete?
+              </button>
+            ) : (
+              <IconButton title="Delete this call" size="sm" onClick={() => setConfirm(x.id)}>
+                <Trash2 size={13} />
+              </IconButton>
+            )}
+          </div>
+        ))}
+        {shown.length === 0 && <p className="px-3.5 py-3 text-[12px] text-text-muted">No calls match “{query}”.</p>}
       </div>
     </div>
   );
@@ -364,7 +490,9 @@ function LevelMeter({ level, active, label, icon }: { level: number; active: boo
 // ── Transcript ────────────────────────────────────────────────────
 
 function TranscriptPane({ meeting, mode }: { meeting: ReturnType<typeof useMeeting>; mode: MeetingMode }) {
-  const { status, transcript: entries, levels, transcribing, partials } = meeting;
+  const { status, transcript, levels, transcribing, partials } = meeting;
+  // Fragments of one sentence read as one bubble.
+  const entries = useMemo(() => mergeTurns(transcript), [transcript]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const hasPartial = !!(partials.them || partials.me);
@@ -372,7 +500,7 @@ function TranscriptPane({ meeting, mode }: { meeting: ReturnType<typeof useMeeti
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
-  }, [entries.length, transcribing, partials.them, partials.me]);
+  }, [transcript.length, transcribing, partials.them, partials.me]);
 
   return (
     <div className="flex h-full flex-col">
@@ -425,7 +553,7 @@ function TranscriptPane({ meeting, mode }: { meeting: ReturnType<typeof useMeeti
             <TranscriptLine
               key={e.id}
               entry={e}
-              onAnswer={mode === "practice" ? undefined : (text) => void meeting.assist("ask", `Help me answer this, in my own voice: "${text}"`)}
+              onAnswer={mode === "practice" ? undefined : (text) => void meeting.assist("suggest", text)}
             />
           ))
         )}
@@ -516,6 +644,8 @@ function CopilotPane({
   const actions = mode === "practice" ? PRACTICE_ACTIONS : LIVE_ACTIONS;
   const [input, setInput] = useState("");
   const [target, setTarget] = useState<InputTarget>(mode === "practice" ? "me" : "ask");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const barOn = copilotBarEnabled();
 
   useEffect(() => setTarget(mode === "practice" ? "me" : "ask"), [mode]);
 
@@ -553,32 +683,56 @@ function CopilotPane({
               {a.label}
             </button>
           ))}
-          {mode !== "practice" && !status.live && meeting.transcript.length > 0 && (
+          {mode !== "practice" && (
             <button
-              onClick={() => void meeting.assist("notes")}
-              className="flex h-8 items-center gap-1.5 rounded-full border border-accent/40 bg-accent-soft px-3 text-[12.5px] font-medium text-accent transition hover:bg-accent/20"
+              onClick={() => setMoreOpen((v) => !v)}
+              className="flex h-8 items-center rounded-full px-2.5 text-[12.5px] text-text-muted transition hover:bg-bg-hover hover:text-text-primary"
+              aria-expanded={moreOpen}
             >
-              <ListChecks size={13} />
-              Meeting notes
+              {moreOpen ? "Less" : "More"}
             </button>
           )}
         </div>
+        {moreOpen && mode !== "practice" && (
+          <div className="animate-fade-up flex flex-wrap gap-1.5">
+            {MORE_ACTIONS.map((a) => (
+              <button
+                key={a.action}
+                onClick={() => void meeting.assist(a.action)}
+                className="flex h-7 items-center gap-1.5 rounded-full border border-border-soft px-2.5 text-[12px] text-text-secondary transition hover:bg-bg-hover hover:text-text-primary"
+              >
+                {a.icon}
+                {a.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {mode !== "practice" && !status.live && meeting.transcript.length > 0 && (
+          <button
+            onClick={() => void meeting.assist("notes")}
+            className="flex h-9 items-center justify-center gap-2 rounded-xl border border-accent/40 bg-accent-soft text-[13px] font-medium text-accent transition hover:bg-accent/20"
+          >
+            <ListChecks size={14} />
+            Write the meeting notes
+          </button>
+        )}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-text-muted">
           {mode !== "practice" && (
             <label className="flex cursor-pointer items-center gap-1.5" title="Suggest a reply automatically whenever the other side asks a question">
-              <Switch on={meeting.autoAnswer} onChange={meeting.setAutoAnswer} label="Auto-answer questions" />
-              Auto-answer questions
+              <Switch on={meeting.autoAnswer} onChange={meeting.setAutoAnswer} label="Answer questions automatically" />
+              Answer questions automatically
+              {meeting.autoAnswer && barOn && <span className="text-text-muted/70">(shown in the bar)</span>}
             </label>
           )}
           <label className="flex cursor-pointer items-center gap-1.5" title="Attach a screenshot (shared slides, a coding question…) to each request">
             <Switch on={meeting.includeScreen} onChange={meeting.setIncludeScreen} label="Include my screen" />
             <Monitor size={12} />
-            Include screen
+            Look at my screen
           </label>
           <label className="flex cursor-pointer items-center gap-1.5" title="Ground answers in My context (about me, projects, this session, research brief)">
             <Switch on={meeting.useContext} onChange={(v) => void meeting.setUseContext(v)} label="Use my context" />
             <Lock size={12} />
-            Use my context
+            Use my background
           </label>
           {mode !== "practice" && <CopilotBarToggle live={status.live} />}
         </div>
@@ -590,7 +744,7 @@ function CopilotPane({
             <p>
               {mode === "practice"
                 ? "The coach asks role-specific questions and scores your answers using only your real experience."
-                : "Press “What should I say?” - or Ctrl+Shift+Enter from any app - for a reply to whatever was just asked."}
+                : "When they ask you something, press “What should I say?” (or Ctrl+Shift+Enter from any app). You get a direct answer you can say right away."}
             </p>
             {!hasProfile && (
               <button onClick={onEditContext} className="w-fit text-warning underline-offset-2 hover:underline">
@@ -599,7 +753,15 @@ function CopilotPane({
             )}
           </div>
         ) : (
-          meeting.cards.map((c, i) => <AnswerCard key={c.id} card={c} latest={i === 0} onSave={meeting.saveNotes} />)
+          meeting.cards.map((c, i) => (
+            <AnswerCard
+              key={c.id}
+              card={c}
+              latest={i === 0}
+              onSave={meeting.saveNotes}
+              onRetry={() => void meeting.assist(c.action, c.action === "ask" ? c.label : null)}
+            />
+          ))
         )}
       </div>
 
@@ -658,10 +820,12 @@ function AnswerCard({
   card,
   latest,
   onSave,
+  onRetry,
 }: {
   card: AssistCard;
   latest: boolean;
   onSave: (notes: string, includeTranscript: boolean) => Promise<string>;
+  onRetry: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | string>("idle");
@@ -704,14 +868,19 @@ function AnswerCard({
       </div>
       {card.context && (
         <p className="line-clamp-2 border-l-2 border-accent/40 pl-2.5 text-[12px] text-text-muted" title={card.context}>
-          <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-wider">They asked</span>
+          <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-wider">Answering</span>
           {card.context}
         </p>
       )}
       {latest && !card.pending && !card.error && (card.action === "suggest" || card.action === "ask") && (
         <span className="-mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">Say this</span>
       )}
-      {card.pending ? (
+      {card.pending && card.text ? (
+        // Words appear as they are written, so the first line is readable within a second or two.
+        <div className={clsx(latest ? "text-[15px] leading-relaxed" : "text-[13px]")}>
+          <Markdown>{card.text}</Markdown>
+        </div>
+      ) : card.pending ? (
         <div className="flex items-center gap-2.5 py-1 text-[13px]">
           <BotAvatar kind="clover" mood="thinking" size={26} />
           <span className="shimmer-text font-medium">
@@ -719,7 +888,16 @@ function AnswerCard({
           </span>
         </div>
       ) : card.error ? (
-        <p className="text-[12.5px] text-danger">{card.error}</p>
+        <div className="flex items-center gap-3">
+          <p className="min-w-0 flex-1 text-[12.5px] text-danger">{card.error}</p>
+          <button
+            onClick={onRetry}
+            className="flex h-7 flex-shrink-0 items-center gap-1.5 rounded-lg border border-border-default px-2.5 text-[12px] transition hover:bg-bg-hover"
+          >
+            <RotateCcw size={12} />
+            Try again
+          </button>
+        </div>
       ) : (
         <div className={clsx(latest ? "text-[15px] leading-relaxed" : "text-[13px]")}>
           {card.screen && (

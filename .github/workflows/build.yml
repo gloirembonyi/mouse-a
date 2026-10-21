@@ -288,6 +288,17 @@ jobs:
           echo "Attaching:"; cat files.txt
           if ! grep -qvE '\.sig$' files.txt; then echo "::error::no installer files found in the artifacts"; exit 1; fi
 
+      # Short, human "What's new": written from the commits since the last release
+      # (scripts/release-notes.mjs). It heads the GitHub release, fills latest.json for the
+      # in-app updater, and is what kuduagent.vercel.app/whats-new shows.
+      - name: Write the release notes
+        env:
+          TAG: v${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          prev=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
+          node scripts/release-notes.mjs "$prev" whats-new.md
+
       # The updater manifest installed apps read (plugins.updater.endpoints in
       # tauri.conf.json → releases/latest/download/latest.json). One entry per platform:
       # the update package's URL on this release and its signature.
@@ -298,10 +309,7 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          # "What's new" in the app: the same commit/PR list the release page shows.
-          prev=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" \
-            ${prev:+-f previous_tag_name="$prev"} --jq .body > update-notes.md 2>/dev/null || true
+          # "What's new" in the app: the short notes written by the previous step.
           node - <<'EOF'
           const fs = require("fs");
           const files = fs.readdirSync("dist");
@@ -322,14 +330,13 @@ jobs:
             console.log("::warning::no signed update packages found - latest.json not written (is TAURI_SIGNING_PRIVATE_KEY set?)");
             process.exit(0);
           }
-          const link = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${process.env.TAG}`;
           let changes = "";
-          try { changes = fs.readFileSync("update-notes.md", "utf8").trim(); } catch {}
-          // Keep the in-app notes readable: drop the "Full Changelog" footer, cap the length.
-          changes = changes.replace(/\*\*Full Changelog\*\*.*$/s, "").trim().slice(0, 3000);
+          try { changes = fs.readFileSync("whats-new.md", "utf8"); } catch {}
+          // The in-app notes are the short list without the HTML markers.
+          changes = changes.replace(/<!--\/?kudu-whats-new-->/g, "").trim().slice(0, 3000);
           const manifest = {
             version: process.env.VERSION,
-            notes: (changes ? changes + "\n\n" : "") + `[Full release notes](${link})`,
+            notes: (changes ? changes + "\n\n" : "") + "More at https://kuduagent.vercel.app/whats-new",
             pub_date: new Date().toISOString(),
             platforms,
           };
@@ -382,8 +389,9 @@ jobs:
             echo "- Linux: AppImage → \`chmod +x\` then run; .deb → \`sudo apt install ./file.deb\`; .rpm → \`sudo dnf install ./file.rpm\`."
             echo
           } >> notes.md
-          prev=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" ${prev:+-f previous_tag_name="$prev"} --jq .body >> notes.md || true
+          # What's new first (the website reads this block), then the download help.
+          { cat whats-new.md; echo; cat notes.md; } > release-body.md
+          mv release-body.md notes.md
           mapfile -t files < files.txt
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${files[@]}" --clobber

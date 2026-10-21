@@ -27,7 +27,8 @@ import { Markdown } from "../components/chat/Markdown";
 import { BotAvatar } from "../components/ui/BotAvatar";
 import { AgentPanel, CuesView, InsertBar } from "./CopilotTools";
 import { useCopilotAgent, useInsert } from "./copilotHooks";
-import { ACTION_LABELS, AUTO_ANSWER_KEY, lastTheirTurn, looksLikeQuestion, useMeeting, type AssistCard } from "../hooks/useMeeting";
+import { ACTION_LABELS, AUTO_ANSWER_KEY, useMeeting, type AssistCard } from "../hooks/useMeeting";
+import { TURN_QUIET_MS, lastTheirTurn, looksLikeQuestion, needsAnswer, openQuestion, type AnsweredMark } from "../lib/turns";
 import {
   copilotFocus,
   copilotHide,
@@ -41,6 +42,7 @@ import {
   stealthGet,
   stealthSet,
   type MeetingAction,
+  type MeetingMode,
 } from "../lib/tauri";
 
 // The in-call copilot bar: a floating pill over the call that unfolds into
@@ -176,57 +178,32 @@ export function CopilotBar() {
   }, []);
 
   // ── Auto-answer: the other side asked something → draft a reply ──
-  // Two triggers. The fast one watches the sentence they are STILL saying (the live
-  // partial): once it reads as a question and has not changed for 700 ms, the answer
-  // starts before they finish. The final transcript line then arrives and is matched
-  // against what was already answered, so one question never gets two answers.
-  const answeredRef = useRef(0);
-  const earlyRef = useRef<{ text: string; at: number } | null>(null);
+  // Waits for the question to be FINISHED: their turn (fragments merged) must read as
+  // complete, the live partial must be empty and a quiet beat must pass. If the question
+  // then grows after an answer started, it is answered once more with the full text.
+  const answeredRef = useRef<AnsweredMark | null>(null);
   const cardsRef = useRef(cards);
   cardsRef.current = cards;
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-  const sameAsk = (a: string, b: string) => {
-    const x = norm(a);
-    const y = norm(b);
-    if (!x || !y) return false;
-    const head = Math.min(28, x.length, y.length);
-    return x.slice(0, head) === y.slice(0, head) || x.includes(y.slice(0, 40)) || y.includes(x.slice(0, 40));
-  };
-  useEffect(() => {
-    if (!autoAnswer || !live || status.mode === "practice") return;
-    const text = partials.them;
-    if (!text || text.length < 20 || !looksLikeQuestion(text)) return;
-    const early = earlyRef.current;
-    if (early && Date.now() - early.at < 20_000 && sameAsk(early.text, text)) return;
-    const t = setTimeout(() => {
-      if (cardsRef.current.some((c) => c.pending)) return;
-      earlyRef.current = { text, at: Date.now() };
-      runRef.current("suggest");
-    }, 700);
-    return () => clearTimeout(t);
-  }, [partials.them, autoAnswer, live, status.mode]);
+  const partialsRef = useRef(partials);
+  partialsRef.current = partials;
   useEffect(() => {
     if (!autoAnswer || !live || status.mode === "practice") return;
     const turn = lastTheirTurn(transcript);
-    if (!turn || turn.id <= answeredRef.current || !looksLikeQuestion(turn.text)) return;
-    const early = earlyRef.current;
-    if (early && Date.now() - early.at < 20_000 && sameAsk(early.text, turn.text)) {
-      answeredRef.current = turn.id; // already answered from the live partial
-      return;
-    }
+    if (!turn || !looksLikeQuestion(turn.text) || !needsAnswer(turn, answeredRef.current)) return;
     const t = setTimeout(() => {
-      if (cardsRef.current.some((c) => c.pending)) return;
-      answeredRef.current = turn.id;
+      if (cardsRef.current.some((c) => c.pending) || partialsRef.current.them) return;
+      const prev = answeredRef.current;
+      answeredRef.current = { id: turn.id, len: turn.text.length, count: prev && prev.id === turn.id ? prev.count + 1 : 1 };
       runRef.current("suggest");
-    }, 250);
+    }, TURN_QUIET_MS);
     return () => clearTimeout(t);
-  }, [transcript, autoAnswer, live, status.mode]);
+  }, [transcript, partials.them, autoAnswer, live, status.mode]);
 
   // With auto-answer off (or a question it did not catch), one tap answers it.
   const pendingAsk = (() => {
-    if (!live) return null;
-    const turn = lastTheirTurn(transcript);
-    if (!turn || turn.id <= answeredRef.current || !looksLikeQuestion(turn.text)) return null;
+    if (!live || partials.them) return null;
+    const turn = openQuestion(transcript);
+    if (!turn || !needsAnswer(turn, answeredRef.current)) return null;
     if (cards.some((c) => c.pending)) return null;
     return turn;
   })();
@@ -301,7 +278,7 @@ export function CopilotBar() {
     <div
       ref={rootRef}
       className="copilot-root"
-      style={{ opacity }}
+      style={{ opacity, minHeight: menuOpen ? 460 : undefined }}
       onKeyDown={(e) => e.key === "Escape" && setExpanded(false)}
     >
       {/* ── The pill ── */}
@@ -378,7 +355,7 @@ export function CopilotBar() {
                   type="button"
                   className="cp-chip"
                   disabled={meeting.starting}
-                  onClick={() => void meeting.start("meeting", true, true)}
+                  onClick={() => void meeting.start((status.mode || "meeting") as MeetingMode, true, (status.mode || "meeting") !== "practice")}
                   title="Start over with an empty transcript"
                 >
                   New
@@ -389,7 +366,7 @@ export function CopilotBar() {
                 type="button"
                 className="cp-chip cp-chip-accent"
                 disabled={meeting.starting}
-                onClick={() => void meeting.start("meeting", true, true)}
+                onClick={() => void meeting.start((status.mode || "meeting") as MeetingMode, true, (status.mode || "meeting") !== "practice")}
                 title="Listen to this call (your mic + the other side)"
               >
                 <Play size={12} fill="currentColor" />
@@ -446,7 +423,7 @@ export function CopilotBar() {
                   type="button"
                   className="cp-chip cp-chip-accent cp-answer-now"
                   onClick={() => {
-                    answeredRef.current = pendingAsk.id;
+                    answeredRef.current = { id: pendingAsk.id, len: pendingAsk.text.length, count: 1 };
                     run("suggest");
                   }}
                   title={pendingAsk.text}
@@ -476,7 +453,7 @@ export function CopilotBar() {
                   </div>
                   {card.context && (
                     <p className="cp-context" title={card.context}>
-                      <span>They asked</span>
+                      <span>Answering</span>
                       {card.context}
                     </p>
                   )}
