@@ -959,6 +959,81 @@ impl BackendClient {
         Ok(data.conversation_id)
     }
 
+    // ── Kudu Quill account data ────────────────────────────────────
+
+    /// One authenticated call to the writing API (dictionary, prefs, stats - the data Kudu Quill
+    /// shares with the browser extension). Only `/api/writing/...` paths are reachable through
+    /// this, so a compromised webview cannot use the session to call anything else.
+    pub async fn writing_request(&self, method: &str, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
+        if !path.starts_with("/api/writing/") || path.contains("..") || path.contains('?') {
+            return Err("Not a writing endpoint".to_string());
+        }
+        self.account_request(method, path, body).await
+    }
+
+    /// Kudu Memory: the profile card, facts and settings shared with the browser extension. Only
+    /// `/api/memory`, `/api/profile` and `/api/memory-settings` are reachable (query strings allowed,
+    /// they carry paging and filters).
+    pub async fn memory_request(&self, method: &str, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
+        let base_path = path.split('?').next().unwrap_or("");
+        let ok = base_path == "/api/profile"
+            || base_path == "/api/memory-settings"
+            || base_path == "/api/memory"
+            || (base_path.starts_with("/api/memory/") && base_path.len() > "/api/memory/".len());
+        if !ok || path.contains("..") {
+            return Err("Not a memory endpoint".to_string());
+        }
+        self.account_request(method, path, body).await
+    }
+
+    /// What Kudu knows about the user that matters for `query`: the profile card plus the few relevant
+    /// facts, already budgeted and worded by Kudu Core (and empty when the user turned memory off).
+    /// Best effort and fast: Pilot answers mid-conversation, so a slow or older backend means no extra
+    /// context, never a delay.
+    pub async fn memory_context(&self, query: &str) -> Option<String> {
+        let token = self.get_session_token().await?;
+        let url = format!("{}/api/memory/context", self.base_url.read().await);
+        let q: String = query.chars().take(600).collect();
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("q", q.as_str())])
+            .header("Authorization", format!("Bearer {}", token))
+            .timeout(std::time::Duration::from_millis(1800))
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let v: serde_json::Value = resp.json().await.ok()?;
+        let text = v.get("context")?.as_str()?.trim().to_string();
+        (!text.is_empty()).then_some(text)
+    }
+
+    async fn account_request(&self, method: &str, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
+        let token = self.get_session_token().await.ok_or("Not signed in")?;
+        let url = format!("{}{}", self.base_url.read().await, path);
+        let mut req = match method {
+            "GET" => self.client.get(&url),
+            "POST" => self.client.post(&url),
+            "PUT" => self.client.put(&url),
+            "DELETE" => self.client.delete(&url),
+            _ => return Err("Unsupported method".to_string()),
+        }
+        .header("Authorization", format!("Bearer {}", token))
+        .timeout(std::time::Duration::from_secs(12));
+        if let Some(b) = body {
+            req = req.json(&b);
+        }
+        let resp = req.send().await.map_err(|e| Self::friendly_network_error(&e))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("Account sync failed ({})", status.as_u16()));
+        }
+        resp.json().await.map_err(|e| format!("Failed to parse account response: {}", e))
+    }
+
     // ── Conversation history ───────────────────────────────────────
 
     /// Per-user counts (conversations/messages/memories/skills/...) - a

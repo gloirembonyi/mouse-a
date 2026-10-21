@@ -382,3 +382,27 @@ a:focus-visible {
 }
 @keyframes live-partial-pulse { 0%, 100% { opacity: 0.35; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .live-partial-dot { animation: none; } }
+
+/* ── Kudu Quill: underlines and the hover card in the code editor ─────────── */
+.cm-content .quill-ul { text-decoration-line: underline; text-decoration-style: solid; text-decoration-thickness: 2px; text-underline-offset: 3px; text-decoration-skip-ink: none; }
+.cm-content .quill-correctness { text-decoration-color: rgba(229, 72, 77, 0.85); }
+.cm-content .quill-grammar { text-decoration-color: rgba(224, 161, 0, 0.9); }
+.cm-content .quill-clarity { text-decoration-color: rgba(59, 130, 246, 0.8); }
+.cm-content .quill-style { text-decoration-color: rgba(99, 102, 241, 0.8); }
+.cm-content .quill-delivery { text-decoration-color: rgba(139, 92, 246, 0.8); }
+
+.cm-tooltip:has(.quill-card) { background: transparent; border: 0; }
+.quill-card { width: 280px; padding: 10px 12px; border-radius: 12px; background: var(--mx-bg-elevated); border: 1px solid var(--mx-border-strong); box-shadow: var(--mx-shadow); color: var(--mx-text-secondary); font-size: 12px; line-height: 1.45; }
+.quill-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--mx-text-muted); }
+.quill-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.quill-card-was { color: var(--mx-text-muted); }
+.quill-card-was s { text-decoration-color: #e5484d; }
+.quill-card-msg { color: var(--mx-text-secondary); margin-bottom: 8px; }
+.quill-card-reps { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.quill-rep { padding: 4px 10px; border-radius: 8px; background: var(--mx-bg-tertiary); color: var(--mx-text-primary); font-weight: 600; cursor: pointer; }
+.quill-rep:hover { background: var(--mx-bg-hover); }
+.quill-rep-main { background: var(--mx-accent-dark); color: #fff; }
+.quill-rep-main:hover { background: var(--mx-accent-dark); filter: brightness(1.12); }
+.quill-card-acts { display: flex; gap: 12px; padding-top: 6px; border-top: 1px solid var(--mx-border-soft); }
+.quill-act { color: var(--mx-text-muted); cursor: pointer; font-weight: 500; }
+.quill-act:hover { color: var(--mx-text-primary); }

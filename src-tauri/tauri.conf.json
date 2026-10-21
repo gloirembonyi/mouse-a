@@ -62,6 +62,23 @@
         "focus": false
       },
       {
+        "label": "quill",
+        "url": "quill.html",
+        "title": "Kudu Quill",
+        "width": 460,
+        "height": 540,
+        "resizable": true,
+        "decorations": false,
+        "transparent": false,
+        "shadow": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false,
+        "minWidth": 360,
+        "minHeight": 320
+      },
+      {
         "label": "shield",
         "url": "shield.html",
         "title": "Kudu Desktop Working",

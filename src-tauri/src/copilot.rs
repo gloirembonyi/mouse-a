@@ -101,6 +101,24 @@ fn target_window() -> Option<isize> {
     (hwnd != 0).then_some(hwnd)
 }
 
+/// Bring the app the user was working in back to the foreground and wait until it is there, so a
+/// paste lands in it (Kudu Quill's "Apply"). Off Windows there is no tracked target: the OS hands
+/// focus back when our window hides, so this just waits a beat.
+pub fn restore_target() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let target = target_window().ok_or("Click into the app you want to change first, then try again.")?;
+        win::activate(target);
+        std::thread::sleep(Duration::from_millis(160));
+        if win::foreground() != target {
+            return Err("Couldn't switch back to your app - click into it and try again.".to_string());
+        }
+    }
+    #[cfg(not(windows))]
+    std::thread::sleep(Duration::from_millis(250));
+    Ok(())
+}
+
 // ── Fix it: the agent, from the bar ──────────────────────────────
 
 const FIX_DEFAULT: &str = "Something just went wrong in my live demo. Look at my screen and the recent conversation, \

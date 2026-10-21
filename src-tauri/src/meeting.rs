@@ -1746,6 +1746,12 @@ pub async fn meeting_assist(
         transcript.push_str(&format!("{} (still speaking): {}", who.to_uppercase(), text));
     }
 
+    // What the memory lookup is matched against: the end of the conversation plus the request.
+    let memory_query = {
+        let tail: String = transcript.chars().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect();
+        format!("{} {}", tail, instruction)
+    };
+
     let mut parts = vec![json!({
         "text": format!(
             "[TRANSCRIPT]\n{}\n\n[REQUEST]\n{}",
@@ -1772,7 +1778,15 @@ pub async fn meeting_assist(
     }
 
     let contents = json!([{ "role": "user", "parts": parts }]);
-    let system = system_prompt(&mode, &profile);
+    let mut system = system_prompt(&mode, &profile);
+    // What Kudu learned about the user across the extension, the website and earlier chats (their
+    // name, role, the people they work with), chosen for what was just asked. Skipped when the user
+    // turned off "Use my context" here. Notes written in this app stay the primary source: this only adds.
+    if !profile.skip_context {
+        if let Some(block) = backend.memory_context(&memory_query).await {
+            system.push_str(&format!("\n{}\n", truncate_chars(&block, 3200)));
+        }
+    }
     // Streamed when the caller can show it (request_id) and the backend
     // supports it: the first words land in ~1 s instead of after the whole
     // answer is written. Older backends fall back to one buffered step.
@@ -1892,7 +1906,7 @@ static STEALTH: AtomicBool = AtomicBool::new(true);
 /// wherever the user dragged it.
 static COPILOT_PLACED: AtomicBool = AtomicBool::new(false);
 
-const COPILOT_WINDOWS: [&str; 4] = ["main", "overlay", "copilot", "shield"];
+const COPILOT_WINDOWS: [&str; 5] = ["main", "overlay", "copilot", "shield", "quill"];
 
 pub fn is_live() -> bool {
     LIVE.lock().unwrap().is_some()

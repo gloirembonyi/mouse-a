@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror, { type ViewUpdate } from "@uiw/react-codemirror";
+import type { EditorView } from "@codemirror/view";
 import clsx from "clsx";
-import { Braces, Check, ChevronRight, Code, Columns2, Copy, ExternalLink, Eye, FolderSearch, Loader2, Save, Sparkles, Table2 } from "lucide-react";
+import { Braces, Check, ChevronRight, Code, Columns2, Copy, ExternalLink, Eye, FolderSearch, Loader2, Save, Sparkles, SpellCheck, Table2 } from "lucide-react";
 import {
   assetUrl,
   fsFileInfo,
@@ -23,6 +24,10 @@ import { ImageViewer } from "./viewers/ImageViewer";
 import { MediaViewer } from "./viewers/MediaViewer";
 import { DocxViewer, PptxViewer } from "./viewers/DocumentViewers";
 import { CsvTable, WorkbookViewer } from "./viewers/Sheets";
+import { QuillPanel } from "./QuillPanel";
+import { quillExtension, type Issue } from "../../lib/quill/cmQuill";
+import { useQuillPrefs } from "../../lib/quill/store";
+import { startQuillSync } from "../../lib/quill/sync";
 
 interface EditorProps {
   path: string;
@@ -96,7 +101,21 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
   // Markdown, HTML and CSV open rendered; switch to Split or Edit/Raw to change them.
   const [mode, setMode] = useState<ViewMode>("preview");
   const dirty = content !== original;
-  const extensions = useMemo(() => [...languageForPath(path), editorTheme(theme)], [path, theme]);
+  // Kudu Quill (spelling, grammar, style - on this device, offline) for prose files.
+  const quillPrefs = useQuillPrefs();
+  const isProse = /\.(md|mdx|markdown|txt|text|rst)$/i.test(path) || !/\.[^\\/.]+$/.test(path);
+  const [cmView, setCmView] = useState<EditorView | null>(null);
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [quillPanel, setQuillPanel] = useState(() => localStorage.getItem("mouse-ai-quill-panel") === "on");
+  useEffect(() => localStorage.setItem("mouse-ai-quill-panel", quillPanel ? "on" : "off"), [quillPanel]);
+  const quillActive = isProse && quillPrefs.enabled;
+  useEffect(() => {
+    if (quillActive) startQuillSync();
+  }, [quillActive]);
+  const extensions = useMemo(
+    () => [...languageForPath(path), editorTheme(theme), ...(quillActive ? [quillExtension(setIssues)] : [])],
+    [path, theme, quillActive],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -180,6 +199,13 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
   const kind = info?.kind;
   const canAskAI = isText || kind === "docx" || kind === "pptx" || kind === "sheet" || (kind === "image" && AI_IMAGE_EXTS.includes(ext));
   const codeVisible = isText && (!hasPreview || mode !== "preview");
+  // The editor view (and its issues) only exist while the code view is on screen.
+  useEffect(() => {
+    if (!codeVisible || !quillActive) {
+      setCmView(null);
+      setIssues([]);
+    }
+  }, [codeVisible, quillActive]);
   // Viewer-reported status only while that viewer is on screen.
   const showViewerStatus = !isText || (isCsv && mode === "preview");
 
@@ -202,6 +228,7 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
         height="100%"
         extensions={extensions}
         onChange={setContent}
+        onCreateEditor={setCmView}
         onUpdate={(u: ViewUpdate) => {
           if (!u.selectionSet && !u.docChanged) return;
           const head = u.state.selection.main.head;
@@ -296,6 +323,18 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
               )}
             </div>
           )}
+          {isProse && isText && (
+            <IconButton title={quillPanel ? "Hide Kudu Quill" : "Kudu Quill: spelling & grammar"} size="sm" onClick={() => setQuillPanel((v) => !v)}>
+              <span className="relative flex">
+                <SpellCheck size={13} className={quillPanel ? "text-accent" : ""} />
+                {quillActive && codeVisible && issues.length > 0 && (
+                  <span className="absolute -right-2 -top-1.5 min-w-[13px] rounded-full bg-danger px-[3px] text-center text-[8.5px] font-semibold leading-[13px] text-white">
+                    {issues.length > 99 ? "99+" : issues.length}
+                  </span>
+                )}
+              </span>
+            </IconButton>
+          )}
           {isText && ext === "json" && (
             <IconButton title="Format JSON" size="sm" onClick={formatJson}>
               <Braces size={12} />
@@ -345,7 +384,10 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
 
       {error && info && <div className="flex-shrink-0 bg-danger-soft px-3 py-1.5 text-[11.5px] text-danger">{error}</div>}
 
-      {body}
+      <div className="flex min-h-0 min-w-0 flex-1">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{body}</div>
+        {quillPanel && quillActive && codeVisible && <QuillPanel view={cmView} issues={issues} onClose={() => setQuillPanel(false)} />}
+      </div>
 
       <div className="flex h-6 flex-shrink-0 items-center justify-end gap-3 border-t border-border-soft bg-bg-secondary px-3 text-[10.5px] text-text-muted">
         {dirty && <span className="text-warning">Unsaved</span>}
@@ -355,6 +397,7 @@ export function Editor({ path, root, active, onDirtyChange, onAskAI }: EditorPro
             Ln {pos.line}, Col {pos.col}
           </span>
         )}
+        {quillActive && codeVisible && <span>{issues.length === 0 ? "No issues" : `${issues.length} ${issues.length === 1 ? "issue" : "issues"}`}</span>}
         {isText && <span>{lineCount} lines</span>}
         {info?.crlf && <span>CRLF</span>}
         {info && <span>{formatSize(info.size)}</span>}

@@ -35,7 +35,7 @@ import { IconButton, Kbd, Switch } from "../ui/primitives";
 import { BotAvatar } from "../ui/BotAvatar";
 import { copilotBarEnabled, setCopilotBarEnabled, type AssistCard, type useMeeting } from "../../hooks/useMeeting";
 import { looksLikeQuestion, mergeTurns } from "../../lib/turns";
-import { copilotShow, type MeetingAction, type MeetingMode, type MeetingProfile, type SessionSummary, type TranscriptEntry } from "../../lib/tauri";
+import { copilotShow, memoryApi, type KuduProfile, type MeetingAction, type MeetingMode, type MeetingProfile, type SessionSummary, type TranscriptEntry } from "../../lib/tauri";
 
 interface MeetingViewProps {
   meeting: ReturnType<typeof useMeeting>;
@@ -955,6 +955,48 @@ function ContextDrawer({
   const [links, setLinks] = useState(() => profile.sources.map((x) => x.url).join("\n"));
   useEffect(() => setDraft(profile), [profile]);
 
+  // The account side: the same profile card the extension and the website show. Pulling fills only
+  // EMPTY fields (what you wrote here is never overwritten); pushing is a button, never automatic.
+  const [kuduBusy, setKuduBusy] = useState<"" | "pull" | "push">("");
+  const [kuduNote, setKuduNote] = useState("");
+  const pullKuduProfile = async () => {
+    setKuduBusy("pull");
+    setKuduNote("");
+    try {
+      const { profile: p } = await memoryApi<{ profile?: KuduProfile }>("GET", "/api/profile");
+      const kp = p || {};
+      const who = [kp.name, [kp.role, kp.employer && `at ${kp.employer}`].filter(Boolean).join(" "), kp.location].filter(Boolean).join(", ");
+      const about = [who, kp.about].filter(Boolean).join("\n");
+      const people = (kp.contacts || []).map((c) => `${c.relation}: ${c.name}`).join("; ");
+      const projects = [kp.projects, people && `People: ${people}`].filter(Boolean).join("\n");
+      const next = {
+        ...draft,
+        about: draft.about.trim() ? draft.about : about,
+        projects: draft.projects.trim() ? draft.projects : projects,
+        style: draft.style.trim() ? draft.style : kp.style || "",
+      };
+      const filled = next.about !== draft.about || next.projects !== draft.projects || next.style !== draft.style;
+      setDraft(next);
+      setKuduNote(filled ? "Filled the empty fields from your Kudu profile. Review, then save." : about || projects ? "Your fields already have text, so nothing was changed." : "Your Kudu profile is empty. Add details on the Kudu website or in the extension's Memory page.");
+    } catch (err) {
+      setKuduNote(err instanceof Error ? err.message : String(err));
+    } finally {
+      setKuduBusy("");
+    }
+  };
+  const pushKuduProfile = async () => {
+    setKuduBusy("push");
+    setKuduNote("");
+    try {
+      await memoryApi("PUT", "/api/profile", { profile: { about: draft.about.slice(0, 1500), projects: draft.projects.slice(0, 1500), style: draft.style.slice(0, 400) } });
+      setKuduNote("Saved to your Kudu profile. The extension and the website will use it too.");
+    } catch (err) {
+      setKuduNote(err instanceof Error ? err.message : String(err));
+    } finally {
+      setKuduBusy("");
+    }
+  };
+
   const runResearch = async () => {
     const urls = links.split(/\s+/).map((u) => u.trim()).filter(Boolean);
     if (!urls.length) {
@@ -1007,8 +1049,23 @@ function ContextDrawer({
         <div className="scrollbar-thin flex flex-1 flex-col gap-4 overflow-y-auto p-4">
           <p className="flex items-start gap-2 rounded-xl bg-bg-card p-3 text-[12px] text-text-muted">
             <Lock size={13} className="mt-0.5 flex-shrink-0" />
-            Stored only on this computer. The copilot grounds every suggestion in this and won't invent experience you don't have.
+            These notes are stored on this computer. The copilot grounds every suggestion in them and won't invent experience you don't have.
           </p>
+          <div className="flex flex-col gap-2 rounded-xl border border-border-soft p-3">
+            <div className="text-[12px] font-medium text-text-secondary">Your Kudu profile</div>
+            <p className="text-[12px] text-text-muted">
+              Pilot also uses what Kudu knows about you from the extension and the website: your name, role and the people you work with. Your notes here come first.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => void pullKuduProfile()} disabled={kuduBusy !== ""} className="rounded-full border border-border-default px-3 py-1.5 text-[12px] font-medium text-text-secondary transition hover:bg-bg-hover disabled:opacity-50">
+                {kuduBusy === "pull" ? "Loading" : "Fill empty fields from Kudu"}
+              </button>
+              <button type="button" onClick={() => void pushKuduProfile()} disabled={kuduBusy !== ""} className="rounded-full border border-border-default px-3 py-1.5 text-[12px] font-medium text-text-secondary transition hover:bg-bg-hover disabled:opacity-50">
+                {kuduBusy === "push" ? "Saving" : "Save these notes to Kudu"}
+              </button>
+            </div>
+            {kuduNote && <p role="status" className="text-[12px] text-text-secondary">{kuduNote}</p>}
+          </div>
           {field("about", "About me", "Role, years of experience, key skills - or paste your resume.", 5)}
           {field("projects", "Projects & responsibilities", "What you're working on, your part in it, results and numbers you'd cite.", 5)}
           {field("session_context", "This session", "Agenda, who you're meeting, or the job description you're interviewing for.", 4)}

@@ -437,3 +437,28 @@ export function newId(): string {
 }
 
 export type { ChatMessage, User };
+
+// ── Kudu Quill anywhere (src-tauri/src/quill.rs) ──────────
+export interface QuillCapture {
+  text: string;
+  /** "selection", or "all" when nothing was selected and the whole field was taken. */
+  scope: "selection" | "all";
+  /** Title of the window the text came from. */
+  app: string;
+  error?: string | null;
+}
+export const quillPending = () => invoke<QuillCapture | null>("quill_pending");
+/** Paste the corrected text back over what was captured, in the app it came from. */
+export const quillApply = (text: string) => invoke<void>("quill_apply", { text });
+export const quillHide = () => invoke<void>("quill_hide");
+export const onQuillCapture = (cb: (c: QuillCapture) => void) => listen<QuillCapture>("quill-capture", (e) => cb(e.payload));
+
+// ── Kudu Memory (profile card + facts shared with the extension and the website) ──
+export interface KuduProfile {
+  name?: string; preferredName?: string; role?: string; employer?: string; location?: string; timezone?: string;
+  languages?: string[]; about?: string; projects?: string; style?: string;
+  contacts?: { relation: string; name: string; email?: string }[];
+}
+/** One call to Kudu Core's /api/memory*, /api/profile or /api/memory-settings (nothing else is reachable). */
+export const memoryApi = <T = unknown>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown) =>
+  invoke<T>("memory_api", { method, path, body });

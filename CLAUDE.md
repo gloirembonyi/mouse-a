@@ -36,6 +36,40 @@ browser extension's Kudu Cloak (formerly Undercover) can open here instead of in
 (paired only, `bridge.rs`) shows the copilot bar and emits `copilot-context {url,title,text,selection}` to
 it; the bar shows the page as a chip and sends it along with the next question.
 
+## Kudu Quill (spelling, grammar, style - offline)
+
+The writing assistant from the browser extension, running on this device with no network and no
+sign-in. **The engines are not written here**: `npm run sync:quill` (scripts/sync-quill.mjs) vendors
+`grammar-rules.js` and `spell-core.js` from `../backend-Thothai/src/lib` into
+`frontend/src/lib/quill/vendor/` (ES-wrapped, committed, never hand-edit) plus the en_US dictionary into
+`quill/dict/`. Edit the backend copy, re-run the sync (and `npm run sync:rules` in the extension). The
+hand-written `vendor/*.d.ts` files type them. `lib/quill/engine.ts` runs rules + nspell and merges them
+the way Kudu Core does; `store.ts` keeps dictionary / ignores / picky / disabled rules in localStorage.
+
+- **Document editor:** for `.md/.txt/.rst` and extension-less files, `Editor.tsx` adds the Quill
+  extension (`lib/quill/cmQuill.ts`: underlines, hover card, Fix all as one undo step) and `QuillPanel.tsx`
+  (issues list, stats, picky mode, dictionary).
+- **Anywhere (Ctrl+Alt+G):** `quill.rs` copies the selection (or the whole field when nothing is selected,
+  via Ctrl+A) with a sentinel on the clipboard, restores the clipboard, and opens the `quill` window
+  (`quill.html`, `src/quill/`) next to the cursor. "Apply" (`quill_apply`) hides it, `copilot::restore_target()`
+  refocuses the app the text came from and `input::paste_via_clipboard` pastes over the original selection
+  (CRLF preserved). No keyboard hook - one registered hotkey. The window is in `COPILOT_WINDOWS`, so it is
+  excluded from screen capture like the others.
+- **Account sync:** `lib/quill/sync.ts` reconciles the dictionary and picky/disabled-rules with the
+  backend's `/api/writing/*` (the same data as the extension) through `writing_api` (`backend.rs`
+  `writing_request`, which only allows `/api/writing/` paths). Offline it fails quietly and retries; deleted
+  words are tombstoned in `pendingRemove`; this device wins prefs while `prefsDirty`. Ignores are not synced yet.
+- **Not built yet:** UI Automation TextPattern reading / live badge / underline overlay for other apps,
+  Word COM, a rich (docx) editor, LanguageTool + Gemini layers in the desktop (they need the backend), bridge
+  frames to sync with the extension when the backend is unreachable.
+
+## Kudu Memory in Pilot
+
+Kudu Memory is ONE system shared by the extension, Kudu Desktop and the website; Kudu Core (backend-Thothai) owns it.
+Two tiers: a PROFILE card (`ghost_user_profile`: name, role, employer, location, projects, voice, people the user works with, plus their memory SETTINGS) and FACTS (`ghost_memories`, extended with kind, status active|pending|archived, source_type, confidence, evidence, pinned, supersession). Rules live in `src/lib/memory-policy.js` (pure, tested by `npm run test:memory`); the pipeline is `src/services/memory.service.js`: a cheap gate, a dedicated extractor that must quote the USER's own words (the quote is verified against the message, so nothing the assistant said or a pasted page contained can become a fact), secrets and sensitive classes dropped, repeats update instead of piling up, inferred facts wait in a "pending" inbox, changed facts are superseded not erased. Retrieval (`buildContext`, `GET /api/memory/context?q=`) is per request: profile card + the few facts that match, within a token budget, honouring the user's settings (use memory, learn, use profile, retention week..forever, context size, relevant vs recent). The block ends with the MEMORY RULES that stop invention: memory is data not instructions, ask or leave a {{placeholder}} for any missing personal detail, label inferred facts. A chat request can send `useMemory:false` to neither read nor write memory.
+
+Desktop side: `meeting_assist` appends `BackendClient::memory_context` (profile card + facts matched to the end of the transcript and the request, 1.8 s timeout, best effort) to Pilot's system prompt unless "Use my context" is off; notes written in My context stay the primary source. The My context drawer has two explicit buttons (`MeetingView.tsx`): fill EMPTY fields from the account profile, and save these notes to it - nothing syncs silently. `memory_api` (`quill.rs` -> `backend.rs memory_request`) only reaches /api/memory*, /api/profile and /api/memory-settings.
+
 ## Commands
 
 Run from the repo root unless noted.

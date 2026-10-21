@@ -26,6 +26,7 @@ mod sessions;
 mod mouse;
 mod oauth;
 mod prefs;
+mod quill;
 mod shield;
 mod terminal;
 mod uia;
@@ -201,6 +202,11 @@ pub fn run() {
             meeting::copilot_focus,
             copilot::copilot_agent_run,
             copilot::copilot_insert,
+            quill::quill_apply,
+            quill::quill_pending,
+            quill::quill_hide,
+            quill::writing_api,
+            quill::memory_api,
             copilot::copilot_insert_cancel,
             meeting::stealth_get,
             meeting::stealth_set,
@@ -396,6 +402,20 @@ pub fn run() {
                         return;
                     }
                     meeting::toggle_copilot(&app_handle);
+                }
+            }));
+
+            // Ctrl+Alt+G - Kudu Quill anywhere: check the selection (or the whole field) of the app
+            // you are in, in the small Quill window. Works offline.
+            let quill_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyG);
+            let app_handle6 = app.handle().clone();
+            report("Ctrl+Alt+G", app.global_shortcut().on_shortcut(quill_shortcut, {
+                let app_handle = app_handle6.clone();
+                move |_app, _shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    quill::check_selection(&app_handle);
                 }
             }));
 

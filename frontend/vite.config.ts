@@ -35,6 +35,7 @@ export default defineConfig({
         overlay: fileURLToPath(new URL("./overlay.html", import.meta.url)),
         copilot: fileURLToPath(new URL("./copilot.html", import.meta.url)),
         shield: fileURLToPath(new URL("./shield.html", import.meta.url)),
+        quill: fileURLToPath(new URL("./quill.html", import.meta.url)),
       },
     },
   },
