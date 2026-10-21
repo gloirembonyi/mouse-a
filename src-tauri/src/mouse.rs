@@ -316,8 +316,10 @@ pub struct ElementInfo {
 
 // 400 chars was too tight for anything past a short label (a paragraph of
 // chat/email/document text would get cut off right when it mattered).
+#[cfg(windows)]
 const MAX_ELEMENT_TEXT: usize = 900;
 
+#[cfg(windows)]
 fn truncate_text(mut s: String) -> String {
     if s.chars().count() > MAX_ELEMENT_TEXT {
         s = s.chars().take(MAX_ELEMENT_TEXT).collect::<String>() + "…";
@@ -409,8 +411,11 @@ pub struct ContentNode {
     pub role: String,
 }
 
+#[cfg(windows)]
 const CONTENT_GRID_COLS: i32 = 12;
+#[cfg(windows)]
 const CONTENT_GRID_ROWS: i32 = 10;
+#[cfg(windows)]
 const MAX_CONTENT_NODES: usize = 80;
 
 #[cfg(windows)]

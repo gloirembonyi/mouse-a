@@ -36,7 +36,9 @@ pub struct UiElement {
 }
 
 /// A request to locate elements. Empty query = the interactive controls of the window.
+/// The fields are read by the Windows implementation only (elsewhere UI Automation is a stub).
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub struct Query {
     pub text: String,
     pub role: String,
@@ -443,6 +445,7 @@ pub enum Act {
     Toggle,
     Select,
     Expand,
+    #[allow(dead_code)] // the text is typed by the Windows implementation only
     SetValue(String),
     Focus,
 }

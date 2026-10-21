@@ -55,6 +55,10 @@ export const agentRun = (task: string, source: string = "main", imageDataUrl: st
   invoke<AgentRunResult>("agent_run", { task, source, autonomous: true, imageDataUrl });
 
 export const agentCancel = (source: string = "main") => invoke<void>("agent_cancel", { source });
+/** Stop every run in flight; resolves to how many were asked to stop. */
+export const agentCancelAll = () => invoke<number>("agent_cancel_all");
+/** Sources of every run in flight ("main:<chat>", "copilot", "overlay", "browser:<task>"). */
+export const agentActiveRuns = () => invoke<string[]>("agent_active_runs");
 /** Talk to a running agent; false = nothing running for that source. */
 export const agentSteer = (source: string, text: string) => invoke<boolean>("agent_steer", { source, text });
 

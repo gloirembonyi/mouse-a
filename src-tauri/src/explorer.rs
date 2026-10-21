@@ -26,6 +26,7 @@ pub struct ExplorerContext {
     pub tech_tags: Vec<String>,
 }
 
+#[cfg(windows)]
 const MAX_ENTRIES: usize = 80;
 
 #[cfg(windows)]
@@ -161,6 +162,7 @@ pub fn window_rect_at(_x: i32, _y: i32) -> Option<(i32, i32, u32, u32)> {
     None
 }
 
+#[cfg(windows)]
 fn list_directory(path: &str) -> (Vec<ExplorerEntry>, usize) {
     let mut entries = Vec::new();
     let mut total = 0usize;
@@ -188,6 +190,7 @@ fn list_directory(path: &str) -> (Vec<ExplorerEntry>, usize) {
 /// Cheap, deterministic project-type detection from what's actually on
 /// disk - gives the model a factual answer instead of a guess from the
 /// folder name alone.
+#[cfg(windows)]
 fn detect_tech(entries: &[ExplorerEntry]) -> Vec<String> {
     let has = |n: &str| entries.iter().any(|e| e.name.eq_ignore_ascii_case(n));
     let mut tags = Vec::new();

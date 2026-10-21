@@ -39,8 +39,18 @@ const STATUS_STYLE: Record<LinkTask["status"], { label: string; className: strin
 // The "watcher" made visible: the two agents as one team, the link between
 // them, and every handoff with its live steps, status and any approval it's
 // waiting on.
+// What a run's source tag means to a person. "browser:<id>" runs are handoffs from the browser; they
+// already have their own card below, so the live list leaves them out.
+function runLabel(source: string) {
+  if (source.startsWith("main:") || source === "main") return "A chat";
+  if (source === "copilot") return "Kudu Pilot";
+  if (source === "overlay") return "Kudu Lens";
+  return source;
+}
+
 export function AgentsView({ agents, onClose }: AgentsViewProps) {
   const { info, tasks } = agents;
+  const localRuns = agents.runs.filter((r) => !r.startsWith("browser:"));
   const ordered = [...tasks].sort((a, b) => Number(isOpenTask(b)) - Number(isOpenTask(a)) || b.updated_ms - a.updated_ms);
   const anyRunning = tasks.some(isOpenTask);
   const toBrowser = tasks.some((t) => isOpenTask(t) && t.direction === "to_browser");
@@ -87,6 +97,22 @@ export function AgentsView({ agents, onClose }: AgentsViewProps) {
 
         <div className="mx-auto flex max-w-[720px] flex-col gap-6 px-6 pb-10">
           <LinkCard agents={agents} />
+
+          {localRuns.length > 0 && (
+            <section aria-label="Running on this PC" className="flex items-center justify-between gap-3 rounded-2xl border border-border-default bg-bg-elevated px-4 py-3">
+              <span className="min-w-0">
+                <span className="block text-[13px] font-semibold">Running on this PC</span>
+                <span className="block truncate text-[12px] text-text-muted">{localRuns.map(runLabel).join(", ")}</span>
+              </span>
+              <button
+                onClick={agents.stopAll}
+                className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-border-default px-3 py-1.5 text-[12px] font-medium transition hover:bg-bg-hover"
+              >
+                <Square size={11} />
+                Stop all
+              </button>
+            </section>
+          )}
 
           <section className="flex flex-col gap-2.5">
             <div className="flex items-center justify-between">

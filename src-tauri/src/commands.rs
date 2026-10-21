@@ -763,6 +763,13 @@ pub fn agent_cancel_all() -> usize {
     crate::agent::request_cancel_all()
 }
 
+/// Every agent run in flight on this PC (chat, Pilot, Lens, browser-requested), sorted. The Agents
+/// view shows these live so "what is Kudu doing right now?" has an answer, with Stop all beside it.
+#[tauri::command]
+pub fn agent_active_runs() -> Vec<String> {
+    crate::agent::active_sources()
+}
+
 #[derive(Serialize)]
 pub struct BridgeStatus {
     pub connected: bool,

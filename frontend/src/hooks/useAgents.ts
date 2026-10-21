@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  agentActiveRuns,
+  agentCancelAll,
   agentConfirm,
   linkCancelTask,
   linkClearFinished,
@@ -30,6 +32,8 @@ export function useAgents() {
   const [info, setInfo] = useState<LinkInfo | null>(null);
   const [tasks, setTasks] = useState<LinkTask[]>([]);
   const [confirms, setConfirms] = useState<Record<string, PendingConfirm[]>>({});
+  // Every run in flight on this PC (not only browser handoffs), straight from the agent loop.
+  const [runs, setRuns] = useState<string[]>([]);
 
   const refreshInfo = useCallback(() => {
     linkInfo().then(setInfo).catch(() => {});
@@ -55,12 +59,22 @@ export function useAgents() {
       }
     });
     const unStatus = onBridgeStatus(() => refreshInfo());
+    // Progress events are the heartbeat of a run, so refresh the list on them (coalesced), and once
+    // more shortly after the last one so a run that just ended drops off.
+    let timer = 0;
+    const refreshRuns = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => agentActiveRuns().then(setRuns).catch(() => {}), 350);
+    };
+    agentActiveRuns().then(setRuns).catch(() => {});
     const unProgress = onAgentProgress((p) => {
+      refreshRuns();
       if (p.kind !== "confirm" || !p.request_id || !p.source?.startsWith("browser:")) return;
       const id = p.source.slice("browser:".length);
       setConfirms((c) => ({ ...c, [id]: [...(c[id] ?? []), { requestId: p.request_id!, message: p.message ?? "" }] }));
     });
     return () => {
+      window.clearTimeout(timer);
       unTask.then((fn) => fn());
       unStatus.then((fn) => fn());
       unProgress.then((fn) => fn());
@@ -76,9 +90,10 @@ export function useAgents() {
   const clearFinished = useCallback(() => linkClearFinished().then(setTasks).catch(() => {}), []);
   const setAccept = useCallback((v: boolean) => linkSetAcceptTasks(v).then(setInfo).catch(() => {}), []);
   const newCode = useCallback(() => linkNewPairCode().then(setInfo).catch(() => {}), []);
+  const stopAll = useCallback(() => agentCancelAll().then(() => setRuns([])).catch(() => {}), []);
 
   const openCount = tasks.filter(isOpenTask).length;
   const waitingCount = Object.values(confirms).reduce((n, list) => n + list.length, 0);
 
-  return { info, tasks, confirms, openCount, waitingCount, answer, cancel, clearFinished, setAccept, newCode, refreshInfo };
+  return { info, tasks, confirms, runs, openCount, waitingCount, answer, cancel, clearFinished, setAccept, newCode, refreshInfo, stopAll };
 }

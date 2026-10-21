@@ -449,42 +449,6 @@ impl BackendClient {
         }
     }
 
-    /// Anonymous device sign-in - no Google OAuth involved. Used so the app
-    /// is usable immediately; `google_sign_in` remains available separately
-    /// for whoever wants to link a real account later.
-    pub async fn guest_sign_in(&self) -> Result<AuthResponse, String> {
-        let device_id = self.device_id.read().await.clone();
-        let url = format!("{}/api/auth/guest", self.base_url.read().await);
-        let body = serde_json::json!({ "deviceId": device_id });
-
-        let resp = self
-            .client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| Self::friendly_network_error(&e))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(format!("Guest sign-in failed ({}): {}", status, text));
-        }
-
-        let data: AuthResponse = resp
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse auth response: {}", e))?;
-
-        if data.success {
-            if let (Some(token), Some(user)) = (data.session_token.clone(), data.user.clone()) {
-                self.set_session(token, user).await;
-            }
-        }
-
-        Ok(data)
-    }
-
     /// Sign in with a Google access token (obtained via OAuth flow).
     pub async fn google_sign_in(&self, access_token: &str) -> Result<AuthResponse, String> {
         let url = format!("{}/api/auth/google", self.base_url.read().await);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import clsx from "clsx";
 import { LogOut, Monitor, Moon, Power, Sun, X } from "lucide-react";
@@ -13,7 +13,8 @@ import { UpdateSection } from "./UpdateSection";
 import { useTheme, type ThemePref } from "../../lib/theme";
 import type { User } from "../../lib/types";
 import { IconButton, Kbd } from "../ui/primitives";
-import { LinkCard } from "../agents/AgentsView";
+// Same chunk as the Agents view (App.tsx loads it lazily), so settings must not import it statically.
+const LinkCard = lazy(() => import("../agents/AgentsView").then((m) => ({ default: m.LinkCard })));
 import type { useAgents } from "../../hooks/useAgents";
 
 interface SettingsPanelProps {
@@ -136,7 +137,9 @@ export function SettingsPanel({ user, agents, onClose, onSignedOut }: SettingsPa
             title="Browser link"
             description="Pair Kudu Connect, the browser extension, so the browser agent and Kudu Desktop can hand each other tasks."
           >
-            <LinkCard agents={agents} />
+            <Suspense fallback={null}>
+              <LinkCard agents={agents} />
+            </Suspense>
           </Section>
 
           <Section title="Keyboard shortcuts">
